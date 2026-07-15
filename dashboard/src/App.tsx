@@ -17,7 +17,7 @@ import { ValidationPage } from './pages/ValidationPage';
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
-const EXPERIMENTS_VIEW_PATH = '/experiments?mode=view&type=manual';
+const EXPERIMENTS_VIEW_PATH = '/results?mode=view&type=manual';
 
 const DEFAULT_AUTH_STATUS: AuthStatusPayload = {
   authEnabled: false,
@@ -113,7 +113,7 @@ export function App() {
   const [desktopActionError, setDesktopActionError] = useState('');
   const [desktopActionMessage, setDesktopActionMessage] = useState('');
   const experimentsVisible = true;
-  const validationVisible = isDevEnv && viewMode === 'dev';
+  const validationVisible = true;
   const browserAuthControlsVisible = !isDesktopRuntime && viewMode !== 'preview_desktop';
   const activeViewModeLabel = VIEW_MODE_OPTIONS.find((option) => option.value === viewMode)?.label ?? 'Dev mode';
 
@@ -261,9 +261,9 @@ export function App() {
             <NavLink to="/" end>
               Home
             </NavLink>
-            <NavLink to="/compare">Calibration</NavLink>
+            <NavLink to="/calibration">Calibration</NavLink>
             {validationVisible && <NavLink to="/validation">Validation</NavLink>}
-            {experimentsVisible && <NavLink to="/experiments">Experiments</NavLink>}
+            {experimentsVisible && <NavLink to="/results?type=manual&mode=view">Results</NavLink>}
             {experimentsVisible && browserAuthControlsVisible && authStatus.authEnabled && !authStatus.canWrite && (
               <NavLink className="main-nav-auth-control main-nav-auth-link" to={loginPath}>
                 <span className="main-nav-auth-icon" aria-hidden="true">
@@ -333,11 +333,11 @@ export function App() {
         ) : (
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/compare" element={<ComparePage />} />
+            <Route path="/calibration" element={<ComparePage />} />
             {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
             {experimentsVisible && (
               <Route
-                path="/experiments"
+                path="/results"
                 element={
                   <ExperimentsPage
                     canWrite={authStatus.canWrite}

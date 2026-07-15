@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  ModelRunJob,
+  ModelRunJobStatus,
   ResultsCompareWindow,
   ResultsComparePayload,
   ResultsFileManifestEntry,
@@ -17,6 +19,7 @@ import {
   API_RETRY_DELAY_MS,
   deleteResultsRun,
   downloadResultsRun,
+  fetchModelRunJobs,
   fetchResultsCompare,
   fetchResultsRunDetail,
   fetchResultsRunFiles,
@@ -77,6 +80,20 @@ function deltaClassName(value: number | null): string {
   }
   return value > 0 ? 'positive' : 'negative';
 }
+
+const QUEUE_STATUS_META: Record<ModelRunJobStatus, { label: string; className: string }> = {
+  queued: { label: 'Queued', className: 'status-pill partial' },
+  running: { label: 'In progress', className: 'status-pill partial' },
+  succeeded: { label: 'Completed successfully', className: 'status-pill complete' },
+  failed: { label: 'Failed', className: 'status-pill invalid' },
+  canceled: { label: 'Canceled', className: 'coverage-pill unsupported' }
+};
+
+function formatQueueTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
+}
+
 
 function statusClass(status: ResultsRunStatus): string {
   switch (status) {
@@ -149,10 +166,28 @@ export function ManualResultsView({
   const [manifestTarget, setManifestTarget] = useState<ManifestTarget>('baseline');
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
+  const [runJobs, setRunJobs] = useState<ModelRunJob[]>([]);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
+  const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
+
+  // A run's output folder is created when it is queued, so an in-progress run appears in the
+  // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
+  // belong in the Queue until they finish — so History only shows runs that actually completed.
+  const activeRunIds = useMemo(
+    () =>
+      new Set(
+        runJobs
+          .filter((job) => job.status === 'queued' || job.status === 'running')
+          .map((job) => job.runId)
+          .filter(Boolean)
+      ),
+    [runJobs]
+  );
+  const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
 
   const resolvedSelection = useMemo(
-    () => resolveManualRunSelection(runs, requestedBaselineRunId, requestedComparisonRunId),
-    [requestedBaselineRunId, requestedComparisonRunId, runs]
+    () => resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId),
+    [historyRuns, requestedBaselineRunId, requestedComparisonRunId]
   );
   const baselineRunId = resolvedSelection.baselineRunId;
   const comparisonRunId = resolvedSelection.comparisonRunId;
@@ -232,6 +267,39 @@ export function ManualResultsView({
       if (retryTimer !== undefined) {
         window.clearTimeout(retryTimer);
       }
+    };
+  }, [loadRuns]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let previousActive = false;
+
+    const pollActiveRuns = async () => {
+      try {
+        const jobs = await fetchModelRunJobs();
+        if (cancelled) {
+          return;
+        }
+        setRunJobs(jobs);
+        const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
+        if (previousActive && !active) {
+          // A run just finished — refresh the completed-runs list so it appears in the picker.
+          void loadRuns();
+        }
+        previousActive = active;
+      } catch {
+        // Model runs may be unavailable (e.g. cloud/preview); ignore polling errors.
+      }
+    };
+
+    void pollActiveRuns();
+    const timer = window.setInterval(() => {
+      void pollActiveRuns();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
     };
   }, [loadRuns]);
 
@@ -384,7 +452,7 @@ export function ManualResultsView({
     };
   }, [compareWindow, selectedIndicatorIds, selectedRunIds, smoothWindow]);
 
-  const runById = useMemo(() => new Map(runs.map((run) => [run.runId, run])), [runs]);
+  const runById = useMemo(() => new Map(historyRuns.map((run) => [run.runId, run])), [historyRuns]);
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
   const availableIndicators = useMemo(() => baselineDetail?.indicators ?? [], [baselineDetail]);
@@ -565,19 +633,59 @@ export function ManualResultsView({
     );
   };
 
+  // Queue = pending work only (queued/running). Run History = every finished run: the completed
+  // runs on disk plus failed/cancelled jobs from this session (which have no saved results).
+  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running');
+  const failedHistoryJobs = runJobs.filter((job) => job.status === 'failed' || job.status === 'canceled');
+  const queuePreviewJob = queueItems.find((job) => job.status === 'running') ?? queueItems[0] ?? null;
+  const remainingQueueItems = queuePreviewJob
+    ? queueItems.filter((job) => job.jobId !== queuePreviewJob.jobId)
+    : queueItems;
+  const historyPreviewRun = baselineSummary ?? historyRuns[0] ?? null;
+  const finishedRunCount = historyRuns.length + failedHistoryJobs.length;
+
   return (
     <section className="results-layout manual-results-layout">
       {loadError && <p className="error-banner">{loadError}</p>}
 
-      <div className="results-grid">
-        <aside className="results-sidebar">
-          <div className="results-panel">
-            <CollapsibleSection
-              title="Run Selection"
-              defaultOpen={false}
-              className="manual-results-disclosure"
-              bodyClassName="manual-results-disclosure-body"
+      <div className="results-top-row">
+        <article className="results-card run-history-card">
+          <div className="disclosure-preview-head">
+            <div className="disclosure-preview-title">
+              <h3>Run History</h3>
+              <p>{finishedRunCount} finished {finishedRunCount === 1 ? 'run' : 'runs'}</p>
+            </div>
+            <button
+              type="button"
+              className="disclosure-preview-toggle"
+              aria-expanded={isHistoryExpanded}
+              onClick={() => setIsHistoryExpanded((current) => !current)}
             >
+              {isHistoryExpanded ? '▾ Hide' : '▸ All runs'}
+            </button>
+          </div>
+
+          {historyPreviewRun ? (
+            <button
+              type="button"
+              className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
+              onClick={() => setBaselineSelection(historyPreviewRun.runId)}
+            >
+              <span className="run-preview-title">{historyPreviewRun.runId}</span>
+              <span className="run-preview-meta">
+                <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
+                <span>{(historyPreviewRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                <span className="run-preview-action">
+                  {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
+                </span>
+              </span>
+            </button>
+          ) : (
+            <p className="info-banner">No completed runs yet.</p>
+          )}
+
+          {isHistoryExpanded && (
+            <div className="disclosure-expanded-list">
               <p>{sidebarSubtitle}</p>
               {showRunsRefreshing && (
                 <LoadingSkeleton
@@ -595,7 +703,7 @@ export function ManualResultsView({
                 />
               ) : (
                 <ul className="run-list">
-                  {runs.map((run) => {
+                  {historyRuns.map((run) => {
                     const isBaselineSelected = baselineRunId === run.runId;
                     const isComparisonSelected = comparisonRunId === run.runId;
                     return (
@@ -662,10 +770,88 @@ export function ManualResultsView({
                   })}
                 </ul>
               )}
-            </CollapsibleSection>
+              {failedHistoryJobs.length > 0 && (
+                <ul className="run-list run-history-failed-list">
+                  {failedHistoryJobs.map((job) => (
+                    <li key={job.jobId} className="run-item run-item-failed">
+                      <div className="run-item-head">
+                        <strong>{job.title || job.runId || job.jobId}</strong>
+                        <span className={QUEUE_STATUS_META[job.status].className}>
+                          {QUEUE_STATUS_META[job.status].label}
+                        </span>
+                      </div>
+                      <p className="run-queue-failure">
+                        This run {job.status === 'canceled' ? 'was cancelled' : 'failed'} — no results.
+                        {job.signal
+                          ? ` Stopped by signal ${job.signal}.`
+                          : job.exitCode != null
+                            ? ` Exit code ${job.exitCode}.`
+                            : ''}
+                      </p>
+                      <p>{formatQueueTimestamp(job.createdAt)}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </article>
+
+        <article className="results-card run-queue-card">
+          <div className="disclosure-preview-head">
+            <div className="disclosure-preview-title">
+              <h3>Queue</h3>
+              <p>
+                {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
+              </p>
+            </div>
+            <button
+              type="button"
+              className="disclosure-preview-toggle"
+              aria-expanded={isQueueExpanded}
+              onClick={() => setIsQueueExpanded((current) => !current)}
+              disabled={remainingQueueItems.length === 0}
+            >
+              {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
+            </button>
           </div>
 
-          <div className="results-panel">
+          {queuePreviewJob ? (
+            <div className="run-preview-card is-static">
+              <span className="run-preview-title">
+                {queuePreviewJob.title || queuePreviewJob.runId || queuePreviewJob.jobId}
+              </span>
+              <span className="run-preview-meta">
+                <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
+                  {QUEUE_STATUS_META[queuePreviewJob.status].label}
+                </span>
+                <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
+              </span>
+            </div>
+          ) : (
+            <p className="info-banner">No runs in progress.</p>
+          )}
+
+          {isQueueExpanded && remainingQueueItems.length > 0 && (
+            <ul className="job-list run-queue-list">
+              {remainingQueueItems.map((job) => (
+                <li key={job.jobId} className="job-item">
+                  <strong>{job.title || job.runId || job.jobId}</strong>
+                  <p>
+                    <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
+                  </p>
+                  {job.baseline && <p>Model version: {job.baseline}</p>}
+                  <p>{formatQueueTimestamp(job.createdAt)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+      </div>
+
+      <div className="results-main results-main-full">
+        {baselineRunId && (
+          <article className="results-card manual-results-settings-card">
             <div className="results-panel-header">
               <h2>Settings</h2>
               <p>{selectedIndicatorIds.length} indicators enabled</p>
@@ -741,10 +927,9 @@ export function ManualResultsView({
                 </div>
               )}
             </div>
-          </div>
-        </aside>
+          </article>
+        )}
 
-        <div className="results-main">
           <article className="results-card">
             <div className="results-card-head">
               <h2>Manual Results</h2>
@@ -1048,7 +1233,6 @@ export function ManualResultsView({
               )}
             </CollapsibleSection>
           </article>
-        </div>
       </div>
     </section>
   );

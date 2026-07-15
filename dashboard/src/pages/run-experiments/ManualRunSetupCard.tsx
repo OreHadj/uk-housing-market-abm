@@ -92,7 +92,7 @@ export function ManualRunSetupCard({
                   </option>
                 ))}
               </select>
-              <Link className="summary-link-inline" to={`/compare?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
+              <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
                 View in Calibration Versions
               </Link>
             </label>

@@ -151,7 +151,7 @@ import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
-  buildSensitivityGeneralOverridesFromForm,
+  buildGeneralModelControlOverridesFromForm,
   toInitialFormValues
 } from '../src/lib/experimentRunDefaults.js';
 import { buildDeltaTrendOption } from '../src/lib/sensitivityChartOptions.js';
@@ -929,7 +929,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected empty experiment query params to default to sensitivity run setup.'
 );
@@ -945,7 +946,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: 'manual:job-1'
+    jobRef: 'manual:job-1',
+    follow: false
   },
   'Expected invalid route selectors to fall back to sensitivity run setup while preserving run-mode job focus.'
 );
@@ -966,7 +968,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: 'exp:42',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected sensitivity view state to keep only experimentId.'
 );
@@ -987,7 +990,8 @@ assert.deepEqual(
     baselineRunId: 'v0-output',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected manual view state to drop duplicate comparison ids and incompatible params.'
 );
@@ -1003,7 +1007,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected legacy default manual run ids to normalize to an unset manual selection.'
 );
@@ -1030,7 +1035,8 @@ const encodedManualExperimentQuery = buildExperimentSearchParams({
   baselineRunId: 'v0-output',
   comparisonRunId: 'v4.0-output',
   experimentId: '',
-  jobRef: ''
+  jobRef: '',
+  follow: false
 }).toString();
 assert.equal(
   encodedManualExperimentQuery,
@@ -1044,7 +1050,8 @@ const encodedDefaultManualExperimentQuery = buildExperimentSearchParams({
   baselineRunId: 'default',
   comparisonRunId: '',
   experimentId: '',
-  jobRef: ''
+  jobRef: '',
+  follow: false
 }).toString();
 assert.equal(
   encodedDefaultManualExperimentQuery,
@@ -5443,7 +5450,7 @@ try {
     { min: '4', max: '5' },
     'Expected default paired soft-LTI sensitivity range to use 4..5 under 2024 policy'
   );
-  const sensitivitySeedOneOverrides = buildSensitivityGeneralOverridesFromForm(runOptions.parameters, {
+  const sensitivitySeedOneOverrides = buildGeneralModelControlOverridesFromForm(runOptions.parameters, {
     ...defaultExperimentFormValues,
     N_SIMS: '1'
   });
@@ -6444,7 +6451,7 @@ try {
   const seedWarningPolicy =
     seedWarningRunOptions.basePolicies.find((policy) => policy.id === DEFAULT_EXPERIMENT_BASE_POLICY_ID) ?? null;
   const seedWarningFormValues = toInitialFormValues(seedWarningRunOptions.parameters, seedWarningPolicy);
-  const seedWarningOverrides = buildSensitivityGeneralOverridesFromForm(seedWarningRunOptions.parameters, {
+  const seedWarningOverrides = buildGeneralModelControlOverridesFromForm(seedWarningRunOptions.parameters, {
     ...seedWarningFormValues,
     N_SIMS: '1'
   });
@@ -8150,8 +8157,8 @@ assert.ok(
   'App should import the validation page when dev-only validation is available'
 );
 assert.ok(
-  appSource.includes("const validationVisible = isDevEnv && viewMode === 'dev';"),
-  'App should gate validation behind the selected true-dev view'
+  appSource.includes('const validationVisible = true;'),
+  'App should expose validation as a main page in the four-page structure'
 );
 assert.ok(
   appSource.includes('VIEW_MODE_OPTIONS') &&
@@ -8161,8 +8168,8 @@ assert.ok(
   'App should expose a persisted dev-only runtime view selector'
 );
 assert.ok(
-  appSource.includes('<NavLink to="/compare">Calibration</NavLink>'),
-  'App should label the compare route as Calibration in the header'
+  appSource.includes('<NavLink to="/calibration">Calibration</NavLink>'),
+  'App should label the calibration route as Calibration in the header'
 );
 assert.ok(
   appSource.includes('{validationVisible && <NavLink to="/validation">Validation</NavLink>}'),
@@ -8173,11 +8180,11 @@ assert.ok(
   'App should only register the validation route when validation is visible'
 );
 assert.ok(
-  appSource.includes("{experimentsVisible && <NavLink to=\"/experiments\">Experiments</NavLink>}"),
-  'App should render the experiments nav from the always-enabled experiments visibility flag'
+  appSource.includes("{experimentsVisible && <NavLink to=\"/results?type=manual&mode=view\">Results</NavLink>}"),
+  'App should label the experiments workspace as the Results tab in the header'
 );
 assert.ok(
-  appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/experiments\""),
+  appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/results\""),
   'App should register the experiments route from the always-enabled experiments visibility flag'
 );
 assert.ok(
@@ -8499,70 +8506,40 @@ assert.ok(
 );
 
 const homePageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/HomePage.tsx'), 'utf-8');
-const stylesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
 assert.ok(
   !homePageSource.includes('fetchGitStats'),
   'Home page should no longer fetch git stats'
 );
 assert.ok(
-  homePageSource.includes('fetchHomePreview(latest)'),
-  'Home page should fetch the lightweight home preview payload'
-);
-assert.ok(
   !homePageSource.includes('Lines of Code Written'),
   'Home page should no longer render git stats cards'
 );
-for (const removedHomeStatLabel of [
-  'Updates to Calibration Parameters',
-  'Calibration Parameters Visualised',
-  'Latest Calibration Parameter Update'
-]) {
-  assert.ok(
-    !homePageSource.includes(removedHomeStatLabel),
-    `Home page should no longer render the ${removedHomeStatLabel} stat card`
-  );
-}
 assert.ok(
   !homePageSource.includes('Just Launched'),
   'Home page should no longer render the launch badge'
 );
+// The remade Home page is a minimal task-first launchpad: a one-line intro plus the Default Run
+// button, with no preview chart or author/portfolio material.
 assert.ok(
-  homePageSource.includes('className="contribution-highlights"') &&
-    homePageSource.includes('Common loss function') &&
-    homePageSource.includes('Trust Region Bayesian Optimisation') &&
-    homePageSource.includes('6.13x throughput') &&
-    homePageSource.includes('59 / 75 parameters recalibrated') &&
-    homePageSource.includes('Desktop and cloud dashboard'),
-  'Home page should render contribution highlights for validation, calibration, runtime, recalibration, and access'
-);
-{
-  const purposeCardIndex = homePageSource.indexOf('<div className="summary-card fade-up">');
-  const contributionsCardIndex = homePageSource.indexOf('<div className="summary-card contributions-card fade-up">');
-  const heroCardIndex = homePageSource.indexOf('<div className="hero-card fade-up">');
-  assert.ok(
-    purposeCardIndex !== -1 &&
-      contributionsCardIndex !== -1 &&
-      heroCardIndex !== -1 &&
-      purposeCardIndex < contributionsCardIndex &&
-      contributionsCardIndex < heroCardIndex,
-    'Home page should render contribution highlights in their own card between the purpose summary and hero preview'
-  );
-}
-assert.ok(
-  stylesSource.includes('.contribution-highlights {\n  display: grid;') &&
-    stylesSource.includes('grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));') &&
-    stylesSource.includes('width: 100%;') &&
-    !stylesSource.includes('.contribution-highlights {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));\n  gap: 0.75rem 1rem;\n  margin-top: 0.95rem;\n  max-width: 78ch;'),
-  'Contribution highlights should spread across the full summary card width'
+  homePageSource.includes('A UK housing-market simulator for testing central-bank (macroprudential) policy.'),
+  'Home page should open with the plain-English statement of what the tool is'
 );
 assert.ok(
-  homePageSource.includes(
-    "const PROJECT_REPORT_URL = 'https://github.com/max-stoddard/UK-Housing-Market-ABM/blob/master/docs/beng-project/Project%20Final%20Report.pdf';"
-  ) &&
-    homePageSource.includes('href={PROJECT_REPORT_URL}') &&
-    homePageSource.includes('aria-label="Open project final report"') &&
-    homePageSource.includes('<span>Report</span>'),
-  'Contribution card should link to the project final report on GitHub'
+  homePageSource.includes('onStartDefaultRun') &&
+    homePageSource.includes('buildDefaultRunSubmitRequest') &&
+    homePageSource.includes('className="primary-button default-run-button"'),
+  'Home page should provide a prominent Default Run button wired to the default-run submit path'
+);
+assert.ok(
+  homePageSource.includes("buildExperimentsPath({ ...DEFAULT_EXPERIMENT_ROUTE_STATE, type: 'manual', mode: 'view' })"),
+  'Home Default Run should queue the run and route to the Results view, not the run-configuration form'
+);
+assert.ok(
+  !homePageSource.includes('fetchHomePreview') &&
+    !homePageSource.includes('contribution-highlights') &&
+    !homePageSource.includes('hero-card') &&
+    !homePageSource.includes('home-about'),
+  'Home page should drop the preview chart and the About/portfolio material'
 );
 
 const serverIndexSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/index.ts'), 'utf-8');
@@ -8895,7 +8872,7 @@ function createDesktopMainFrame(origin: string, url: string): DesktopFrameLike {
 }
 
 const desktopTrustedOrigin = deriveTrustedDashboardOrigin('http://127.0.0.1:49152/');
-const desktopTrustedMainFrame = createDesktopMainFrame(desktopTrustedOrigin, `${desktopTrustedOrigin}/experiments`);
+const desktopTrustedMainFrame = createDesktopMainFrame(desktopTrustedOrigin, `${desktopTrustedOrigin}/results`);
 assert.equal(desktopTrustedOrigin, 'http://127.0.0.1:49152', 'Desktop origin helper should derive the exact origin');
 assert.equal(
   validateTrustedDesktopIpcSender({
@@ -8945,7 +8922,7 @@ assert.match(
   'Wrong-window desktop IPC sender should be rejected'
 );
 assert.equal(
-  shouldBlockDashboardNavigation({ url: `${desktopTrustedOrigin}/compare`, isMainFrame: true }, desktopTrustedOrigin),
+  shouldBlockDashboardNavigation({ url: `${desktopTrustedOrigin}/calibration`, isMainFrame: true }, desktopTrustedOrigin),
   false,
   'Same-origin dashboard navigation should be allowed'
 );
@@ -8965,7 +8942,7 @@ assert.deepEqual(
   'HTTPS window-open targets should be denied in Electron and externalized'
 );
 assert.deepEqual(
-  classifyDesktopWindowOpenTarget(`${desktopTrustedOrigin}/compare`),
+  classifyDesktopWindowOpenTarget(`${desktopTrustedOrigin}/calibration`),
   { action: 'deny' },
   'Dashboard window-open targets should be denied instead of inheriting preload access'
 );

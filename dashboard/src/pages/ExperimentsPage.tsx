@@ -56,8 +56,11 @@ export function ExperimentsPage({
   return (
     <section className="run-exp-layout">
       <article className="results-card">
-        <h2>Experiments</h2>
-        <p>Unified run and results workspace for manual parameter and sensitivity experiment types.</p>
+        <h2>Results</h2>
+        <p>
+          Browse completed model runs and their results. Launch a new run or a sensitivity sweep from the Run
+          Experiment tab.
+        </p>
 
         <div className="experiment-tabs">
           {(Object.keys(experimentTypeRegistry) as ExperimentType[]).map((type) => (
@@ -99,6 +102,7 @@ export function ExperimentsPage({
           deleteKeyRequired={deleteKeyRequired}
           authEnabled={authEnabled}
           selectedJobRef={routeState.jobRef}
+          followJobRef={routeState.follow ? routeState.jobRef : ''}
           onSelectedJobRefChange={(jobRef) => updateRouteState({ jobRef }, true)}
           onOpenManualResults={(runId) =>
             updateRouteState({ mode: 'view', type: 'manual', baselineRunId: runId, comparisonRunId: '' })

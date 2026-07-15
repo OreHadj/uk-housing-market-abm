@@ -136,7 +136,7 @@ export function getDefaultExperimentBasePolicy(payload: ModelRunOptionsPayload):
     : payload.defaultBasePolicy;
 }
 
-export function buildSensitivityGeneralOverridesFromForm(
+export function buildGeneralModelControlOverridesFromForm(
   parameters: ModelRunParameterDefinition[],
   formValues: Record<string, FormValue>
 ): Record<string, number | boolean> {

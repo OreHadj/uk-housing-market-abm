@@ -98,7 +98,7 @@ export function ExperimentQueueCard({
                   {job.type === 'manual' && job.status === 'succeeded' && job.runId && (
                     <Link
                       className="summary-link-inline"
-                      to={`/experiments?type=manual&mode=view&baselineRunId=${encodeURIComponent(job.runId)}`}
+                      to={`/results?type=manual&mode=view&baselineRunId=${encodeURIComponent(job.runId)}`}
                     >
                       View Experiment Results
                     </Link>
@@ -106,7 +106,7 @@ export function ExperimentQueueCard({
                   {job.type === 'sensitivity' && job.status === 'succeeded' && (
                     <Link
                       className="summary-link-inline"
-                      to={`/experiments?type=sensitivity&mode=view&experimentId=${encodeURIComponent(job.id)}`}
+                      to={`/results?type=sensitivity&mode=view&experimentId=${encodeURIComponent(job.id)}`}
                     >
                       View Experiment Results
                     </Link>
@@ -116,7 +116,7 @@ export function ExperimentQueueCard({
                       authEnabled ? (
                         <Link
                           className="summary-link-inline"
-                          to={`/login?next=${encodeURIComponent(`/experiments?type=${job.type}&mode=run`)}`}
+                          to={`/login?next=${encodeURIComponent(`/results?type=${job.type}&mode=run`)}`}
                         >
                           Login to Download
                         </Link>

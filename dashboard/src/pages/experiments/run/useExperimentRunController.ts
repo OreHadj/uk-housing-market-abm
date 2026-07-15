@@ -24,7 +24,7 @@ import {
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
-  buildSensitivityGeneralOverridesFromForm,
+  buildGeneralModelControlOverridesFromForm,
   getDefaultExperimentBasePolicy,
   getPackageBaselineValues,
   isSameValue,
@@ -102,6 +102,8 @@ interface UseExperimentRunControllerOptions {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
+  // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
+  followJobRef?: string;
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -198,7 +200,8 @@ export function useExperimentRunController({
   selectedJobRef,
   onSelectedJobRefChange,
   onOpenManualResults,
-  onOpenSensitivityResults
+  onOpenSensitivityResults,
+  followJobRef
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -447,6 +450,15 @@ export function useExperimentRunController({
   ]);
 
   useEffect(() => {
+    if (!followJobRef || !followJobRef.startsWith('manual:')) {
+      return;
+    }
+    // Adopt a hand-off job (e.g. from Home's Default Run) as pending so the existing
+    // completion effect redirects to its results once it succeeds.
+    setPendingManualJobRef((current) => current || followJobRef);
+  }, [followJobRef]);
+
+  useEffect(() => {
     if (!pendingManualJobRef) {
       return;
     }
@@ -604,7 +616,7 @@ export function useExperimentRunController({
       throw new Error('Run options are not loaded yet.');
     }
 
-    return buildSensitivityGeneralOverridesFromForm(options.parameters, sensitivityFormValues);
+    return buildGeneralModelControlOverridesFromForm(options.parameters, sensitivityFormValues);
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {

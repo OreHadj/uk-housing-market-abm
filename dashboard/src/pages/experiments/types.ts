@@ -11,6 +11,9 @@ export interface ExperimentRouteState {
   comparisonRunId: string;
   experimentId: string;
   jobRef: string;
+  // When true (run mode, manual job), auto-redirect to results once the focused job completes.
+  // Used by the Home "Default Run" hand-off; expert-initiated runs leave this false.
+  follow: boolean;
 }
 
 export const DEFAULT_EXPERIMENT_ROUTE_STATE: ExperimentRouteState = {
@@ -19,5 +22,6 @@ export const DEFAULT_EXPERIMENT_ROUTE_STATE: ExperimentRouteState = {
   baselineRunId: '',
   comparisonRunId: '',
   experimentId: '',
-  jobRef: ''
+  jobRef: '',
+  follow: false
 };

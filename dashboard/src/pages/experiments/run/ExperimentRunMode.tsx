@@ -20,6 +20,7 @@ interface ExperimentRunModeProps {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
+  followJobRef?: string;
 }
 
 export function ExperimentRunMode({
@@ -32,13 +33,15 @@ export function ExperimentRunMode({
   selectedJobRef,
   onSelectedJobRefChange,
   onOpenManualResults,
-  onOpenSensitivityResults
+  onOpenSensitivityResults,
+  followJobRef
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
     selectedJobRef,
     onSelectedJobRefChange,
     onOpenManualResults,
-    onOpenSensitivityResults
+    onOpenSensitivityResults,
+    followJobRef
   });
   const [downloadingJobRef, setDownloadingJobRef] = useState<string>('');
   const [deletingJobRef, setDeletingJobRef] = useState<string>('');

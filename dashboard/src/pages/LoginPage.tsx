@@ -8,7 +8,7 @@ interface LoginPageProps {
   onLoginSuccess: (token: string | null) => Promise<void>;
 }
 
-const DEFAULT_EXPERIMENTS_RUN_PATH = '/experiments?mode=view&type=manual';
+const DEFAULT_EXPERIMENTS_RUN_PATH = '/results?mode=view&type=manual';
 
 export function LoginPage({ authStatus, onLoginSuccess }: LoginPageProps) {
   const location = useLocation();
