@@ -11,7 +11,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import {
   compareParameters,
-  getHomePreview,
   getInProgressVersions,
   getParameterCatalog,
   getValidationOverview,
@@ -3238,51 +3237,12 @@ try {
     'Expected model-run options to use runtime data root baselines without falling back to repo data'
   );
   assert.equal(
-    getHomePreview(desktopDataFixture.paths, 'v1.0', ['age_distribution']).items.length,
-    1,
-    'Expected home preview to read fixture data from the configured data root'
-  );
-  assert.equal(
     compareParameters(desktopDataFixture.paths, 'v1.0', 'v1.1', ['age_distribution']).items.length,
     1,
     'Expected compare service to read fixture data from the configured data root'
   );
 } finally {
   fs.rmSync(desktopDataFixture.root, { recursive: true, force: true });
-}
-
-const homePreview = getHomePreview(repoRoot, latestVersion, [
-  'wealth_given_income_joint',
-  'house_price_lognormal',
-  'downpayment_oo_lognormal',
-  'btl_probability_bins'
-]);
-assert.equal(homePreview.version, latestVersion, 'Expected home preview payload to report the requested version');
-assert.equal(homePreview.items.length, 4, 'Expected home preview payload to include the requested items only');
-assert.deepEqual(
-  homePreview.items.map((item) => item.id),
-  ['wealth_given_income_joint', 'house_price_lognormal', 'downpayment_oo_lognormal', 'btl_probability_bins'],
-  'Expected home preview payload to preserve requested item order'
-);
-assert.ok(
-  homePreview.items.every((item) => !('sourceInfo' in item) && !('changeOriginsInRange' in item)),
-  'Expected home preview payload to exclude compare-page provenance and source metadata'
-);
-const homePreviewLognormal = homePreview.items.find((item) => item.id === 'house_price_lognormal');
-assert.ok(homePreviewLognormal, 'Expected house_price_lognormal in home preview payload');
-assert.ok(
-  homePreviewLognormal?.visualPayload.type === 'lognormal_pair',
-  'Expected house_price_lognormal preview payload to use lognormal_pair type'
-);
-if (homePreviewLognormal?.visualPayload.type === 'lognormal_pair') {
-  const scaleRight = homePreviewLognormal.visualPayload.parameters.find((row) => row.key === 'HOUSE_PRICES_SCALE')?.right;
-  assert.ok(scaleRight !== undefined, 'Expected house-price scale parameter in preview payload');
-  assertClose(
-    homePreviewLognormal.visualPayload.median.right,
-    Math.exp(Number(scaleRight)),
-    1e-12,
-    'Expected lognormal preview median.right to equal exp(HOUSE_PRICES_SCALE)'
-  );
 }
 
 const dashboardInputVersionHistory = loadDashboardInputVersionHistory(repoRoot);
@@ -8592,16 +8552,12 @@ assert.ok(
 );
 
 assert.ok(
-  publicRoutesSource.includes("app.get('/api/home-preview'"),
-  'Public routes should expose the lightweight home preview endpoint'
+  !publicRoutesSource.includes("app.get('/api/home-preview'") && !publicRoutesSource.includes('getHomePreview'),
+  'Public routes should no longer expose the home preview endpoint'
 );
 assert.ok(
   !publicRoutesSource.includes("/api/git-stats"),
   'Public routes should not expose git stats'
-);
-assert.ok(
-  publicRoutesSource.includes('getHomePreview(context.runtimePaths, version, HOME_PREVIEW_PARAMETER_IDS)'),
-  'Public routes should serve the home preview from the lightweight service function'
 );
 
 const devRoutesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/routes/devRoutes.ts'), 'utf-8');
@@ -8629,8 +8585,8 @@ assert.ok(
   'Client API should no longer expose fetchGitStats'
 );
 assert.ok(
-  apiSource.includes("buildApiUrl('/api/home-preview')"),
-  'Client API should expose the lightweight home preview fetcher'
+  !apiSource.includes('/api/home-preview') && !apiSource.includes('fetchHomePreview'),
+  'Client API should no longer expose the home preview fetcher'
 );
 
 const resultsSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/results.ts'), 'utf-8');

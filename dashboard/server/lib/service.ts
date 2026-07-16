@@ -8,8 +8,6 @@ import type {
   CompareResponse,
   CurvePoint,
   DerivedScalarMeta,
-  HomePreviewItem,
-  HomePreviewPayload,
   JointCell,
   JointPayload,
   ParameterCardMeta,
@@ -1161,41 +1159,6 @@ export function getValidationOverview(
 
 export function getParameterCatalog() {
   return PARAMETER_CATALOG;
-}
-
-export function getHomePreview(pathsInput: RuntimePathInput, version: string, ids: string[]): HomePreviewPayload {
-  const paths = resolveRuntimePaths(pathsInput);
-  ensureVersionExists(paths, version);
-
-  const config = parseConfigFile(getConfigPath(paths, version));
-  const catalogById = new Map(PARAMETER_CATALOG.map((meta) => [meta.id, meta]));
-  const selected = ids.map((id) => {
-    const meta = catalogById.get(id);
-    if (!meta) {
-      throw new Error(`Unknown parameter id: ${id}`);
-    }
-    return meta;
-  });
-
-  const context: VisualContext = {
-    runtimePaths: paths,
-    leftVersion: version,
-    rightVersion: version,
-    leftConfig: config,
-    rightConfig: config
-  };
-
-  const items: HomePreviewItem[] = selected.map((meta) => ({
-    id: meta.id,
-    title: meta.title,
-    rightVersion: version,
-    visualPayload: buildVisualComparison(context, meta).visualPayload
-  }));
-
-  return {
-    version,
-    items
-  };
 }
 
 export function compareParameters(

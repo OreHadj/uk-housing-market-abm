@@ -8,7 +8,6 @@ import type {
   ExperimentJobDeleteResponse,
   ExperimentJobLogsPayload,
   ExperimentJobsPayload,
-  HomePreviewPayload,
   ModelRunJob,
   ModelRunJobClearResponse,
   ModelRunJobLogsPayload,
@@ -272,14 +271,6 @@ export async function fetchValidationOverview(
 export async function fetchCatalog(): Promise<ParameterCardMeta[]> {
   const payload = await requestJson<CatalogResponse>(buildApiUrl('/api/parameter-catalog'), 'Failed to fetch parameter catalog');
   return payload.items;
-}
-
-export async function fetchHomePreview(version: string): Promise<HomePreviewPayload> {
-  const params = new URLSearchParams({ version });
-  return requestJson<HomePreviewPayload>(
-    `${buildApiUrl('/api/home-preview')}?${params.toString()}`,
-    'Failed to fetch homepage preview'
-  );
 }
 
 export async function fetchCompare(

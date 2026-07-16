@@ -1,14 +1,7 @@
 import type express from 'express';
-import { compareParameters, getHomePreview, getInProgressVersions, getParameterCatalog, getValidationOverview, getVersions } from '../lib/service';
+import { compareParameters, getInProgressVersions, getParameterCatalog, getValidationOverview, getVersions } from '../lib/service';
 import { resolveDashboardWriteAccess } from '../lib/writeAuth';
 import type { RouteContext } from './routeContext';
-
-const HOME_PREVIEW_PARAMETER_IDS = [
-  'wealth_given_income_joint',
-  'house_price_lognormal',
-  'downpayment_oo_lognormal',
-  'btl_probability_bins'
-];
 
 export function registerPublicRoutes(app: express.Express, context: RouteContext): void {
   app.get('/healthz', (_req, res) => {
@@ -99,20 +92,6 @@ export function registerPublicRoutes(app: express.Express, context: RouteContext
 
   app.get('/api/parameter-catalog', context.withMemoryLogging('parameter-catalog', (_req, res) => {
     res.json({ items: getParameterCatalog() });
-  }));
-
-  app.get('/api/home-preview', context.withMemoryLogging('home-preview', (req, res) => {
-    const version = String(req.query.version ?? '').trim();
-    if (!version) {
-      res.status(400).json({ error: 'version query parameter is required' });
-      return;
-    }
-
-    try {
-      res.json(getHomePreview(context.runtimePaths, version, HOME_PREVIEW_PARAMETER_IDS));
-    } catch (error) {
-      res.status(400).json({ error: (error as Error).message });
-    }
   }));
 
   app.get('/api/compare', context.withMemoryLogging('compare', (req, res) => {

@@ -239,11 +239,6 @@ export interface HomePreviewItem {
   visualPayload: VisualPayload;
 }
 
-export interface HomePreviewPayload {
-  version: VersionId;
-  items: HomePreviewItem[];
-}
-
 export type ValidationMetricStatus = 'pass' | 'warn' | 'fail' | 'unsupported';
 export type ValidationMetricRequirement = 'required' | 'diagnostic';
 export type ValidationMetricMappingStatus = 'exact_match' | 'derived_match' | 'unsupported';
