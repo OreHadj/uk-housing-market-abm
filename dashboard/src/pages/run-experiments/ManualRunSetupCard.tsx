@@ -10,7 +10,8 @@ import {
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../../lib/experimentVersionOptions';
-import { GeneralModelControl, ParameterInput } from './GeneralModelControl';
+import { GeneralModelControl } from './GeneralModelControl';
+import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
@@ -165,7 +166,7 @@ export function ManualRunSetupCard({
                 <h4>Central Bank policy</h4>
                 <div className="run-param-grid">
                   {policyParameters.map((parameter) => (
-                    <ParameterInput
+                    <CentralBankPolicyInput
                       key={parameter.key}
                       parameter={parameter}
                       value={formValues[parameter.key]}

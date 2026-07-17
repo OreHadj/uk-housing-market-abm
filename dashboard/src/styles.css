@@ -1492,6 +1492,39 @@ code {
   background: #fff;
 }
 
+.cap-toggle {
+  display: inline-flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.cap-toggle-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cap-toggle-option input[type='radio'] {
+  margin: 0;
+}
+
+.cap-value-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.cap-value-field input[type='number'] {
+  flex: 1 1 auto;
+}
+
+.cap-value-suffix {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .sensitivity-checkbox-field {
   align-content: start;
 }
