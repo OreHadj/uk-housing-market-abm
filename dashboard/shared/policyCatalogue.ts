@@ -5,6 +5,7 @@ import type {
   ModelRunParameterType,
   SensitivityPolicyPackageDefinition
 } from './types';
+import { formatExactPercent, formatPercent } from './policyDisplay';
 
 export const CENTRAL_BANK_POLICY_KEYS = [
   'CENTRAL_BANK_INITIAL_BASE_RATE',
@@ -20,12 +21,40 @@ export const CENTRAL_BANK_POLICY_KEYS = [
   'CENTRAL_BANK_ICR_HARD_MIN'
 ] as const;
 
-export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
+// Non-binding "off" sentinels for the FPC affordability cap and BTL ICR floor, as set by the 2024
+// base policy: a ~100%-of-income affordability cap never bites, and a zero ICR floor is a no-op. Both
+// the run-setup toggles (CentralBankPolicyInput.tsx) and the summaries below read these to describe a
+// cap as "off", so there is a single source of truth for what "off" means.
+export const CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL = 0.9999;
+export const CENTRAL_BANK_ICR_OFF_SENTINEL = 0;
+
+function describeAffordabilityCap(values: Record<string, number>): string {
+  const value = values.CENTRAL_BANK_AFFORDABILITY_HARD_MAX;
+  return value >= CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL
+    ? 'no separate FPC affordability cap'
+    : `an FPC affordability cap of ${formatPercent(value)} of income`;
+}
+
+function describeIcrFloor(values: Record<string, number>): string {
+  const value = values.CENTRAL_BANK_ICR_HARD_MIN;
+  return value <= CENTRAL_BANK_ICR_OFF_SENTINEL ? 'no separate FPC BTL ICR floor' : `an FPC BTL ICR floor of ${value}x`;
+}
+
+interface BasePolicyDefinition {
+  id: BasePolicyId;
+  title: string;
+  values: Record<string, number>;
+  // Built from the values so the displayed Bank Rate and cap statuses can never drift from what the
+  // model actually runs, using the same percentage formatter as the run-setup form.
+  buildSummary: (values: Record<string, number>) => string;
+}
+
+const BASE_POLICY_DEFINITIONS: BasePolicyDefinition[] = [
   {
     id: '2011',
     title: '2011 base policy',
-    summary:
-      '2011 policy uses a 0.5% Bank Rate and central-bank mortgage limits aligned to lender limits, so the macroprudential constraints are mostly non-binding.',
+    buildSummary: (values) =>
+      `2011 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate and central-bank mortgage limits aligned to lender limits, so the macroprudential constraints are mostly non-binding.`,
     values: {
       CENTRAL_BANK_INITIAL_BASE_RATE: 0.005,
       CENTRAL_BANK_LTV_HARD_MAX_FTB: 0.95,
@@ -43,8 +72,8 @@ export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
   {
     id: '2024',
     title: '2024 base policy',
-    summary:
-      '2024 policy uses a 5.10833333% Bank Rate, a 4.5x owner-occupier LTI flow limit with a 15% quota over 12 months, no separate FPC affordability cap, and no separate FPC BTL ICR floor.',
+    buildSummary: (values) =>
+      `2024 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate, a 4.5x owner-occupier LTI flow limit with a 15% quota over 12 months, ${describeAffordabilityCap(values)}, and ${describeIcrFloor(values)}.`,
     values: {
       CENTRAL_BANK_INITIAL_BASE_RATE: 0.0510833333,
       CENTRAL_BANK_LTV_HARD_MAX_FTB: 0.95,
@@ -60,6 +89,13 @@ export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
     }
   }
 ];
+
+export const BASE_POLICY_OPTIONS: BasePolicyOption[] = BASE_POLICY_DEFINITIONS.map((definition) => ({
+  id: definition.id,
+  title: definition.title,
+  values: definition.values,
+  summary: definition.buildSummary(definition.values)
+}));
 
 export const SENSITIVITY_POLICY_PACKAGES: SensitivityPolicyPackageDefinition[] = [
   {

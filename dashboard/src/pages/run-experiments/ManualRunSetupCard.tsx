@@ -170,6 +170,7 @@ export function ManualRunSetupCard({
                       key={parameter.key}
                       parameter={parameter}
                       value={formValues[parameter.key]}
+                      basePolicyValue={selectedBasePolicy?.values[parameter.key]}
                       executionDisabled={executionDisabled}
                       mode="manual"
                       onChange={onFormValueChange}
