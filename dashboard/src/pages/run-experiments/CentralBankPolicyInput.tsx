@@ -1,15 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ModelRunParameterDefinition } from '../../../shared/types';
-import {
-  CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL,
-  CENTRAL_BANK_ICR_OFF_SENTINEL
-} from '../../../shared/policyCatalogue';
 import {
   formatExactModelValue,
   formatExactScaled,
-  formatScaled,
-  fractionsEqual,
-  resolveEditedStoredValue,
   scaledInputToStoredFraction
 } from '../../../shared/policyDisplay';
 import { InfoLabel } from './InfoLabel';
@@ -22,182 +15,64 @@ const AFFORDABILITY_KEY = 'CENTRAL_BANK_AFFORDABILITY_HARD_MAX';
 const ICR_KEY = 'CENTRAL_BANK_ICR_HARD_MIN';
 const BASE_RATE_KEY = 'CENTRAL_BANK_INITIAL_BASE_RATE';
 
-// Fallback binding values (the 2011 base policy) used only when no prior "on" value exists.
-const AFFORDABILITY_ON_FALLBACK = 0.4;
-const ICR_ON_FALLBACK = 1.2;
+// The Central Bank fields that get the "Use base policy value" checkbox, with the unit each is shown
+// and edited in: base rate & affordability cap as a percentage (scale 100, "%"), ICR floor as a ratio
+// (scale 1, "×"). Every other Central Bank field falls back to the standard numeric input.
+const POLICY_FIELD_UNITS: Record<string, { scale: number; suffix: string }> = {
+  [BASE_RATE_KEY]: { scale: 100, suffix: '%' },
+  [AFFORDABILITY_KEY]: { scale: 100, suffix: '%' },
+  [ICR_KEY]: { scale: 1, suffix: '×' }
+};
 
-/** True for the three Central Bank fields that get the toggle / percentage treatment. */
+/** True for the Central Bank fields that get the "Use base policy value" checkbox treatment. */
 export function isCentralBankSpecialField(key: string): boolean {
-  return key === AFFORDABILITY_KEY || key === ICR_KEY || key === BASE_RATE_KEY;
+  return Object.prototype.hasOwnProperty.call(POLICY_FIELD_UNITS, key);
 }
 
-interface ScaledNumberInputProps {
-  storedValue: string;
-  scale: number;
-  suffix: string;
-  disabled: boolean;
-  ariaLabel: string;
-  onStoredChange: (next: string) => void;
-}
-
-/**
- * Number input that shows a scaled unit (e.g. base rate as a percentage) while keeping the exact
- * model-unit fraction in the submitted form value. Local text state lets the user type freely.
- *
- * `canonicalRef` holds the exact fraction the current display was seeded from; it is reseeded only on
- * external stored-value changes (base-policy switch, reset), never by the user's own typing. That way
- * an untouched field submits the base policy's fraction byte-for-byte, and reverting the display to
- * its original value restores that exact fraction rather than the rounded percentage it was shown as.
- * `lastEmittedRef` distinguishes our own edits (echoed back through the form) from external changes.
- */
-function ScaledNumberInput({ storedValue, scale, suffix, disabled, ariaLabel, onStoredChange }: ScaledNumberInputProps) {
-  const [text, setText] = useState(() => formatScaled(Number.parseFloat(storedValue), scale));
-  const canonicalRef = useRef(storedValue);
-  const lastEmittedRef = useRef(storedValue);
-
-  useEffect(() => {
-    if (storedValue === lastEmittedRef.current) {
-      return; // Echo of our own edit: keep the canonical fraction and the user's in-progress text.
-    }
-    lastEmittedRef.current = storedValue;
-    canonicalRef.current = storedValue;
-    const stored = Number.parseFloat(storedValue);
-    setText(Number.isFinite(stored) ? formatScaled(stored, scale) : '');
-  }, [storedValue, scale]);
-
-  const handleChange = (raw: string) => {
-    setText(raw);
-    const next = resolveEditedStoredValue(canonicalRef.current, raw, scale);
-    lastEmittedRef.current = next;
-    onStoredChange(next);
-  };
-
-  return (
-    <span className="cap-value-field">
-      <input
-        type="number"
-        step="any"
-        value={text}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        onChange={(event) => handleChange(event.target.value)}
-      />
-      {suffix ? (
-        <span className="cap-value-suffix" aria-hidden="true">
-          {suffix}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-interface CapFieldProps {
-  parameter: ModelRunParameterDefinition;
-  value: FormValue | undefined;
-  disabled: boolean;
-  mode: ExperimentControlMode;
-  offSentinel: number;
-  onFallback: number;
-  scale: number;
-  suffix: string;
-  onChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
-}
-
-/** A binding limit that can be switched Off (non-binding sentinel) or On (an editable value). */
-function CapField({ parameter, value, disabled, mode, offSentinel, onFallback, scale, suffix, onChange }: CapFieldProps) {
-  const numeric = typeof value === 'string' ? Number.parseFloat(value) : Number.NaN;
-  const isOff = Number.isFinite(numeric) && fractionsEqual(numeric, offSentinel);
-
-  // Remember the latest "on" value so re-enabling restores what the user last had.
-  const lastOnValue = useRef<string>(String(onFallback));
-  useEffect(() => {
-    if (typeof value === 'string' && Number.isFinite(numeric) && !isOff) {
-      lastOnValue.current = value;
-    }
-  }, [value, numeric, isOff]);
-
-  const help = getParameterHelp(parameter, mode);
-  const exactNote = typeof value === 'string' ? ` Exact model value: ${formatExactModelValue(value)}.` : '';
-  const info = `${help} Off sets this to the non-binding value ${offSentinel}.${exactNote}`;
-  const toggleName = `${parameter.key}-enabled`;
-
-  const handleOff = () => onChange(parameter, String(offSentinel));
-  const handleOn = () => {
-    if (isOff) {
-      onChange(parameter, lastOnValue.current);
-    }
-  };
-
-  return (
-    <div className="run-param-item cap-field">
-      <InfoLabel label={parameter.title} info={info} />
-      <span className="cap-toggle" role="radiogroup" aria-label={`${parameter.title} enabled`}>
-        <label className="cap-toggle-option">
-          <input type="radio" name={toggleName} checked={isOff} disabled={disabled} onChange={handleOff} />
-          <span>Off</span>
-        </label>
-        <label className="cap-toggle-option">
-          <input type="radio" name={toggleName} checked={!isOff} disabled={disabled} onChange={handleOn} />
-          <span>On</span>
-        </label>
-      </span>
-      {!isOff ? (
-        <ScaledNumberInput
-          storedValue={typeof value === 'string' ? value : ''}
-          scale={scale}
-          suffix={suffix}
-          disabled={disabled}
-          ariaLabel={`${parameter.title} value`}
-          onStoredChange={(next) => onChange(parameter, next)}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-const BASE_RATE_SCALE = 100;
-
-interface BaseRateFieldProps {
+interface PolicyValueFieldProps {
   parameter: ModelRunParameterDefinition;
   value: FormValue | undefined;
   basePolicyValue: number | undefined;
+  scale: number;
+  suffix: string;
   disabled: boolean;
   mode: ExperimentControlMode;
   onChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
 }
 
 /**
- * The initial base rate, shown and edited as a percentage. A "Use base policy value" checkbox makes
- * the two states unambiguous:
+ * A Central Bank policy value shown and edited in a human-friendly unit (base rate & affordability cap
+ * as a percentage, ICR floor as a ratio). A "Use base policy value" checkbox makes the two states
+ * unambiguous:
  *
- *  - Checked (default): the input is locked and greyed, showing the base policy's exact rate as a
- *    percentage (5.10833333%, at full precision — not the 2-dp rounded stand-in). On submit that
- *    exact stored fraction (0.0510833333) is passed through byte-for-byte.
+ *  - Checked (default): the input is locked and greyed, showing the base policy's exact value in its
+ *    display unit at full precision (5.10833333%, not the 2-dp rounded stand-in). On submit that exact
+ *    stored fraction (0.0510833333) is passed through byte-for-byte.
  *  - Unchecked: the box clears to empty so the user types a fresh override; whatever they type is
- *    submitted as a plain reading of the percentage (5.11 -> 0.0511). An empty box is left as an
+ *    submitted as a plain reading of the displayed unit (5.11% -> 0.0511). An empty box is left as an
  *    invalid/empty value for submit-time validation to catch.
  *
- * Re-checking discards any typed value and returns to the base policy fraction. Switching the base
- * policy returns to the checked state (the run controller already overwrites the stored value on a
+ * Re-checking discards any typed value and returns to the base policy value. Switching the base policy
+ * returns to the checked state (the run controller already overwrites the stored value on a
  * base-policy switch, so any override is discarded there regardless).
  */
-function BaseRateField({ parameter, value, basePolicyValue, disabled, mode, onChange }: BaseRateFieldProps) {
-  // Fall back to the current stored value if the base policy has no rate for this key (never expected
-  // for the base rate, but keeps the control usable rather than blank).
+function PolicyValueField({ parameter, value, basePolicyValue, scale, suffix, disabled, mode, onChange }: PolicyValueFieldProps) {
+  // Fall back to the current stored value if the base policy has no value for this key (not expected
+  // for these fields, but keeps the control usable rather than blank).
   const baseFraction =
     typeof basePolicyValue === 'number' && Number.isFinite(basePolicyValue)
       ? basePolicyValue
       : Number.parseFloat(typeof value === 'string' ? value : '');
   const baseFractionString = Number.isFinite(baseFraction) ? String(baseFraction) : '';
   // Full precision, not the 2-dp rounded display: while locked this is a read-out of the exact base
-  // policy rate (5.10833333%, not 5.11%), so it must not round the value it stands for.
-  const baseDisplay = formatExactScaled(baseFraction, BASE_RATE_SCALE);
+  // policy value, so it must not round the value it stands for.
+  const baseDisplay = formatExactScaled(baseFraction, scale);
 
   const [useBasePolicy, setUseBasePolicy] = useState(true);
   // Only meaningful while unchecked; empty means "type a fresh override" (the box clears on untick).
   const [editText, setEditText] = useState('');
 
-  // A base-policy switch changes the base fraction; return to carrying it through and clear any
+  // A base-policy switch changes the base value; return to carrying it through and clear any
   // half-typed override so re-unticking starts from an empty box again.
   useEffect(() => {
     setUseBasePolicy(true);
@@ -206,7 +81,7 @@ function BaseRateField({ parameter, value, basePolicyValue, disabled, mode, onCh
 
   const help = getParameterHelp(parameter, mode);
   const exactNote = typeof value === 'string' ? ` Exact model value: ${formatExactModelValue(value)}.` : '';
-  const info = `${help} Shown as a percentage. Keep "Use base policy value" ticked to submit the base policy's exact rate; untick to type your own percentage.${exactNote}`;
+  const info = `${help} Keep "Use base policy value" ticked to submit the base policy's exact value; untick to type your own.${exactNote}`;
 
   const handleToggle = (checked: boolean) => {
     setUseBasePolicy(checked);
@@ -218,13 +93,13 @@ function BaseRateField({ parameter, value, basePolicyValue, disabled, mode, onCh
 
   const handleEdit = (raw: string) => {
     setEditText(raw);
-    onChange(parameter, scaledInputToStoredFraction(raw, BASE_RATE_SCALE));
+    onChange(parameter, scaledInputToStoredFraction(raw, scale));
   };
 
   return (
     <div className="run-param-item cap-field">
       <InfoLabel label={parameter.title} info={info} />
-      <label className="base-rate-default-toggle">
+      <label className="policy-value-toggle">
         <input
           type="checkbox"
           checked={useBasePolicy}
@@ -240,12 +115,14 @@ function BaseRateField({ parameter, value, basePolicyValue, disabled, mode, onCh
           className={useBasePolicy ? 'cap-value-input--locked' : undefined}
           value={useBasePolicy ? baseDisplay : editText}
           disabled={disabled || useBasePolicy}
-          aria-label={`${parameter.title} percentage`}
+          aria-label={`${parameter.title} value`}
           onChange={(event) => handleEdit(event.target.value)}
         />
-        <span className="cap-value-suffix" aria-hidden="true">
-          %
-        </span>
+        {suffix ? (
+          <span className="cap-value-suffix" aria-hidden="true">
+            {suffix}
+          </span>
+        ) : null}
       </span>
     </div>
   );
@@ -254,8 +131,8 @@ function BaseRateField({ parameter, value, basePolicyValue, disabled, mode, onCh
 interface CentralBankPolicyInputProps {
   parameter: ModelRunParameterDefinition;
   value: FormValue | undefined;
-  // The selected base policy's value for this parameter, used by the base-rate field to carry the
-  // exact stored fraction through when "Use base policy value" is ticked.
+  // The selected base policy's value for this parameter, carried through byte-exact when "Use base
+  // policy value" is ticked.
   basePolicyValue?: number;
   executionDisabled: boolean;
   mode?: ExperimentControlMode;
@@ -264,9 +141,9 @@ interface CentralBankPolicyInputProps {
 
 /**
  * Renders a Central Bank policy field. The base rate, affordability cap and ICR floor get an
- * interpretability-focused control (percentage display, Off/On toggle for the non-binding
- * sentinels); every other field falls back to the standard numeric input. All variants write the
- * same numeric string back into the form value, so the submitted payload is unchanged.
+ * interpretability-focused control (a "Use base policy value" checkbox over a scaled-unit input);
+ * every other field falls back to the standard numeric input. All variants write the same numeric
+ * string back into the form value, so the submitted payload is unchanged.
  */
 export function CentralBankPolicyInput({
   parameter,
@@ -276,44 +153,17 @@ export function CentralBankPolicyInput({
   mode = 'manual',
   onChange
 }: CentralBankPolicyInputProps) {
-  if (parameter.key === BASE_RATE_KEY) {
+  const units = POLICY_FIELD_UNITS[parameter.key];
+  if (units) {
     return (
-      <BaseRateField
+      <PolicyValueField
         parameter={parameter}
         value={value}
         basePolicyValue={basePolicyValue}
+        scale={units.scale}
+        suffix={units.suffix}
         disabled={executionDisabled}
         mode={mode}
-        onChange={onChange}
-      />
-    );
-  }
-  if (parameter.key === AFFORDABILITY_KEY) {
-    return (
-      <CapField
-        parameter={parameter}
-        value={value}
-        disabled={executionDisabled}
-        mode={mode}
-        offSentinel={CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL}
-        onFallback={AFFORDABILITY_ON_FALLBACK}
-        scale={100}
-        suffix="%"
-        onChange={onChange}
-      />
-    );
-  }
-  if (parameter.key === ICR_KEY) {
-    return (
-      <CapField
-        parameter={parameter}
-        value={value}
-        disabled={executionDisabled}
-        mode={mode}
-        offSentinel={CENTRAL_BANK_ICR_OFF_SENTINEL}
-        onFallback={ICR_ON_FALLBACK}
-        scale={1}
-        suffix="×"
         onChange={onChange}
       />
     );

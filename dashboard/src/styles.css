@@ -1492,24 +1492,6 @@ code {
   background: #fff;
 }
 
-.cap-toggle {
-  display: inline-flex;
-  gap: 0.75rem;
-  align-items: center;
-}
-
-.cap-toggle-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.cap-toggle-option input[type='radio'] {
-  margin: 0;
-}
-
 .cap-value-field {
   display: flex;
   align-items: center;
@@ -1520,15 +1502,15 @@ code {
   flex: 1 1 auto;
 }
 
-/* Locked state for the base-rate field while "Use base policy value" is ticked: greyed and inert,
-   signalling that the base policy's exact rate is being carried through rather than edited. */
+/* Locked state for a policy field while "Use base policy value" is ticked: greyed and inert,
+   signalling that the base policy's exact value is being carried through rather than edited. */
 .cap-value-input--locked {
   background: rgba(17, 32, 24, 0.05);
   color: var(--muted);
   cursor: not-allowed;
 }
 
-.base-rate-default-toggle {
+.policy-value-toggle {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -1536,7 +1518,7 @@ code {
   cursor: pointer;
 }
 
-.base-rate-default-toggle input[type='checkbox'] {
+.policy-value-toggle input[type='checkbox'] {
   margin: 0;
 }
 

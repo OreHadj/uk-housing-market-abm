@@ -6,9 +6,6 @@
 const DISPLAY_DECIMALS = 2;
 const DISPLAY_ROUNDING = 10 ** DISPLAY_DECIMALS;
 
-// Comparison tolerance for deciding whether a stored fraction equals another.
-const VALUE_EPSILON = 1e-9;
-
 /** Rounds a stored model-unit fraction to the value shown in a scaled unit (e.g. base rate → %). */
 export function roundScaled(fraction: number, scale: number): number {
   return Math.round(fraction * scale * DISPLAY_ROUNDING) / DISPLAY_ROUNDING;
@@ -59,11 +56,6 @@ function serializeFraction(fraction: number): string {
   return String(Number(fraction.toPrecision(15)));
 }
 
-/** True when a scaled input rounds to the same two-decimal display as the canonical fraction. */
-function displaysMatchCanonical(scaledInput: number, canonicalFraction: number, scale: number): boolean {
-  return Math.round(scaledInput * DISPLAY_ROUNDING) === Math.round(canonicalFraction * scale * DISPLAY_ROUNDING);
-}
-
 /**
  * Converts a value typed into a scaled field (e.g. "5.11" at scale 100) to the stored model-unit
  * fraction string, free of binary-float noise ("5.11" -> "0.0511", never "0.051100000000000007").
@@ -78,24 +70,6 @@ export function scaledInputToStoredFraction(rawInput: string, scale: number): st
   return serializeFraction(parsed / scale);
 }
 
-/**
- * Decides the stored model-unit fraction after the user types `rawInput` into a scaled field.
- *
- * `canonical` is the exact fraction the field was last seeded with (base policy or reset). While the
- * typed value still displays as the canonical, the exact fraction is preserved byte-for-byte, so the
- * rounded display ("5.11%") never silently rewrites the model input it stood for (0.0510833333). Any
- * genuinely different display stores the newly typed value at display precision, free of float noise.
- * Non-numeric / mid-edit text passes through unchanged for submit-time validation to catch.
- */
-export function resolveEditedStoredValue(canonical: string, rawInput: string, scale: number): string {
-  const parsed = Number.parseFloat(rawInput);
-  const canonicalFraction = Number.parseFloat(canonical);
-  if (Number.isFinite(parsed) && Number.isFinite(canonicalFraction) && displaysMatchCanonical(parsed, canonicalFraction, scale)) {
-    return canonical;
-  }
-  return scaledInputToStoredFraction(rawInput, scale);
-}
-
 /** Formats a stored fraction for the "exact model value" tooltip, stripping any binary-float noise. */
 export function formatExactModelValue(value: string): string {
   const parsed = Number.parseFloat(value);
@@ -103,9 +77,4 @@ export function formatExactModelValue(value: string): string {
     return value;
   }
   return String(Number(parsed.toPrecision(15)));
-}
-
-/** True when two stored fractions are equal within display tolerance. */
-export function fractionsEqual(left: number, right: number): boolean {
-  return Math.abs(left - right) <= VALUE_EPSILON;
 }
