@@ -238,7 +238,7 @@ export function App() {
         <div className="brand-wrap">
           <p className="eyebrow">Max Stoddard BEng Individual Project</p>
           <div className="brand-heading-row">
-            <h1 className="brand-title">UK Housing Market ABM</h1>
+            <h1 className="brand-title">UK Housing Market Model</h1>
             {isDevEnv && (
               <div className="env-controls">
                 <span className="env-pill-dev">{activeViewModeLabel}</span>
