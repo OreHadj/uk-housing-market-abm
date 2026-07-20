@@ -2059,59 +2059,57 @@ code {
   max-width: 78ch;
 }
 
-.default-run-actions {
+.home-effect-list {
+  margin: 0.85rem 0 0;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 0.4rem;
+  color: var(--text);
+}
+
+.home-research-notice {
+  margin-top: 1.25rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(11, 114, 133, 0.25);
+  border-radius: 0.75rem;
+  background: #eef7f5;
+  color: var(--text);
+}
+
+.home-research-notice strong {
+  display: block;
+}
+
+.intro-card .home-research-notice p {
+  margin-top: 0.3rem;
+}
+
+.home-primary-action {
+  margin-top: 1.3rem;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 0.6rem 0.9rem;
-  margin-top: 1.2rem;
 }
 
-.default-run-button {
+.home-scenario-button {
   font-size: 1rem;
   padding: 0.7rem 1.3rem;
 }
 
-.default-run-hint {
+.intro-card .home-primary-action p {
+  margin: 0;
   color: var(--muted);
   font-size: 0.85rem;
   max-width: 42ch;
 }
 
-.default-run-expert-link {
-  display: inline-block;
-  margin-top: 0.75rem;
-}
-
-.default-run-name {
-  margin-top: 1.2rem;
-  display: grid;
-  gap: 0.4rem;
-  max-width: 32rem;
-}
-
-.default-run-name label {
-  font-weight: 700;
-  color: var(--text);
-}
-
-.default-run-name input {
-  padding: 0.55rem 0.7rem;
-  border: 1px solid rgba(17, 32, 24, 0.18);
-  border-radius: 0.6rem;
-  font-size: 1rem;
-}
-
-.default-run-name .default-run-hint {
-  margin: 0;
-}
-
-.default-run-name .default-run-actions {
-  margin-top: 0.5rem;
-}
-
-.default-run-error {
-  margin-top: 0.9rem;
+.home-secondary-actions {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1.1rem;
+  font-size: 0.9rem;
 }
 
 .home-about {

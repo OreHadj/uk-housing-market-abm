@@ -8478,21 +8478,37 @@ assert.ok(
   !homePageSource.includes('Just Launched'),
   'Home page should no longer render the launch badge'
 );
-// The remade Home page is a minimal task-first launchpad: a one-line intro plus the Default Run
-// button, with no preview chart or author/portfolio material.
+// The Home page is a policy-first launchpad. It explains the research purpose and routes users to
+// review manual policy settings without submitting a run.
 assert.ok(
-  homePageSource.includes('A UK housing-market simulator for testing central-bank (macroprudential) policy.'),
-  'Home page should open with the plain-English statement of what the tool is'
+  homePageSource.includes('UK Housing Policy Simulation') &&
+    homePageSource.includes('Use this agent-based model to explore how changes to mortgage-policy settings may affect'),
+  'Home page should open with a plain-English explanation of the policy simulation'
 );
 assert.ok(
-  homePageSource.includes('onStartDefaultRun') &&
-    homePageSource.includes('buildDefaultRunSubmitRequest') &&
-    homePageSource.includes('className="primary-button default-run-button"'),
-  'Home page should provide a prominent Default Run button wired to the default-run submit path'
+  appSource.includes('UK Housing Market Model') && !appSource.includes('UK Housing Market ABM'),
+  'Application heading should not require users to understand an unexplained acronym'
 );
 assert.ok(
-  homePageSource.includes("buildExperimentsPath({ ...DEFAULT_EXPERIMENT_ROUTE_STATE, type: 'manual', mode: 'view' })"),
-  'Home Default Run should queue the run and route to the Results view, not the run-configuration form'
+  homePageSource.includes('className="primary-button home-scenario-button"') &&
+    homePageSource.includes('to="/results?type=manual&mode=run"') &&
+    homePageSource.includes('Create a policy scenario'),
+  'Home page should provide one prominent action leading to manual scenario creation'
+);
+assert.ok(
+  !homePageSource.includes('submitModelRun') &&
+    !homePageSource.includes('buildDefaultRunSubmitRequest') &&
+    !homePageSource.includes('Run a demo simulation'),
+  'Home page onboarding should not submit or advertise an opaque default run'
+);
+assert.ok(
+  homePageSource.includes('Research simulation — not a policy forecast') &&
+    homePageSource.includes('not forecasts, official Bank of England projections, or policy recommendations'),
+  'Home page should clearly disclaim forecast, official projection, and recommendation interpretations'
+);
+assert.ok(
+  homePageSource.includes('to="/results?type=manual&mode=view"') && homePageSource.includes('to="/calibration"'),
+  'Home page should provide lower-emphasis links to existing runs and model information'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&
