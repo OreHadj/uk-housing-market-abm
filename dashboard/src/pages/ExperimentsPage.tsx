@@ -67,15 +67,11 @@ export function ExperimentsPage({
   const copy = useMemo(() => workspace === 'manual' ? {
     heading: 'Policy scenarios',
     description: 'Create a policy scenario, monitor its simulation runs, and open completed results.',
-    action: 'Create policy scenario',
-    createPath: '/scenarios/new',
     resultsAction: 'View completed scenario results',
     resultsPath: '/scenarios?view=results'
   } : {
     heading: 'Sensitivity analyses',
     description: 'Test how results change when a policy setting is varied across a range of values.',
-    action: 'Create sensitivity analysis',
-    createPath: '/sensitivity/new',
     resultsAction: 'View sensitivity results',
     resultsPath: '/sensitivity?view=results'
   }, [workspace]);
@@ -89,10 +85,7 @@ export function ExperimentsPage({
         </div>
         <div className="workspace-heading-actions">
           {initialView !== 'create' && !viewingResults && (
-            <>
-              <Link className="primary-button" to={copy.createPath}>{copy.action}</Link>
-              <Link className="secondary-button" to={copy.resultsPath}>{copy.resultsAction}</Link>
-            </>
+            <Link className="secondary-button" to={copy.resultsPath}>{copy.resultsAction}</Link>
           )}
           {(initialView === 'create' || viewingResults) && <Link className="secondary-button" to={workspace === 'manual' ? '/scenarios' : '/sensitivity'}>Back to workspace</Link>}
         </div>
