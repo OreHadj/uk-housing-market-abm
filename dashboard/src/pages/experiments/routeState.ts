@@ -134,6 +134,24 @@ export function buildExperimentSearchParams(state: ExperimentRouteState): URLSea
 }
 
 export function buildExperimentsPath(state: ExperimentRouteState): string {
-  const query = buildExperimentSearchParams(state).toString();
-  return query ? `/results?${query}` : '/results';
+  const normalised = normaliseExperimentRouteState(state);
+  const params = new URLSearchParams();
+  if (normalised.mode === 'run' && normalised.jobRef) {
+    params.set('jobRef', normalised.jobRef);
+    if (normalised.follow) params.set('follow', '1');
+  }
+  if (normalised.mode === 'view' && normalised.type === 'manual' && normalised.baselineRunId) {
+    params.set('baselineRunId', normalised.baselineRunId);
+    if (normalised.comparisonRunId) params.set('comparisonRunId', normalised.comparisonRunId);
+  }
+  if (normalised.mode === 'view' && normalised.type === 'sensitivity' && normalised.experimentId) {
+    params.set('experimentId', normalised.experimentId);
+  }
+  const basePath = normalised.type === 'sensitivity'
+    ? '/sensitivity'
+    : normalised.mode === 'view' && normalised.comparisonRunId
+      ? '/compare'
+      : '/scenarios';
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
 }

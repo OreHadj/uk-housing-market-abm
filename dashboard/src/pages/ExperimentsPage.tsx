@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { experimentTypeRegistry } from './experiments/registry';
-import {
-  buildExperimentSearchParams,
-  parseExperimentRouteState
-} from './experiments/routeState';
+import { useCallback, useMemo } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
-import type { ExperimentMode, ExperimentRouteState, ExperimentType } from './experiments/types';
+import { ManualResultsView } from './experiments/view/ManualResultsView';
+import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
+import type { ExperimentType } from './experiments/types';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -14,10 +11,31 @@ interface ExperimentsPageProps {
   canDeleteResults: boolean;
   deleteKeyRequired: boolean;
   authEnabled: boolean;
-  defaultType?: ExperimentType;
-  defaultMode?: ExperimentMode;
-  focusedScenarioBuilder?: boolean;
-  showRunManagement?: boolean;
+  workspace: ExperimentType;
+  initialView?: 'create' | 'workspace';
+}
+
+type ResultsAccessProps = Pick<ExperimentsPageProps,
+  'canWrite' | 'canDownloadResults' | 'canDeleteResults' | 'deleteKeyRequired' | 'authEnabled'>;
+
+export function ManualComparisonPage(props: ResultsAccessProps) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const baselineRunId = searchParams.get('baselineRunId')?.trim() || searchParams.get('runId')?.trim() || '';
+  const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
+  return (
+    <section className="run-exp-layout workspace-page">
+      <article className="results-card workspace-heading">
+        <div><h2>Compare policy scenario results</h2><p>Compare completed ordinary policy scenario runs against a benchmark or another policy run.</p></div>
+      </article>
+      <ManualResultsView
+        {...props}
+        requestedBaselineRunId={baselineRunId}
+        requestedComparisonRunId={comparisonRunId}
+        onManualSelectionChange={(selection) => setSearchParams(selection, { replace: true })}
+        sidebarSubtitle="Completed policy scenario runs"
+      />
+    </section>
+  );
 }
 
 export function ExperimentsPage({
@@ -26,128 +44,98 @@ export function ExperimentsPage({
   canDeleteResults,
   deleteKeyRequired,
   authEnabled,
-  defaultType,
-  defaultMode,
-  focusedScenarioBuilder = false,
-  showRunManagement = true
+  workspace,
+  initialView = 'workspace'
 }: ExperimentsPageProps) {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const rawQuery = searchParams.toString();
+  const selectedJobRef = searchParams.get('jobRef')?.trim() ?? '';
+  const baselineRunId = searchParams.get('baselineRunId')?.trim() || searchParams.get('runId')?.trim() || '';
+  const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
+  const experimentId = searchParams.get('experimentId')?.trim() ?? '';
+  const viewingResults = searchParams.get('view') === 'results' || (workspace === 'manual' ? Boolean(baselineRunId) : Boolean(experimentId));
 
-  const routeState = useMemo(() => {
-    const paramsWithRouteDefaults = new URLSearchParams(searchParams);
-    if (defaultType && !paramsWithRouteDefaults.has('type')) {
-      paramsWithRouteDefaults.set('type', defaultType);
+  const updateSearch = useCallback((updates: Record<string, string>) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
     }
-    if (defaultMode && !paramsWithRouteDefaults.has('mode')) {
-      paramsWithRouteDefaults.set('mode', defaultMode);
-    }
-    return parseExperimentRouteState(paramsWithRouteDefaults);
-  }, [defaultMode, defaultType, searchParams]);
-  const canonicalQuery = useMemo(() => buildExperimentSearchParams(routeState).toString(), [routeState]);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
-  useEffect(() => {
-    if (canonicalQuery === rawQuery) {
-      return;
-    }
-    setSearchParams(canonicalQuery, { replace: true });
-  }, [canonicalQuery, rawQuery, setSearchParams]);
-
-  const updateRouteState = useCallback(
-    (patch: Partial<ExperimentRouteState>, replace = false) => {
-      const nextState: ExperimentRouteState = {
-        ...routeState,
-        ...patch
-      };
-      const nextQuery = buildExperimentSearchParams(nextState).toString();
-      if (nextQuery === rawQuery) {
-        return;
-      }
-      setSearchParams(nextQuery, { replace });
-    },
-    [rawQuery, routeState, setSearchParams]
-  );
-
-  const activeConfig = experimentTypeRegistry[routeState.type];
+  const copy = useMemo(() => workspace === 'manual' ? {
+    heading: 'Policy scenarios',
+    description: 'Create a policy scenario, monitor its simulation runs, and open completed results.',
+    action: 'Create policy scenario',
+    createPath: '/scenarios/new',
+    resultsAction: 'View completed scenario results',
+    resultsPath: '/scenarios?view=results'
+  } : {
+    heading: 'Sensitivity analyses',
+    description: 'Test how results change when a policy setting is varied across a range of values.',
+    action: 'Create sensitivity analysis',
+    createPath: '/sensitivity/new',
+    resultsAction: 'View sensitivity results',
+    resultsPath: '/sensitivity?view=results'
+  }, [workspace]);
 
   return (
-    <section className={`run-exp-layout ${focusedScenarioBuilder ? 'new-scenario-page' : ''}`}>
-      <article className={focusedScenarioBuilder ? 'experiment-workspace-switcher' : 'results-card'}>
-        <h2>{focusedScenarioBuilder ? 'Scenarios' : 'Results'}</h2>
-        <p>
-          {focusedScenarioBuilder
-            ? 'Create a policy scenario, then monitor its simulation in the same workspace.'
-            : 'Browse completed model runs and their results. Launch a new run or a sensitivity sweep from the Run Experiment tab.'}
-        </p>
-
-        <details className={focusedScenarioBuilder ? 'scenario-other-tools' : 'experiment-tools-open'} open={!focusedScenarioBuilder}>
-          {focusedScenarioBuilder && <summary>Other experiment tools</summary>}
-          <div className={`experiment-tabs ${focusedScenarioBuilder ? 'experiment-tabs-secondary' : ''}`}>
-            {(Object.keys(experimentTypeRegistry) as ExperimentType[]).map((type) => (
-              <button
-                key={type}
-                type="button"
-                className={`filter-pill ${routeState.type === type ? 'active' : ''}`}
-                onClick={() => updateRouteState({ type })}
-              >
-                {experimentTypeRegistry[type].label}
-              </button>
-            ))}
-          </div>
-
-          <div className={`experiment-tabs ${focusedScenarioBuilder ? 'experiment-tabs-secondary' : ''}`}>
-            <button
-              type="button"
-              className={`filter-pill ${routeState.mode === 'run' ? 'active' : ''}`}
-              onClick={() => updateRouteState({ mode: 'run' })}
-            >
-              Run Experiment
-            </button>
-            <button
-              type="button"
-              className={`filter-pill ${routeState.mode === 'view' ? 'active' : ''}`}
-              onClick={() => updateRouteState({ mode: 'view' })}
-            >
-              View Experiment Results
-            </button>
-          </div>
-        </details>
+    <section className="run-exp-layout workspace-page">
+      <article className="results-card workspace-heading">
+        <div>
+          <h2>{copy.heading}</h2>
+          <p>{copy.description}</p>
+        </div>
+        <div className="workspace-heading-actions">
+          {initialView !== 'create' && !viewingResults && (
+            <>
+              <Link className="primary-button" to={copy.createPath}>{copy.action}</Link>
+              <Link className="secondary-button" to={copy.resultsPath}>{copy.resultsAction}</Link>
+            </>
+          )}
+          {(initialView === 'create' || viewingResults) && <Link className="secondary-button" to={workspace === 'manual' ? '/scenarios' : '/sensitivity'}>Back to workspace</Link>}
+        </div>
       </article>
 
-      {routeState.mode === 'run' ? (
-        <ExperimentRunMode
-          activeType={routeState.type}
-          canWrite={canWrite}
-          canDownloadResults={canDownloadResults}
-          canDeleteResults={canDeleteResults}
-          deleteKeyRequired={deleteKeyRequired}
-          authEnabled={authEnabled}
-          selectedJobRef={routeState.jobRef}
-          followJobRef={routeState.follow ? routeState.jobRef : ''}
-          onSelectedJobRefChange={(jobRef) => updateRouteState({ jobRef }, true)}
-          onOpenManualResults={(runId) =>
-            updateRouteState({ mode: 'view', type: 'manual', baselineRunId: runId, comparisonRunId: '' })
-          }
-          onOpenSensitivityResults={(experimentId) =>
-            updateRouteState({ mode: 'view', type: 'sensitivity', experimentId })
-          }
-          showRunManagement={showRunManagement}
-        />
+      {viewingResults ? (
+        workspace === 'manual' ? (
+          <ManualResultsView
+            canWrite={canWrite}
+            canDownloadResults={canDownloadResults}
+            canDeleteResults={canDeleteResults}
+            deleteKeyRequired={deleteKeyRequired}
+            authEnabled={authEnabled}
+            requestedBaselineRunId={baselineRunId}
+            requestedComparisonRunId={comparisonRunId}
+            onManualSelectionChange={(selection) => updateSearch(selection)}
+            sidebarSubtitle="Policy scenario runs"
+          />
+        ) : (
+          <SensitivityResultsView
+            canWrite={canWrite}
+            canDownloadResults={canDownloadResults}
+            canDeleteResults={canDeleteResults}
+            deleteKeyRequired={deleteKeyRequired}
+            authEnabled={authEnabled}
+            requestedExperimentId={experimentId}
+            onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
+            sidebarSubtitle="Sensitivity analyses"
+          />
+        )
       ) : (
-        <activeConfig.ViewComponent
+        <ExperimentRunMode
+          activeType={workspace}
           canWrite={canWrite}
           canDownloadResults={canDownloadResults}
           canDeleteResults={canDeleteResults}
           deleteKeyRequired={deleteKeyRequired}
           authEnabled={authEnabled}
-          requestedBaselineRunId={routeState.baselineRunId}
-          requestedComparisonRunId={routeState.comparisonRunId}
-          requestedExperimentId={routeState.experimentId}
-          onManualSelectionChange={({ baselineRunId, comparisonRunId }) =>
-            updateRouteState({ baselineRunId, comparisonRunId }, true)
-          }
-          onSelectedExperimentIdChange={(experimentId) => updateRouteState({ experimentId }, true)}
-          sidebarSubtitle={activeConfig.viewSidebarSubtitle}
+          selectedJobRef={selectedJobRef}
+          followJobRef={searchParams.get('follow') === '1' ? selectedJobRef : ''}
+          onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
+          onOpenManualResults={(runId) => navigate(`/scenarios?baselineRunId=${encodeURIComponent(runId)}`)}
+          onOpenSensitivityResults={(id) => navigate(`/sensitivity?experimentId=${encodeURIComponent(id)}`)}
         />
       )}
     </section>

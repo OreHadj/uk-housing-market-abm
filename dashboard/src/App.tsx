@@ -9,7 +9,7 @@ import {
   setApiViewMode
 } from './lib/api';
 import { ComparePage } from './pages/ComparePage';
-import { ExperimentsPage } from './pages/ExperimentsPage';
+import { ExperimentsPage, ManualComparisonPage } from './pages/ExperimentsPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { ValidationPage } from './pages/ValidationPage';
@@ -17,9 +17,9 @@ import { ValidationPage } from './pages/ValidationPage';
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
-const EXPERIMENTS_VIEW_PATH = '/results?mode=view&type=manual';
+const EXPERIMENTS_VIEW_PATH = '/scenarios';
 
-type PrimaryDestination = 'home' | 'scenarios' | 'compare' | 'calibration' | 'validation';
+type PrimaryDestination = 'home' | 'scenarios' | 'sensitivity' | 'compare' | 'calibration' | 'validation';
 
 function getActivePrimaryDestination(pathname: string, search: string): PrimaryDestination | null {
   if (pathname === '/') return 'home';
@@ -28,15 +28,23 @@ function getActivePrimaryDestination(pathname: string, search: string): PrimaryD
 
   const params = new URLSearchParams(search);
   const type = params.get('type');
-  const mode = params.get('mode');
-  if (pathname === '/scenarios' || pathname === '/runs' || pathname === '/new-scenario') {
-    return mode === 'view' && type === 'manual' ? 'compare' : 'scenarios';
-  }
-  if (pathname === '/compare') return type === 'sensitivity' ? null : 'compare';
+  if (pathname === '/scenarios' || pathname === '/scenarios/new' || pathname === '/runs' || pathname === '/new-scenario') return 'scenarios';
+  if (pathname === '/sensitivity' || pathname === '/sensitivity/new') return 'sensitivity';
+  if (pathname === '/compare') return 'compare';
   if (pathname !== '/results') return null;
-  if (type === 'sensitivity') return mode === 'run' ? 'scenarios' : null;
-  if (mode === 'run') return 'scenarios';
-  return 'compare';
+  return type === 'sensitivity' ? 'sensitivity' : 'scenarios';
+}
+
+function LegacyResultsRedirect() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const sensitivity = params.get('type') === 'sensitivity';
+  const viewingResults = params.get('mode') === 'view';
+  params.delete('type');
+  params.delete('mode');
+  if (viewingResults) params.set('view', 'results');
+  const query = params.toString();
+  return <Navigate to={`${sensitivity ? '/sensitivity' : '/scenarios'}${query ? `?${query}` : ''}`} replace />;
 }
 
 const DEFAULT_AUTH_STATUS: AuthStatusPayload = {
@@ -288,6 +296,9 @@ export function App() {
             <NavLink className={activePrimaryDestination === 'scenarios' ? 'active' : undefined} to="/scenarios">
               Scenarios
             </NavLink>
+            <NavLink className={activePrimaryDestination === 'sensitivity' ? 'active' : undefined} to="/sensitivity">
+              Sensitivity
+            </NavLink>
             <NavLink className={activePrimaryDestination === 'compare' ? 'active' : undefined} to="/compare">
               Compare results
             </NavLink>
@@ -377,15 +388,12 @@ export function App() {
                   canDeleteResults={authStatus.canDeleteResults}
                   deleteKeyRequired={authStatus.deleteKeyRequired}
                   authEnabled={authStatus.authEnabled}
-                  defaultType="manual"
-                  defaultMode="run"
-                  focusedScenarioBuilder
-                  showRunManagement
+                  workspace="manual"
                 />
               }
             />
             <Route
-              path="/new-scenario"
+              path="/scenarios/new"
               element={
                 <ExperimentsPage
                   canWrite={authStatus.canWrite}
@@ -393,15 +401,15 @@ export function App() {
                   canDeleteResults={authStatus.canDeleteResults}
                   deleteKeyRequired={authStatus.deleteKeyRequired}
                   authEnabled={authStatus.authEnabled}
-                  defaultType="manual"
-                  defaultMode="run"
-                  focusedScenarioBuilder
-                  showRunManagement
+                  workspace="manual"
+                  initialView="create"
                 />
               }
             />
+            <Route path="/new-scenario" element={<Navigate to="/scenarios/new" replace />} />
+            <Route path="/runs" element={<Navigate to="/scenarios" replace />} />
             <Route
-              path="/runs"
+              path="/sensitivity"
               element={
                 <ExperimentsPage
                   canWrite={authStatus.canWrite}
@@ -409,41 +417,34 @@ export function App() {
                   canDeleteResults={authStatus.canDeleteResults}
                   deleteKeyRequired={authStatus.deleteKeyRequired}
                   authEnabled={authStatus.authEnabled}
-                  defaultType="manual"
-                  defaultMode="run"
-                  focusedScenarioBuilder
-                  showRunManagement
+                  workspace="sensitivity"
+                />
+              }
+            />
+            <Route
+              path="/sensitivity/new"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  workspace="sensitivity"
+                  initialView="create"
                 />
               }
             />
             <Route
               path="/compare"
-              element={
-                <ExperimentsPage
-                  canWrite={authStatus.canWrite}
-                  canDownloadResults={authStatus.canDownloadResults}
-                  canDeleteResults={authStatus.canDeleteResults}
-                  deleteKeyRequired={authStatus.deleteKeyRequired}
-                  authEnabled={authStatus.authEnabled}
-                  defaultType="manual"
-                  defaultMode="view"
-                />
-              }
+              element={<ManualComparisonPage canWrite={authStatus.canWrite} canDownloadResults={authStatus.canDownloadResults} canDeleteResults={authStatus.canDeleteResults} deleteKeyRequired={authStatus.deleteKeyRequired} authEnabled={authStatus.authEnabled} />}
             />
             <Route path="/calibration" element={<ComparePage />} />
             {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
             {experimentsVisible && (
               <Route
                 path="/results"
-                element={
-                  <ExperimentsPage
-                    canWrite={authStatus.canWrite}
-                    canDownloadResults={authStatus.canDownloadResults}
-                    canDeleteResults={authStatus.canDeleteResults}
-                    deleteKeyRequired={authStatus.deleteKeyRequired}
-                    authEnabled={authStatus.authEnabled}
-                  />
-                }
+                element={<LegacyResultsRedirect />}
               />
             )}
             {experimentsVisible && (

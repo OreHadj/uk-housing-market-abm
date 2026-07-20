@@ -8174,6 +8174,10 @@ assert.ok(
   'App should expose one shared Scenarios destination in the header'
 );
 assert.ok(
+  appSource.includes('to="/sensitivity"') && appSource.includes('Sensitivity'),
+  'App should expose Sensitivity as a separate primary destination'
+);
+assert.ok(
   appSource.includes('to="/compare"') && appSource.includes('Compare results'),
   'App should expose the semantic Compare results destination in the header'
 );
@@ -8190,8 +8194,17 @@ assert.ok(
   'App should replace the broad Results navigation label without introducing Model information'
 );
 assert.ok(
-  appSource.includes("if (type === 'sensitivity') return mode === 'run' ? 'scenarios' : null;"),
-  'Sensitivity setup should map honestly to Scenarios while sensitivity results have no misleading manual active state'
+  appSource.includes("return type === 'sensitivity' ? 'sensitivity' : 'scenarios';"),
+  'Legacy result routes should activate the workspace matching their experiment type'
+);
+assert.ok(
+  appSource.includes('path="/scenarios/new"') && appSource.includes('path="/sensitivity/new"'),
+  'App should register dedicated creation routes for both workspaces'
+);
+assert.ok(
+  appSource.includes('<Route path="/new-scenario" element={<Navigate to="/scenarios/new" replace />} />') &&
+    appSource.includes('<Route path="/runs" element={<Navigate to="/scenarios" replace />} />'),
+  'Legacy scenario routes should resolve to the scenarios workspace'
 );
 assert.ok(
   appSource.includes('{validationVisible && <Route path="/validation" element={<ValidationPage />} />}'),
@@ -8199,7 +8212,28 @@ assert.ok(
 );
 assert.ok(
   appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/results\""),
-  'App should register the experiments route from the always-enabled experiments visibility flag'
+  'App should retain the legacy results route'
+);
+
+const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsPage.tsx'), 'utf-8');
+assert.ok(
+  experimentsPageSource.includes("heading: 'Policy scenarios'") &&
+    experimentsPageSource.includes("heading: 'Sensitivity analyses'") &&
+    experimentsPageSource.includes("action: 'Create policy scenario'") &&
+    experimentsPageSource.includes("action: 'Create sensitivity analysis'") &&
+    experimentsPageSource.includes("resultsAction: 'View completed scenario results'") &&
+    experimentsPageSource.includes("resultsAction: 'View sensitivity results'"),
+  'Scenario and sensitivity workspaces should have distinct headings, creation actions, and result-browsing actions'
+);
+assert.ok(
+  !experimentsPageSource.includes('Manual Parameters') &&
+    !experimentsPageSource.includes('Run Experiment') &&
+    !experimentsPageSource.includes('View Experiment Results'),
+  'Separated workspaces should not expose the old page-level mode terminology'
+);
+assert.ok(
+  experimentRunModeSource.includes("controller.jobs.filter((job) => job.type === activeType)"),
+  'Each workspace should show only jobs of its own type'
 );
 assert.ok(
   appSource.includes('await desktopApi.getApiAuthToken()') &&

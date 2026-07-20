@@ -2682,6 +2682,27 @@ code {
   transform: translateY(-1px);
 }
 
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.workspace-heading .primary-button,
+.workspace-heading .secondary-button {
+  flex: 0 0 auto;
+  text-decoration: none;
+}
+
+.workspace-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
 .danger-button {
   border: 1px solid rgba(201, 42, 42, 0.3);
   background: #fff5f5;

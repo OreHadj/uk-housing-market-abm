@@ -36,7 +36,7 @@ export function buildDefaultRunTitle(now: Date = new Date()): string {
 
 /**
  * Builds the manual-run submit payload for the Default Run, reusing the exact helpers the
- * Manual Parameters tab uses so it goes through the same queue path with no duplicated logic.
+ * policy scenario workspace uses so it goes through the same queue path with no duplicated logic.
  */
 export function buildDefaultRunSubmitRequest(
   options: ModelRunOptionsPayload,

@@ -52,6 +52,7 @@ export function ExperimentRunMode({
 
   const runActionsDisabled = controller.executionDisabled || !canWrite;
   const RunSetupComponent = experimentTypeRegistry[activeType].RunSetupComponent;
+  const workspaceJobs = controller.jobs.filter((job) => job.type === activeType);
 
   const downloadJobResults = async (job: ExperimentJobSummary) => {
     if (!canDownloadResults) {
@@ -116,14 +117,14 @@ export function ExperimentRunMode({
               baselineRunId: controller.pendingRunId
             })}
           >
-            View Experiment Results
+            View results
           </Link>
         </p>
       )}
 
       {controller.pendingSensitivityExperimentId && (
         <p className="waiting-banner">
-          Sensitivity experiment completed. Redirecting to results...{' '}
+          Sensitivity analysis completed. Redirecting to results...{' '}
           <Link
             to={buildExperimentsPath({
               ...DEFAULT_EXPERIMENT_ROUTE_STATE,
@@ -132,7 +133,7 @@ export function ExperimentRunMode({
               experimentId: controller.pendingSensitivityExperimentId
             })}
           >
-            View Experiment Results
+            View results
           </Link>
         </p>
       )}
@@ -168,7 +169,8 @@ export function ExperimentRunMode({
         {showRunManagement && (
           <>
             <ExperimentQueueCard
-              jobs={controller.jobs}
+              jobs={workspaceJobs}
+              workspaceType={activeType}
               isLoading={controller.isLoadingJobs}
               selectedJobRef={selectedJobRef}
               onSelectJobRef={onSelectedJobRefChange}

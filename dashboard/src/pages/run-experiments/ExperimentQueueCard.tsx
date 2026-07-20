@@ -20,7 +20,7 @@ function formatStatus(status: ExperimentJobSummary['status']): string {
 }
 
 function typeLabel(type: ExperimentJobSummary['type']): string {
-  return type === 'manual' ? 'Manual' : 'Sensitivity';
+  return type === 'manual' ? 'Policy scenario' : 'Sensitivity analysis';
 }
 
 function isFinishedStatus(status: ExperimentJobSummary['status']): boolean {
@@ -29,6 +29,7 @@ function isFinishedStatus(status: ExperimentJobSummary['status']): boolean {
 
 interface ExperimentQueueCardProps {
   jobs: ExperimentJobSummary[];
+  workspaceType: ExperimentJobSummary['type'];
   isLoading: boolean;
   selectedJobRef: string;
   onSelectJobRef: (jobRef: string) => void;
@@ -45,6 +46,7 @@ interface ExperimentQueueCardProps {
 
 export function ExperimentQueueCard({
   jobs,
+  workspaceType,
   isLoading,
   selectedJobRef,
   onSelectJobRef,
@@ -60,11 +62,13 @@ export function ExperimentQueueCard({
 }: ExperimentQueueCardProps) {
   return (
     <article className="results-card">
-      <h3>Experiment Queue</h3>
+      <h3>{workspaceType === 'manual' ? 'Policy scenario runs' : 'Sensitivity analysis history'}</h3>
       {isLoading ? (
         <p className="loading-banner">Loading experiment jobs...</p>
       ) : jobs.length === 0 ? (
-        <p className="info-banner">No experiment jobs submitted yet.</p>
+        <p className="info-banner">
+          {workspaceType === 'manual' ? 'No policy scenario runs submitted yet.' : 'No sensitivity analyses submitted yet.'}
+        </p>
       ) : (
         <ul className="job-list">
           {jobs.map((job) => (
@@ -98,17 +102,17 @@ export function ExperimentQueueCard({
                   {job.type === 'manual' && job.status === 'succeeded' && job.runId && (
                     <Link
                       className="summary-link-inline"
-                      to={`/results?type=manual&mode=view&baselineRunId=${encodeURIComponent(job.runId)}`}
+                      to={`/scenarios?baselineRunId=${encodeURIComponent(job.runId)}`}
                     >
-                      View Experiment Results
+                      View results
                     </Link>
                   )}
                   {job.type === 'sensitivity' && job.status === 'succeeded' && (
                     <Link
                       className="summary-link-inline"
-                      to={`/results?type=sensitivity&mode=view&experimentId=${encodeURIComponent(job.id)}`}
+                      to={`/sensitivity?experimentId=${encodeURIComponent(job.id)}`}
                     >
-                      View Experiment Results
+                      View results
                     </Link>
                   )}
                   {job.status === 'succeeded' && (
@@ -116,7 +120,7 @@ export function ExperimentQueueCard({
                       authEnabled ? (
                         <Link
                           className="summary-link-inline"
-                          to={`/login?next=${encodeURIComponent(`/results?type=${job.type}&mode=run`)}`}
+                          to={`/login?next=${encodeURIComponent(job.type === 'manual' ? '/scenarios' : '/sensitivity')}`}
                         >
                           Login to Download
                         </Link>
