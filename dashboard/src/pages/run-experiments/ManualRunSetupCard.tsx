@@ -301,71 +301,15 @@ export function ManualRunSetupCard({
               </section>
             )}
 
-            <details
-              className="scenario-advanced"
-              open={advancedOpen}
-              onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+            <button
+              type="button"
+              className={`scenario-advanced-toggle ${advancedOpen ? 'active' : ''}`}
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((open) => !open)}
             >
-              <summary>Advanced simulation settings</summary>
-              <div className="scenario-advanced-content">
-                <div className="scenario-fields-grid">
-                  <label className="scenario-field">
-                    <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
-                    <select value={selectedBaseline} disabled={formDisabled} onChange={(event) => onBaselineChange(event.target.value)}>
-                      {orderedSnapshots.map((snapshot) => (
-                        <option key={snapshot.version} value={snapshot.version}>
-                          {formatExperimentModelOption(snapshot, orderedSnapshots)}
-                        </option>
-                      ))}
-                    </select>
-                    <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
-                      View in Calibration
-                    </Link>
-                  </label>
-
-                  <label className="scenario-field">
-                    <InfoLabel label="Reference policy" info={SETTING_HELP.basePolicy} />
-                    <select value={basePolicy} disabled={formDisabled} onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}>
-                      {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.title}</option>)}
-                    </select>
-                  </label>
-                </div>
-
-                <h4>Simulation controls</h4>
-                <GeneralModelControl
-                  mode="manual"
-                  parameters={parameters}
-                  formValues={formValues}
-                  executionDisabled={formDisabled}
-                  onFormValueChange={onFormValueChange}
-                  maxWorkers={maxWorkers}
-                  maxWorkersCap={maxWorkersCap}
-                  onMaxWorkersChange={onMaxWorkersChange}
-                  maxWorkersHint={SETTING_HELP.maxWorkers}
-                  includeFixedControls
-                  embedded
-                />
-
-                {additionalPolicyParameters.length > 0 && (
-                  <div className="scenario-additional-policy">
-                    <h4>Other policy controls</h4>
-                    <div className="scenario-fields-grid">
-                      {additionalPolicyParameters.map((parameter) => (
-                        <CentralBankPolicyInput
-                          key={parameter.key}
-                          parameter={parameter}
-                          value={formValues[parameter.key]}
-                          basePolicyValue={selectedBasePolicy?.values[parameter.key]}
-                          executionDisabled={formDisabled}
-                          mode="manual"
-                          onChange={onFormValueChange}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </details>
+              <span>Advanced simulation settings</span>
+              <span aria-hidden="true">{advancedOpen ? '−' : '+'}</span>
+            </button>
 
             {warnings.length > 0 && (
               <div className="run-warning-card">
@@ -378,7 +322,7 @@ export function ManualRunSetupCard({
             <div className="scenario-submit-row">
               <button
                 type="button"
-                className="primary-button"
+                className="primary-button scenario-create-button"
                 disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
                 onClick={() => onSubmit(false)}
               >
@@ -400,6 +344,73 @@ export function ManualRunSetupCard({
             )}
           </div>
 
+          {advancedOpen ? (
+          <aside className="scenario-advanced-panel" aria-labelledby="scenario-advanced-heading">
+            <div className="scenario-advanced-panel-heading">
+              <p className="eyebrow">Advanced</p>
+              <h3 id="scenario-advanced-heading">Simulation settings</h3>
+              <p>Configure execution details without changing the policy scenario itself.</p>
+            </div>
+            <div className="scenario-advanced-content">
+              <div className="scenario-fields-grid">
+                <label className="scenario-field">
+                  <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
+                  <select value={selectedBaseline} disabled={formDisabled} onChange={(event) => onBaselineChange(event.target.value)}>
+                    {orderedSnapshots.map((snapshot) => (
+                      <option key={snapshot.version} value={snapshot.version}>
+                        {formatExperimentModelOption(snapshot, orderedSnapshots)}
+                      </option>
+                    ))}
+                  </select>
+                  <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
+                    View in Calibration
+                  </Link>
+                </label>
+
+                <label className="scenario-field">
+                  <InfoLabel label="Reference policy" info={SETTING_HELP.basePolicy} />
+                  <select value={basePolicy} disabled={formDisabled} onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}>
+                    {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.title}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <h4>Simulation controls</h4>
+              <GeneralModelControl
+                mode="manual"
+                parameters={parameters}
+                formValues={formValues}
+                executionDisabled={formDisabled}
+                onFormValueChange={onFormValueChange}
+                maxWorkers={maxWorkers}
+                maxWorkersCap={maxWorkersCap}
+                onMaxWorkersChange={onMaxWorkersChange}
+                maxWorkersHint={SETTING_HELP.maxWorkers}
+                includeFixedControls
+                embedded
+              />
+
+              {additionalPolicyParameters.length > 0 && (
+                <div className="scenario-additional-policy">
+                  <h4>Other policy controls</h4>
+                  <div className="scenario-fields-grid">
+                    {additionalPolicyParameters.map((parameter) => (
+                      <CentralBankPolicyInput
+                        key={parameter.key}
+                        parameter={parameter}
+                        value={formValues[parameter.key]}
+                        basePolicyValue={selectedBasePolicy?.values[parameter.key]}
+                        executionDisabled={formDisabled}
+                        mode="manual"
+                        onChange={onFormValueChange}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+          ) : (
           <aside className="scenario-summary" aria-labelledby="scenario-summary-heading">
             <p className="eyebrow">Live summary</p>
             <h3 id="scenario-summary-heading">{title.trim() || 'Untitled policy scenario'}</h3>
@@ -420,6 +431,7 @@ export function ManualRunSetupCard({
               <p>Seeds are managed by the existing repeated-run process.</p>
             </div>
           </aside>
+          )}
         </div>
         </>
       )}
