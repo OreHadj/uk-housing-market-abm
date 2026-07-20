@@ -5422,7 +5422,9 @@ try {
       MemoryRouter,
       null,
       createElement(ManualRunSetupCard, {
-        executionDisabled: false,
+        formDisabled: false,
+        submissionDisabled: false,
+        submissionDisabledReason: '',
         isLoadingOptions: false,
         selectedBaseline: runOptions.requestedBaseline,
         onBaselineChange: noop,
@@ -5486,6 +5488,46 @@ try {
   assert.ok(
     manualSetupMarkup.includes('setting-info-trigger') && sensitivitySetupMarkup.includes('setting-info-trigger'),
     'Expected manual and sensitivity setup controls to render shared info indicators'
+  );
+  assert.ok(
+    visibleText(manualSetupMarkup).includes('Scenario details') &&
+      visibleText(manualSetupMarkup).includes('Policy change') &&
+      visibleText(manualSetupMarkup).includes('Benchmark') &&
+      visibleText(manualSetupMarkup).includes('Loan-to-value restriction') &&
+      visibleText(manualSetupMarkup).includes('Loan-to-income flow restriction'),
+    'Expected manual setup to render the guided scenario-builder identity and policy choices'
+  );
+  assert.ok(
+    manualSetupMarkup.includes('role="radiogroup"') &&
+      manualSetupMarkup.includes('name="policy-type"') &&
+      manualSetupMarkup.includes('<details class="scenario-advanced">') &&
+      visibleText(manualSetupMarkup).includes('Advanced simulation settings'),
+    'Expected policy choices to be semantic radio controls and technical settings to be disclosed progressively'
+  );
+  assert.ok(
+    manualSetupMarkup.includes('class="scenario-summary"') &&
+      visibleText(manualSetupMarkup).includes('This scenario keeps the selected benchmark policy unchanged.'),
+    'Expected manual setup to render a live plain-English benchmark summary by default'
+  );
+  const manualRunSetupPanelSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/ManualRunSetupPanel.tsx'),
+    'utf-8'
+  );
+  assert.ok(
+    manualRunSetupPanelSource.includes('isLoadingOptions={!controller.options}') &&
+      manualRunSetupPanelSource.includes('formDisabled={controller.isSubmitting}') &&
+      manualRunSetupPanelSource.includes('submissionDisabled={runActionsDisabled}'),
+    'Expected scenario fields to remain mounted during option refresh and editable when only submission is unavailable'
+  );
+  const manualRunSetupCardSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'),
+    'utf-8'
+  );
+  assert.ok(
+    manualRunSetupCardSource.includes('const [advancedOpen, setAdvancedOpen] = useState(false);') &&
+      manualRunSetupCardSource.includes('open={advancedOpen}') &&
+      manualRunSetupCardSource.includes('setAdvancedOpen(event.currentTarget.open)'),
+    'Expected advanced simulation settings to preserve disclosure state across option refreshes'
   );
   assert.ok(
     visibleText(manualSetupMarkup).includes('Initial base rate') &&
@@ -8128,20 +8170,32 @@ assert.ok(
   'App should expose a persisted dev-only runtime view selector'
 );
 assert.ok(
-  appSource.includes('<NavLink to="/calibration">Calibration</NavLink>'),
-  'App should label the calibration route as Calibration in the header'
+  appSource.includes('to="/scenarios"') && appSource.includes('Scenarios'),
+  'App should expose one shared Scenarios destination in the header'
 );
 assert.ok(
-  appSource.includes('{validationVisible && <NavLink to="/validation">Validation</NavLink>}'),
-  'App should only render the validation nav item when validation is visible'
+  appSource.includes('to="/compare"') && appSource.includes('Compare results'),
+  'App should expose the semantic Compare results destination in the header'
+);
+assert.ok(
+  appSource.includes('to="/calibration"') && appSource.includes('Calibration'),
+  'App should preserve Calibration as a primary navigation destination'
+);
+assert.ok(
+  appSource.includes('to="/validation"') && appSource.includes('Validation'),
+  'App should preserve Validation as a primary navigation destination'
+);
+assert.ok(
+  !appSource.includes('>Results</NavLink>') && !appSource.includes('Model information'),
+  'App should replace the broad Results navigation label without introducing Model information'
+);
+assert.ok(
+  appSource.includes("if (type === 'sensitivity') return mode === 'run' ? 'scenarios' : null;"),
+  'Sensitivity setup should map honestly to Scenarios while sensitivity results have no misleading manual active state'
 );
 assert.ok(
   appSource.includes('{validationVisible && <Route path="/validation" element={<ValidationPage />} />}'),
   'App should only register the validation route when validation is visible'
-);
-assert.ok(
-  appSource.includes("{experimentsVisible && <NavLink to=\"/results?type=manual&mode=view\">Results</NavLink>}"),
-  'App should label the experiments workspace as the Results tab in the header'
 );
 assert.ok(
   appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/results\""),
@@ -8491,9 +8545,9 @@ assert.ok(
 );
 assert.ok(
   homePageSource.includes('className="primary-button home-scenario-button"') &&
-    homePageSource.includes('to="/results?type=manual&mode=run"') &&
+    homePageSource.includes('to="/scenarios"') &&
     homePageSource.includes('Create a policy scenario'),
-  'Home page should provide one prominent action leading to manual scenario creation'
+  'Home page should provide one prominent action using the semantic manual scenario route'
 );
 assert.ok(
   !homePageSource.includes('submitModelRun') &&
@@ -8507,8 +8561,8 @@ assert.ok(
   'Home page should clearly disclaim forecast, official projection, and recommendation interpretations'
 );
 assert.ok(
-  homePageSource.includes('to="/results?type=manual&mode=view"') && homePageSource.includes('to="/calibration"'),
-  'Home page should provide lower-emphasis links to existing runs and model information'
+  homePageSource.includes('to="/compare"') && homePageSource.includes('to="/calibration"'),
+  'Home page should provide lower-emphasis links to comparison and the preserved Calibration page'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&

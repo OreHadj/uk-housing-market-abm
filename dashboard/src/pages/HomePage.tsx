@@ -25,14 +25,14 @@ export function HomePage() {
         </aside>
 
         <div className="home-primary-action">
-          <Link className="primary-button home-scenario-button" to="/results?type=manual&mode=run">
+          <Link className="primary-button home-scenario-button" to="/scenarios">
             Create a policy scenario
           </Link>
           <p>Choose and review the policy settings before starting a simulation.</p>
         </div>
 
         <nav className="home-secondary-actions" aria-label="Other ways to get started">
-          <Link to="/results?type=manual&mode=view">View existing runs</Link>
+          <Link to="/compare">Compare existing results</Link>
           <Link to="/calibration">Learn about the model</Link>
         </nav>
       </div>

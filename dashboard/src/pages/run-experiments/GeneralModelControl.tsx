@@ -19,6 +19,9 @@ interface GeneralModelControlProps {
   onMaxWorkersChange?: (value: string) => void;
   maxWorkersHint?: string;
   showRecordSettings?: boolean;
+  defaultOpen?: boolean;
+  includeFixedControls?: boolean;
+  embedded?: boolean;
 }
 
 export function isRecordSetting(parameter: ModelRunParameterDefinition): boolean {
@@ -94,22 +97,24 @@ export function GeneralModelControl({
   maxWorkersCap,
   onMaxWorkersChange,
   maxWorkersHint,
-  showRecordSettings = true
+  showRecordSettings = true,
+  defaultOpen = true,
+  includeFixedControls = false,
+  embedded = false
 }: GeneralModelControlProps) {
   const visibleParameters = parameters
-    .filter((parameter) => shouldShowParameter(parameter))
+    .filter((parameter) =>
+      includeFixedControls
+        ? parameter.group === 'General model control' && parameter.key !== 'SEED'
+        : shouldShowParameter(parameter)
+    )
     .map((parameter) => displayParameter(parameter, mode));
   const modelParameters = visibleParameters.filter((parameter) => !isRecordSetting(parameter));
   const recordParameters = visibleParameters.filter(isRecordSetting);
   const summaryCount = modelParameters.length + (showRecordSettings ? recordParameters.length : 0) + (onMaxWorkersChange ? 1 : 0);
 
-  return (
-    <CollapsibleSection
-      title="General model control"
-      defaultOpen
-      summary={`${summaryCount} controls`}
-      className="general-model-control"
-    >
+  const controls = (
+    <>
       <div className="run-param-grid">
         {modelParameters.map((parameter) => (
           <ParameterInput
@@ -146,6 +151,21 @@ export function GeneralModelControl({
           onFormValueChange={onFormValueChange}
         />
       )}
+    </>
+  );
+
+  if (embedded) {
+    return controls;
+  }
+
+  return (
+    <CollapsibleSection
+      title="General model control"
+      defaultOpen={defaultOpen}
+      summary={`${summaryCount} controls`}
+      className="general-model-control"
+    >
+      {controls}
     </CollapsibleSection>
   );
 }

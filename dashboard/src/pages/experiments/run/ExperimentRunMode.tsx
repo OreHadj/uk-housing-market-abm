@@ -21,6 +21,7 @@ interface ExperimentRunModeProps {
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
   followJobRef?: string;
+  showRunManagement?: boolean;
 }
 
 export function ExperimentRunMode({
@@ -34,7 +35,8 @@ export function ExperimentRunMode({
   onSelectedJobRefChange,
   onOpenManualResults,
   onOpenSensitivityResults,
-  followJobRef
+  followJobRef,
+  showRunManagement = true
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
     selectedJobRef,
@@ -163,33 +165,37 @@ export function ExperimentRunMode({
       <div className="run-exp-grid">
         <RunSetupComponent controller={controller} runActionsDisabled={runActionsDisabled} />
 
-        <ExperimentQueueCard
-          jobs={controller.jobs}
-          isLoading={controller.isLoadingJobs}
-          selectedJobRef={selectedJobRef}
-          onSelectJobRef={onSelectedJobRefChange}
-          executionDisabled={runActionsDisabled}
-          authEnabled={authEnabled}
-          canDownloadResults={canDownloadResults}
-          canDeleteResults={canDeleteResults}
-          downloadingJobRef={downloadingJobRef}
-          deletingJobRef={deletingJobRef}
-          onCancelJob={(jobRef) => {
-            void controller.onCancelJob(jobRef);
-          }}
-          onDownloadJob={(job) => {
-            void downloadJobResults(job);
-          }}
-          onDeleteJob={(job) => {
-            void deleteJob(job);
-          }}
-        />
+        {showRunManagement && (
+          <>
+            <ExperimentQueueCard
+              jobs={controller.jobs}
+              isLoading={controller.isLoadingJobs}
+              selectedJobRef={selectedJobRef}
+              onSelectJobRef={onSelectedJobRefChange}
+              executionDisabled={runActionsDisabled}
+              authEnabled={authEnabled}
+              canDownloadResults={canDownloadResults}
+              canDeleteResults={canDeleteResults}
+              downloadingJobRef={downloadingJobRef}
+              deletingJobRef={deletingJobRef}
+              onCancelJob={(jobRef) => {
+                void controller.onCancelJob(jobRef);
+              }}
+              onDownloadJob={(job) => {
+                void downloadJobResults(job);
+              }}
+              onDeleteJob={(job) => {
+                void deleteJob(job);
+              }}
+            />
 
-        <ExperimentLogCard
-          selectedJob={controller.selectedJob}
-          lines={controller.logLines}
-          progress={controller.logProgress}
-        />
+            <ExperimentLogCard
+              selectedJob={controller.selectedJob}
+              lines={controller.logLines}
+              progress={controller.logProgress}
+            />
+          </>
+        )}
       </div>
     </section>
   );

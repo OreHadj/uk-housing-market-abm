@@ -6,7 +6,7 @@ import {
   parseExperimentRouteState
 } from './experiments/routeState';
 import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
-import type { ExperimentRouteState, ExperimentType } from './experiments/types';
+import type { ExperimentMode, ExperimentRouteState, ExperimentType } from './experiments/types';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -14,6 +14,10 @@ interface ExperimentsPageProps {
   canDeleteResults: boolean;
   deleteKeyRequired: boolean;
   authEnabled: boolean;
+  defaultType?: ExperimentType;
+  defaultMode?: ExperimentMode;
+  focusedScenarioBuilder?: boolean;
+  showRunManagement?: boolean;
 }
 
 export function ExperimentsPage({
@@ -21,12 +25,25 @@ export function ExperimentsPage({
   canDownloadResults,
   canDeleteResults,
   deleteKeyRequired,
-  authEnabled
+  authEnabled,
+  defaultType,
+  defaultMode,
+  focusedScenarioBuilder = false,
+  showRunManagement = true
 }: ExperimentsPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawQuery = searchParams.toString();
 
-  const routeState = useMemo(() => parseExperimentRouteState(searchParams), [searchParams]);
+  const routeState = useMemo(() => {
+    const paramsWithRouteDefaults = new URLSearchParams(searchParams);
+    if (defaultType && !paramsWithRouteDefaults.has('type')) {
+      paramsWithRouteDefaults.set('type', defaultType);
+    }
+    if (defaultMode && !paramsWithRouteDefaults.has('mode')) {
+      paramsWithRouteDefaults.set('mode', defaultMode);
+    }
+    return parseExperimentRouteState(paramsWithRouteDefaults);
+  }, [defaultMode, defaultType, searchParams]);
   const canonicalQuery = useMemo(() => buildExperimentSearchParams(routeState).toString(), [routeState]);
 
   useEffect(() => {
@@ -54,43 +71,47 @@ export function ExperimentsPage({
   const activeConfig = experimentTypeRegistry[routeState.type];
 
   return (
-    <section className="run-exp-layout">
-      <article className="results-card">
-        <h2>Results</h2>
+    <section className={`run-exp-layout ${focusedScenarioBuilder ? 'new-scenario-page' : ''}`}>
+      <article className={focusedScenarioBuilder ? 'experiment-workspace-switcher' : 'results-card'}>
+        <h2>{focusedScenarioBuilder ? 'Scenarios' : 'Results'}</h2>
         <p>
-          Browse completed model runs and their results. Launch a new run or a sensitivity sweep from the Run
-          Experiment tab.
+          {focusedScenarioBuilder
+            ? 'Create a policy scenario, then monitor its simulation in the same workspace.'
+            : 'Browse completed model runs and their results. Launch a new run or a sensitivity sweep from the Run Experiment tab.'}
         </p>
 
-        <div className="experiment-tabs">
-          {(Object.keys(experimentTypeRegistry) as ExperimentType[]).map((type) => (
-            <button
-              key={type}
-              type="button"
-              className={`filter-pill ${routeState.type === type ? 'active' : ''}`}
-              onClick={() => updateRouteState({ type })}
-            >
-              {experimentTypeRegistry[type].label}
-            </button>
-          ))}
-        </div>
+        <details className={focusedScenarioBuilder ? 'scenario-other-tools' : 'experiment-tools-open'} open={!focusedScenarioBuilder}>
+          {focusedScenarioBuilder && <summary>Other experiment tools</summary>}
+          <div className={`experiment-tabs ${focusedScenarioBuilder ? 'experiment-tabs-secondary' : ''}`}>
+            {(Object.keys(experimentTypeRegistry) as ExperimentType[]).map((type) => (
+              <button
+                key={type}
+                type="button"
+                className={`filter-pill ${routeState.type === type ? 'active' : ''}`}
+                onClick={() => updateRouteState({ type })}
+              >
+                {experimentTypeRegistry[type].label}
+              </button>
+            ))}
+          </div>
 
-        <div className="experiment-tabs">
-          <button
-            type="button"
-            className={`filter-pill ${routeState.mode === 'run' ? 'active' : ''}`}
-            onClick={() => updateRouteState({ mode: 'run' })}
-          >
-            Run Experiment
-          </button>
-          <button
-            type="button"
-            className={`filter-pill ${routeState.mode === 'view' ? 'active' : ''}`}
-            onClick={() => updateRouteState({ mode: 'view' })}
-          >
-            View Experiment Results
-          </button>
-        </div>
+          <div className={`experiment-tabs ${focusedScenarioBuilder ? 'experiment-tabs-secondary' : ''}`}>
+            <button
+              type="button"
+              className={`filter-pill ${routeState.mode === 'run' ? 'active' : ''}`}
+              onClick={() => updateRouteState({ mode: 'run' })}
+            >
+              Run Experiment
+            </button>
+            <button
+              type="button"
+              className={`filter-pill ${routeState.mode === 'view' ? 'active' : ''}`}
+              onClick={() => updateRouteState({ mode: 'view' })}
+            >
+              View Experiment Results
+            </button>
+          </div>
+        </details>
       </article>
 
       {routeState.mode === 'run' ? (
@@ -110,6 +131,7 @@ export function ExperimentsPage({
           onOpenSensitivityResults={(experimentId) =>
             updateRouteState({ mode: 'view', type: 'sensitivity', experimentId })
           }
+          showRunManagement={showRunManagement}
         />
       ) : (
         <activeConfig.ViewComponent

@@ -9,8 +9,14 @@ interface ManualRunSetupPanelProps {
 export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRunSetupPanelProps) {
   return (
     <ManualRunSetupCard
-      executionDisabled={runActionsDisabled}
-      isLoadingOptions={controller.isLoadingOptions || !controller.options}
+      formDisabled={controller.isSubmitting}
+      submissionDisabled={runActionsDisabled}
+      submissionDisabledReason={
+        controller.executionDisabled
+          ? controller.executionDisabledReason || 'Simulation execution is unavailable in this runtime.'
+          : 'Run submission requires write access in this runtime.'
+      }
+      isLoadingOptions={!controller.options}
       selectedBaseline={controller.selectedBaseline}
       onBaselineChange={controller.onBaselineChange}
       basePolicies={controller.options?.basePolicies ?? []}

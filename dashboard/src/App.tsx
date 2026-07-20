@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { AuthStatusPayload } from '../shared/types';
 import {
   type ApiViewMode,
@@ -18,6 +18,26 @@ const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
 const EXPERIMENTS_VIEW_PATH = '/results?mode=view&type=manual';
+
+type PrimaryDestination = 'home' | 'scenarios' | 'compare' | 'calibration' | 'validation';
+
+function getActivePrimaryDestination(pathname: string, search: string): PrimaryDestination | null {
+  if (pathname === '/') return 'home';
+  if (pathname === '/calibration') return 'calibration';
+  if (pathname === '/validation') return 'validation';
+
+  const params = new URLSearchParams(search);
+  const type = params.get('type');
+  const mode = params.get('mode');
+  if (pathname === '/scenarios' || pathname === '/runs' || pathname === '/new-scenario') {
+    return mode === 'view' && type === 'manual' ? 'compare' : 'scenarios';
+  }
+  if (pathname === '/compare') return type === 'sensitivity' ? null : 'compare';
+  if (pathname !== '/results') return null;
+  if (type === 'sensitivity') return mode === 'run' ? 'scenarios' : null;
+  if (mode === 'run') return 'scenarios';
+  return 'compare';
+}
 
 const DEFAULT_AUTH_STATUS: AuthStatusPayload = {
   authEnabled: false,
@@ -102,6 +122,7 @@ function getDesktopApi(): UkHousingDesktopApi | null {
 }
 
 export function App() {
+  const location = useLocation();
   const isDevEnv = import.meta.env.DEV;
   const [desktopApi] = useState<UkHousingDesktopApi | null>(() => getDesktopApi());
   const isDesktopRuntime = Boolean(desktopApi);
@@ -118,6 +139,7 @@ export function App() {
   const activeViewModeLabel = VIEW_MODE_OPTIONS.find((option) => option.value === viewMode)?.label ?? 'Dev mode';
 
   const loginPath = `/login?next=${encodeURIComponent(EXPERIMENTS_VIEW_PATH)}`;
+  const activePrimaryDestination = getActivePrimaryDestination(location.pathname, location.search);
 
   const refreshAuthStatus = useCallback(async () => {
     try {
@@ -238,7 +260,9 @@ export function App() {
         <div className="brand-wrap">
           <p className="eyebrow">Max Stoddard BEng Individual Project</p>
           <div className="brand-heading-row">
-            <h1 className="brand-title">UK Housing Market Model</h1>
+            <h1 className="brand-title">
+              <Link to="/">UK Housing Market Model</Link>
+            </h1>
             {isDevEnv && (
               <div className="env-controls">
                 <span className="env-pill-dev">{activeViewModeLabel}</span>
@@ -258,12 +282,23 @@ export function App() {
         </div>
         <div className="header-nav-wrap">
           <nav className="main-nav" aria-label="Main">
-            <NavLink to="/" end>
+            <NavLink className={activePrimaryDestination === 'home' ? 'active' : undefined} to="/" end>
               Home
             </NavLink>
-            <NavLink to="/calibration">Calibration</NavLink>
-            {validationVisible && <NavLink to="/validation">Validation</NavLink>}
-            {experimentsVisible && <NavLink to="/results?type=manual&mode=view">Results</NavLink>}
+            <NavLink className={activePrimaryDestination === 'scenarios' ? 'active' : undefined} to="/scenarios">
+              Scenarios
+            </NavLink>
+            <NavLink className={activePrimaryDestination === 'compare' ? 'active' : undefined} to="/compare">
+              Compare results
+            </NavLink>
+            <NavLink className={activePrimaryDestination === 'calibration' ? 'active' : undefined} to="/calibration">
+              Calibration
+            </NavLink>
+            {validationVisible && (
+              <NavLink className={activePrimaryDestination === 'validation' ? 'active' : undefined} to="/validation">
+                Validation
+              </NavLink>
+            )}
             {experimentsVisible && browserAuthControlsVisible && authStatus.authEnabled && !authStatus.canWrite && (
               <NavLink className="main-nav-auth-control main-nav-auth-link" to={loginPath}>
                 <span className="main-nav-auth-icon" aria-hidden="true">
@@ -333,6 +368,68 @@ export function App() {
         ) : (
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route
+              path="/scenarios"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  defaultType="manual"
+                  defaultMode="run"
+                  focusedScenarioBuilder
+                  showRunManagement
+                />
+              }
+            />
+            <Route
+              path="/new-scenario"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  defaultType="manual"
+                  defaultMode="run"
+                  focusedScenarioBuilder
+                  showRunManagement
+                />
+              }
+            />
+            <Route
+              path="/runs"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  defaultType="manual"
+                  defaultMode="run"
+                  focusedScenarioBuilder
+                  showRunManagement
+                />
+              }
+            />
+            <Route
+              path="/compare"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  defaultType="manual"
+                  defaultMode="view"
+                />
+              }
+            />
             <Route path="/calibration" element={<ComparePage />} />
             {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
             {experimentsVisible && (
