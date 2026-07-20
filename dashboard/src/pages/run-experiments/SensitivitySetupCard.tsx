@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import type {
   BasePolicyId,
   BasePolicyOption,
@@ -10,11 +12,7 @@ import {
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../../lib/experimentVersionOptions';
-import {
-  GeneralModelControl,
-  isRecordSetting,
-  RecordSettingsControl
-} from './GeneralModelControl';
+import { GeneralModelControl } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
@@ -91,172 +89,242 @@ export function SensitivitySetupCard({
   onSubmit,
   onCancelActive
 }: SensitivitySetupCardProps) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const orderedSnapshots = orderExperimentModelOptions(snapshots);
   const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.version === selectedBaseline) ?? null;
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy) ?? null;
-  const recordParameters = parameters.filter((parameter) => parameter.group === 'General model control' && isRecordSetting(parameter));
   const sampleValues = buildSensitivitySampleValues(selectedPackage, selectedBasePolicy, minValue, maxValue, sampleCount);
   const basePolicyValues = selectedPackage && selectedBasePolicy ? formatPackageBaseValues(selectedPackage, selectedBasePolicy) : null;
   const simulationDuration = String(formValues.N_STEPS ?? '');
   const monteCarloRuns = String(formValues.N_SIMS ?? '');
+  const submissionBlocked =
+    isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual || hasActiveSensitivityJob;
+
+  const pointCount = sampleValues.length;
+  const sweepSentence = (() => {
+    if (!selectedPackage) {
+      return 'Choose a policy package and range to define the sweep.';
+    }
+    if (pointCount === 0) {
+      return `This experiment varies ${selectedPackage.title}. Enter a valid min, max, and sample count to see the points tested.`;
+    }
+    const baseName = selectedBasePolicy?.title ?? 'the base policy';
+    return `This experiment varies ${selectedPackage.title} across ${pointCount} point${
+      pointCount === 1 ? '' : 's'
+    }; every other lever stays at the ${baseName} value.`;
+  })();
 
   return (
-    <article className="results-card">
-      <h3>Sensitivity Setup</h3>
-      <p>Run one-parameter-at-a-time policy sweeps with baseline comparison.</p>
+    <article className="scenario-builder-surface">
       {sensitivitySubmissionLockedByManual && lockMessage && <p className="info-banner">{lockMessage}</p>}
 
       {isLoadingOptions ? (
         <p className="loading-banner">Loading sensitivity options...</p>
       ) : (
         <>
-          <div className="run-form-head sensitivity-run-form-head">
-            <label className="sensitivity-policy-field">
-              <InfoLabel label="Sensitivity policy package" info={SETTING_HELP.sensitivityPolicyPackage} />
-              <select
-                value={policyPackageId}
-                disabled={executionDisabled}
-                onChange={(event) => onPolicyPackageChange(event.target.value)}
-              >
-                {policyPackages.map((policyPackage) => (
-                  <option key={policyPackage.id} value={policyPackage.id}>
-                    {policyPackage.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="sensitivity-title-field">
-              <InfoLabel label="Optional experiment title" info={SETTING_HELP.optionalExperimentTitle} />
-              <input
-                type="text"
-                value={title}
-                disabled={executionDisabled}
-                onChange={(event) => onTitleChange(event.target.value)}
-                maxLength={120}
-                placeholder="Policy sensitivity label"
-              />
-            </label>
-
-            <label className="sensitivity-version-field">
-              <InfoLabel label="Calibration Parameter Version" info={SETTING_HELP.calibrationParameterVersion} />
-              <select
-                value={selectedBaseline}
-                disabled={executionDisabled}
-                onChange={(event) => onBaselineChange(event.target.value)}
-              >
-                {orderedSnapshots.map((snapshot) => (
-                  <option key={snapshot.version} value={snapshot.version}>
-                    {formatExperimentModelOption(snapshot, orderedSnapshots)}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="sensitivity-base-policy-field">
-              <InfoLabel label="Base policy" info={SETTING_HELP.basePolicy} />
-              <select
-                value={basePolicy}
-                disabled={executionDisabled}
-                onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}
-              >
-                {basePolicies.map((policy) => (
-                  <option key={policy.id} value={policy.id}>
-                    {policy.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <label className="sensitivity-min-field">
-              <InfoLabel label="Min value" info={SETTING_HELP.minValue} />
-              <input
-                type="number"
-                step={selectedPackage?.type === 'integer' ? 1 : 'any'}
-                value={minValue}
-                disabled={executionDisabled}
-                onChange={(event) => onMinValueChange(event.target.value)}
-              />
-            </label>
-
-            <label className="sensitivity-max-field">
-              <InfoLabel label="Max value" info={SETTING_HELP.maxValue} />
-              <input
-                type="number"
-                step={selectedPackage?.type === 'integer' ? 1 : 'any'}
-                value={maxValue}
-                disabled={executionDisabled}
-                onChange={(event) => onMaxValueChange(event.target.value)}
-              />
-            </label>
-
-            <label className="sensitivity-sample-field">
-              <InfoLabel label="Sample count" info={SETTING_HELP.sampleCount} />
-              <input
-                type="number"
-                step={1}
-                min={2}
-                value={sampleCount}
-                disabled={executionDisabled}
-                onChange={(event) => onSampleCountChange(event.target.value)}
-              />
-            </label>
+          <div className="scenario-builder-heading">
+            <h2>Create a sensitivity sweep</h2>
+            <p>Vary one policy lever across a range of values and compare each point against the base policy.</p>
           </div>
+          <div className="scenario-builder-grid">
+            <div className="scenario-builder-form">
+              <section className="scenario-section">
+                <h3>Experiment details</h3>
+                <label className="scenario-field">
+                  <span>Experiment name</span>
+                  <input
+                    type="text"
+                    value={title}
+                    disabled={executionDisabled}
+                    onChange={(event) => onTitleChange(event.target.value)}
+                    maxLength={120}
+                    placeholder="For example, Soft LTI limit sweep"
+                  />
+                </label>
+              </section>
 
-          <section className="policy-summary-panel sensitivity-policy-summary" aria-label="Sensitivity policy summaries">
-            {selectedBasePolicy ? (
-              <div className="policy-summary-item">
-                <span>Base policy</span>
-                <h4>{selectedBasePolicy.title}</h4>
-                <p>{selectedBasePolicy.summary}</p>
+              <section className="scenario-section">
+                <h3>Policy sweep</h3>
+                <p className="scenario-section-intro">Choose the policy lever to vary and the range of values to test.</p>
+                <label className="scenario-field">
+                  <InfoLabel label="Policy package to sweep" info={SETTING_HELP.sensitivityPolicyPackage} />
+                  <select
+                    value={policyPackageId}
+                    disabled={executionDisabled}
+                    onChange={(event) => onPolicyPackageChange(event.target.value)}
+                  >
+                    {policyPackages.map((policyPackage) => (
+                      <option key={policyPackage.id} value={policyPackage.id}>
+                        {policyPackage.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedPackage ? <p className="scenario-section-intro">{selectedPackage.description}</p> : null}
+                <div className="scenario-fields-grid">
+                  <label className="scenario-field">
+                    <InfoLabel label="Min value" info={SETTING_HELP.minValue} />
+                    <input
+                      type="number"
+                      step={selectedPackage?.type === 'integer' ? 1 : 'any'}
+                      value={minValue}
+                      disabled={executionDisabled}
+                      onChange={(event) => onMinValueChange(event.target.value)}
+                    />
+                  </label>
+                  <label className="scenario-field">
+                    <InfoLabel label="Max value" info={SETTING_HELP.maxValue} />
+                    <input
+                      type="number"
+                      step={selectedPackage?.type === 'integer' ? 1 : 'any'}
+                      value={maxValue}
+                      disabled={executionDisabled}
+                      onChange={(event) => onMaxValueChange(event.target.value)}
+                    />
+                  </label>
+                  <label className="scenario-field">
+                    <InfoLabel label="Sample count" info={SETTING_HELP.sampleCount} />
+                    <input
+                      type="number"
+                      step={1}
+                      min={2}
+                      value={sampleCount}
+                      disabled={executionDisabled}
+                      onChange={(event) => onSampleCountChange(event.target.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+
+              <section className="scenario-section">
+                <h3>Base policy</h3>
+                <p className="scenario-section-intro">Every lever that isn&apos;t being swept stays at this policy&apos;s value.</p>
+                <label className="scenario-field">
+                  <InfoLabel label="Base policy" info={SETTING_HELP.basePolicy} />
+                  <select
+                    value={basePolicy}
+                    disabled={executionDisabled}
+                    onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}
+                  >
+                    {basePolicies.map((policy) => (
+                      <option key={policy.id} value={policy.id}>
+                        {policy.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {selectedBasePolicy ? (
+                  <div className="scenario-reference-note">
+                    <p><strong>{selectedBasePolicy.title}</strong></p>
+                    <p>{selectedBasePolicy.summary}</p>
+                  </div>
+                ) : null}
+              </section>
+
+              <button
+                type="button"
+                className={`scenario-advanced-toggle ${advancedOpen ? 'active' : ''}`}
+                aria-expanded={advancedOpen}
+                onClick={() => setAdvancedOpen((open) => !open)}
+              >
+                <span>Advanced simulation settings</span>
+                <span aria-hidden="true">{advancedOpen ? '−' : '+'}</span>
+              </button>
+
+              {advancedOpen && (
+                <div className="scenario-advanced-panel scenario-advanced-panel--inline">
+                  <div className="scenario-advanced-panel-heading">
+                    <p className="eyebrow">Advanced</p>
+                    <h3>Simulation settings</h3>
+                    <p>Configure execution details without changing the policy sweep itself.</p>
+                  </div>
+                  <div className="scenario-advanced-content">
+                    <div className="scenario-fields-grid">
+                      <label className="scenario-field">
+                        <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
+                        <select
+                          value={selectedBaseline}
+                          disabled={executionDisabled}
+                          onChange={(event) => onBaselineChange(event.target.value)}
+                        >
+                          {orderedSnapshots.map((snapshot) => (
+                            <option key={snapshot.version} value={snapshot.version}>
+                              {formatExperimentModelOption(snapshot, orderedSnapshots)}
+                            </option>
+                          ))}
+                        </select>
+                        <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
+                          View in Calibration
+                        </Link>
+                      </label>
+                    </div>
+
+                    <h4>Simulation controls</h4>
+                    <GeneralModelControl
+                      mode="sensitivity"
+                      parameters={parameters}
+                      formValues={formValues}
+                      executionDisabled={executionDisabled}
+                      onFormValueChange={onFormValueChange}
+                      maxWorkers={maxWorkers}
+                      maxWorkersCap={maxWorkersCap}
+                      onMaxWorkersChange={onMaxWorkersChange}
+                      maxWorkersHint={SETTING_HELP.maxWorkers}
+                      includeFixedControls
+                      embedded
+                    />
+                  </div>
+                </div>
+              )}
+
+              {warnings.length > 0 && (
+                <div className="run-warning-card">
+                  <h4>Warnings detected</h4>
+                  <p>Confirm to start anyway.</p>
+                  <ul>
+                    {warnings.map((warning) => (
+                      <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="scenario-submit-row">
+                <button
+                  type="button"
+                  className="primary-button scenario-create-button"
+                  disabled={submissionBlocked}
+                  onClick={() => onSubmit(false)}
+                >
+                  {isSubmitting ? 'Submitting...' : 'Start sensitivity'}
+                </button>
+                {warnings.length > 0 && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={submissionBlocked}
+                    onClick={() => onSubmit(true)}
+                  >
+                    Confirm and start
+                  </button>
+                )}
+                {hasActiveSensitivityJob && (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={isCanceling || executionDisabled}
+                    onClick={onCancelActive}
+                  >
+                    {isCanceling ? 'Canceling...' : 'Cancel active experiment'}
+                  </button>
+                )}
               </div>
-            ) : null}
-            {selectedPackage ? (
-              <div className="policy-summary-item">
-                <span>Sensitivity package</span>
-                <h4>{selectedPackage.title}</h4>
-                <p>{selectedPackage.description}</p>
-              </div>
-            ) : null}
-          </section>
-
-          <div className="run-param-groups">
-            <GeneralModelControl
-              mode="sensitivity"
-              parameters={parameters}
-              formValues={formValues}
-              executionDisabled={executionDisabled}
-              onFormValueChange={onFormValueChange}
-              maxWorkers={maxWorkers}
-              maxWorkersCap={maxWorkersCap}
-              onMaxWorkersChange={onMaxWorkersChange}
-              maxWorkersHint={SETTING_HELP.maxWorkers}
-              showRecordSettings={false}
-            />
-
-            <RecordSettingsControl
-              parameters={recordParameters}
-              formValues={formValues}
-              executionDisabled={executionDisabled}
-              onFormValueChange={onFormValueChange}
-            />
-          </div>
-
-          {warnings.length > 0 && (
-            <div className="run-warning-card">
-              <h4>Warnings detected</h4>
-              <p>Confirm to start anyway.</p>
-              <ul>
-                {warnings.map((warning) => (
-                  <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
-                ))}
-              </ul>
             </div>
-          )}
 
-          <div className="sensitivity-run-summary">
-            <section className="run-param-group sensitivity-experiment-summary" aria-label="Sensitivity experiment summary">
-              <h4>Experiment summary</h4>
+            <aside className="scenario-summary" aria-labelledby="sensitivity-summary-heading">
+              <p className="eyebrow">Live summary</p>
+              <h3 id="sensitivity-summary-heading">{title.trim() || 'Untitled sensitivity sweep'}</h3>
+              <p>{sweepSentence}</p>
               <dl>
                 <div>
                   <dt>Package varied</dt>
@@ -291,38 +359,7 @@ export function SensitivitySetupCard({
                   <dd>{maxWorkers || 'Not set'}</dd>
                 </div>
               </dl>
-            </section>
-          </div>
-
-          <div className="run-form-actions">
-            <button
-              type="button"
-              className="primary-button"
-              disabled={isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual || hasActiveSensitivityJob}
-              onClick={() => onSubmit(false)}
-            >
-              {isSubmitting ? 'Submitting...' : 'Start Sensitivity'}
-            </button>
-            {warnings.length > 0 && (
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual || hasActiveSensitivityJob}
-                onClick={() => onSubmit(true)}
-              >
-                Confirm and Start
-              </button>
-            )}
-            {hasActiveSensitivityJob && (
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={isCanceling || executionDisabled}
-                onClick={onCancelActive}
-              >
-                {isCanceling ? 'Canceling...' : 'Cancel Active Experiment'}
-              </button>
-            )}
+            </aside>
           </div>
         </>
       )}

@@ -1299,6 +1299,11 @@ code {
   background: rgba(227, 250, 252, 0.34);
 }
 
+.scenario-advanced-panel--inline {
+  position: static;
+  margin-top: 1.1rem;
+}
+
 .scenario-advanced-panel-heading {
   display: grid;
   gap: 0.3rem;
