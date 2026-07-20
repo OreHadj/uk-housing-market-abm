@@ -165,8 +165,11 @@ export function SensitivityResultsView({
   const [pageError, setPageError] = useState<string>('');
 
   useEffect(() => {
+    if (requestedExperimentId === selectedExperimentId) {
+      return;
+    }
     onSelectedExperimentIdChange(selectedExperimentId);
-  }, [onSelectedExperimentIdChange, selectedExperimentId]);
+  }, [onSelectedExperimentIdChange, requestedExperimentId, selectedExperimentId]);
 
   const refreshHistory = async () => {
     try {
