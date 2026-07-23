@@ -264,32 +264,32 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div className="brand-wrap">
-          <p className="eyebrow">Max Stoddard BEng Individual Project</p>
-          <div className="brand-heading-row">
-            <h1 className="brand-title">
-              <Link to="/">UK Housing Market Model</Link>
-            </h1>
-            {isDevEnv && (
-              <div className="env-controls">
-                <span className="env-pill-dev">{activeViewModeLabel}</span>
-                <label className="env-selector">
-                  <span>Runtime view</span>
-                  <select value={viewMode} onChange={(event) => handleViewModeChange(event.target.value as ApiViewMode)}>
-                    {VIEW_MODE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="header-nav-wrap">
-          <nav className="main-nav" aria-label="Main">
+      <header className="top">
+        <div className="wrap">
+          <div className="top-inner">
+            <div>
+              <p className="eyebrow">Max Stoddard · BEng Individual Project</p>
+              <h1 className="brand">
+                <Link to="/">UK Housing Market Model</Link>
+              </h1>
+            </div>
+            <div className="top-right">
+              {isDevEnv && (
+                <div className="env-controls">
+                  <span className="env-pill-dev">{activeViewModeLabel}</span>
+                  <label className="env-selector">
+                    <span>Runtime view</span>
+                    <select value={viewMode} onChange={(event) => handleViewModeChange(event.target.value as ApiViewMode)}>
+                      {VIEW_MODE_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              )}
+              <nav className="main" aria-label="Main">
             <NavLink className={activePrimaryDestination === 'home' ? 'active' : undefined} to="/" end>
               Home
             </NavLink>
@@ -337,6 +337,8 @@ export function App() {
               </button>
             )}
           </nav>
+          </div>
+          </div>
           {desktopApi && (
             <div className="desktop-folder-actions" aria-label="Desktop folders">
               <button
@@ -458,7 +460,12 @@ export function App() {
         )}
       </main>
 
-      <footer className="app-footer">© 2026 Max Stoddard. All rights reserved.</footer>
+      <footer className="foot">
+        <div className="wrap">
+          <span>© 2026 Max Stoddard. All rights reserved.</span>
+          <span>Carro, Hinterschweiger, Uluc &amp; Farmer — BoE SWP 976</span>
+        </div>
+      </footer>
     </div>
   );
 }
