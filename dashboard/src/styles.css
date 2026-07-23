@@ -370,7 +370,7 @@ code {
 /* ===================== Flat layout: app shell + home ===================== */
 .wrap { max-width: var(--maxw); margin: 0 auto; }
 
-header.top { border-bottom: 1px solid var(--rule); padding: 0 1.2rem; }
+header.top { border-bottom: 1px solid var(--rule); padding: 0 1.2rem; position: relative; }
 header.top .top-inner { display: flex; align-items: flex-end; justify-content: space-between;
   gap: 1.4rem; padding: 1.15rem 0 0.9rem; flex-wrap: wrap; }
 header.top .brand { margin: 0; font-size: clamp(1.15rem, 2vw, 1.5rem); font-weight: 700;
@@ -386,6 +386,8 @@ nav.main a.active { color: var(--text); font-weight: 600; }
 nav.main a.active::after { content: ""; position: absolute; left: 0.72rem; right: 0.72rem;
   bottom: -0.9rem; height: 2px; background: var(--accent); border-radius: 2px; }
 .top-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.55rem; }
+/* Dev-only runtime control pinned to the far top-right corner, clear of the nav */
+header.top .env-controls { position: absolute; top: 0.55rem; right: 1.2rem; z-index: 2; margin: 0; }
 
 footer.foot { border-top: 1px solid var(--rule); padding: 1.6rem 1.2rem 2.4rem; color: var(--faint);
   font-size: 0.82rem; }
