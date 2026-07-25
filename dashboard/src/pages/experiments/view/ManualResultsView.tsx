@@ -208,6 +208,15 @@ export function ManualResultsView({
   );
 
   useEffect(() => {
+    // Don't canonicalise the URL selection until the runs list has loaded. While it is still
+    // loading, `runs` is empty and resolveManualRunSelection() returns an empty selection, which
+    // would strip a requested baselineRunId out of the URL and bounce the user straight back out
+    // of the results view — the "View results" button appears to do nothing. Once runs have
+    // loaded, a genuinely-missing id falls back to a default run instead of an empty one, so it is
+    // safe to write the resolved selection back.
+    if (isLoadingRuns) {
+      return;
+    }
     if (
       requestedBaselineRunId === baselineRunId &&
       requestedComparisonRunId === comparisonRunId
@@ -222,6 +231,7 @@ export function ManualResultsView({
   }, [
     baselineRunId,
     comparisonRunId,
+    isLoadingRuns,
     onManualSelectionChange,
     requestedBaselineRunId,
     requestedComparisonRunId

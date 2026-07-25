@@ -165,11 +165,19 @@ export function SensitivityResultsView({
   const [pageError, setPageError] = useState<string>('');
 
   useEffect(() => {
+    // Wait for the experiment list to load before syncing the selection back to the URL. On mount
+    // selectedExperimentId is '' while a requested experimentId may be present in the URL; writing
+    // that empty selection back would strip experimentId out of the URL and bounce the user out of
+    // the results view before the experiment list has loaded (the "View results" button appears to
+    // do nothing). Once history has loaded, the effect below resolves the requested id.
+    if (isLoadingHistory) {
+      return;
+    }
     if (requestedExperimentId === selectedExperimentId) {
       return;
     }
     onSelectedExperimentIdChange(selectedExperimentId);
-  }, [onSelectedExperimentIdChange, requestedExperimentId, selectedExperimentId]);
+  }, [isLoadingHistory, onSelectedExperimentIdChange, requestedExperimentId, selectedExperimentId]);
 
   const refreshHistory = async () => {
     try {
