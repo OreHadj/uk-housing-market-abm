@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  KpiMetricSummary,
   ModelRunJob,
   ModelRunJobStatus,
   ResultsCompareWindow,
@@ -28,13 +29,15 @@ import {
   isRetryableApiError
 } from '../../../lib/api';
 import {
+  HEADLINE_KPI_IDS,
   KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
+  formatKpiComparisonDelta,
   formatKpiDeltaValue,
   formatKpiValue,
+  getKpiComparisonDeltaLabel,
   getKpiMetricValue,
-  getKpiDeltaLabel,
-  groupIndicatorsBySource,
+  groupIndicatorsByPolicyQuestion,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -151,6 +154,7 @@ export function ManualResultsView({
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
   const [showAllKpiDetails, setShowAllKpiDetails] = useState<boolean>(false);
+  const [showAllKpis, setShowAllKpis] = useState<boolean>(false);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
@@ -475,13 +479,20 @@ export function ManualResultsView({
     [comparisonRunId, comparePayload]
   );
   const sortedKpis = useMemo(() => sortKpis(baselineCompareKpis), [baselineCompareKpis]);
+  const headlineKpis = useMemo(() => {
+    const kpiById = new Map(sortedKpis.map((kpi) => [kpi.indicatorId, kpi]));
+    return HEADLINE_KPI_IDS.map((indicatorId) => kpiById.get(indicatorId)).filter(
+      (kpi): kpi is KpiMetricSummary => Boolean(kpi)
+    );
+  }, [sortedKpis]);
+  const displayedKpis = showAllKpis || headlineKpis.length === 0 ? sortedKpis : headlineKpis;
   const comparisonKpiById = useMemo(
     () => new Map(comparisonCompareKpis.map((kpi) => [kpi.indicatorId, kpi])),
     [comparisonCompareKpis]
   );
   const groupedIndicatorSections = useMemo(
     () =>
-      groupIndicatorsBySource(availableIndicators).map((section) => ({
+      groupIndicatorsByPolicyQuestion(availableIndicators).map((section) => ({
         id: section.id,
         title: section.title,
         items: section.items.map((indicator) => ({
@@ -541,6 +552,7 @@ export function ManualResultsView({
 
   const setBaselineSelection = (runId: string) => {
     updateSelection(runId, comparisonRunId === runId ? '' : comparisonRunId);
+    setIsHistoryExpanded(false);
   };
 
   const toggleComparisonSelection = (runId: string) => {
@@ -658,7 +670,7 @@ export function ManualResultsView({
     <section className="results-layout manual-results-layout">
       {loadError && <p className="error-banner">{loadError}</p>}
 
-      <div className="results-top-row">
+      <div className={`results-top-row ${queueItems.length === 0 ? 'results-top-row-single' : ''}`}>
         <article className="results-card run-history-card">
           <div className="disclosure-preview-head">
             <div className="disclosure-preview-title">
@@ -807,6 +819,7 @@ export function ManualResultsView({
           )}
         </article>
 
+        {queueItems.length > 0 && (
         <article className="results-card run-queue-card">
           <div className="disclosure-preview-head">
             <div className="disclosure-preview-title">
@@ -857,6 +870,7 @@ export function ManualResultsView({
             </ul>
           )}
         </article>
+        )}
       </div>
 
       <div className="results-main results-main-full">
@@ -940,7 +954,7 @@ export function ManualResultsView({
           </article>
         )}
 
-          <article className="results-card">
+          <article className="results-card manual-results-summary-card">
             <div className="results-card-head">
               <h2>Manual Results</h2>
               <span className="manual-results-mode-pill">{mode === 'compare' ? 'Compare mode' : 'Single mode'}</span>
@@ -992,24 +1006,34 @@ export function ManualResultsView({
             <p>Compare window and indicator controls are available in the Settings panel.</p>
           </article>
 
-          <article className="results-card">
+          <article className="results-card manual-results-aggregate-card">
             <div className="aggregate-results-head">
               <div>
                 <h3>Aggregate Results</h3>
                 <p>
                   {showAllKpiDetails
-                    ? 'Detailed tables show mean, CV, and range for every KPI.'
-                    : 'Mean is shown by default. Use More details to switch every KPI card to a detailed table.'}
+                    ? `Detailed tables show mean, CV, and range for ${showAllKpis ? 'all indicators' : 'the headline indicators'}.`
+                    : `${showAllKpis ? 'All available indicators are shown.' : 'Headline policy indicators are shown first.'} Use More details to expand the statistics. Seed uncertainty intervals are not calculated in this view.`}
                 </p>
               </div>
-              <button
-                type="button"
-                className="table-toggle aggregate-results-toggle"
-                aria-pressed={showAllKpiDetails}
-                onClick={() => setShowAllKpiDetails((current) => !current)}
-              >
-                {showAllKpiDetails ? 'Hide details' : 'More details'}
-              </button>
+              <div className="aggregate-results-actions">
+                <button
+                  type="button"
+                  className="table-toggle aggregate-results-toggle"
+                  aria-pressed={showAllKpis}
+                  onClick={() => setShowAllKpis((current) => !current)}
+                >
+                  {showAllKpis ? 'Headline indicators' : 'Show all indicators'}
+                </button>
+                <button
+                  type="button"
+                  className="table-toggle aggregate-results-toggle"
+                  aria-pressed={showAllKpiDetails}
+                  onClick={() => setShowAllKpiDetails((current) => !current)}
+                >
+                  {showAllKpiDetails ? 'Hide details' : 'More details'}
+                </button>
+              </div>
             </div>
             {showKpiRefreshing && (
               <LoadingSkeleton
@@ -1030,7 +1054,7 @@ export function ManualResultsView({
                 id="aggregate-results-grid"
                 className={['kpi-grid', showAllKpiDetails ? 'kpi-grid-detailed' : ''].filter(Boolean).join(' ')}
               >
-                {sortedKpis.map((kpi) => {
+                {displayedKpis.map((kpi) => {
                   const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
                   const meanDelta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
                   return (
@@ -1050,8 +1074,8 @@ export function ManualResultsView({
                               {formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}
                             </p>
                             <p className={`manual-kpi-delta ${deltaClassName(meanDelta)}`}>
-                              <span>{getKpiDeltaLabel(kpi.units)}</span>
-                              {formatKpiDeltaValue(meanDelta, kpi.units)}
+                              <span>{getKpiComparisonDeltaLabel(kpi.units)}</span>
+                              {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
                             </p>
                           </div>
                         )
@@ -1094,12 +1118,16 @@ export function ManualResultsView({
                                   const comparisonValue = getKpiMetricValue(comparisonKpi, row.key);
                                   const units = row.units === 'dynamic' ? kpi.units : row.units;
                                   const delta = computeKpiDeltaValue(baselineValue, comparisonValue, units);
+                                  const formattedDelta =
+                                    row.units === 'dynamic'
+                                      ? formatKpiComparisonDelta(baselineValue, comparisonValue, units)
+                                      : formatKpiDeltaValue(delta, units);
                                   return (
                                     <tr key={row.key}>
                                       <td>{row.label}</td>
                                       <td>{formatKpiValue(baselineValue, units)}</td>
                                       <td>{formatKpiValue(comparisonValue, units)}</td>
-                                      <td className={deltaClassName(delta)}>{formatKpiDeltaValue(delta, units)}</td>
+                                      <td className={deltaClassName(delta)}>{formattedDelta}</td>
                                     </tr>
                                   );
                                 })}
@@ -1115,7 +1143,7 @@ export function ManualResultsView({
             )}
           </article>
 
-          <article className="results-card">
+          <article className="results-card manual-results-overlay-card">
             <div className="overlay-card-head">
               <h3>Indicator Overlays</h3>
               <label>
@@ -1170,7 +1198,7 @@ export function ManualResultsView({
             )}
           </article>
 
-          <article className="results-card">
+          <article className="results-card manual-results-files-card">
             <CollapsibleSection
               title="File Manifest"
               defaultOpen={false}

@@ -902,6 +902,32 @@ section.block:first-of-type { border-top: none; }
   flex-shrink: 0;
 }
 
+.aggregate-results-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.manual-results-aggregate-card {
+  order: 1;
+}
+
+.manual-results-summary-card {
+  order: 2;
+}
+
+.manual-results-overlay-card {
+  order: 3;
+}
+
+.manual-results-settings-card {
+  order: 4;
+}
+
+.manual-results-files-card {
+  order: 5;
+}
+
 .kpi-grid {
   margin-top: 0.7rem;
   display: grid;
@@ -2208,6 +2234,10 @@ section.block:first-of-type { border-top: none; }
   grid-template-columns: 2fr 1fr;
   gap: 0.8rem;
   align-items: start;
+}
+
+.results-top-row-single {
+  grid-template-columns: 1fr;
 }
 
 @media (max-width: 820px) {

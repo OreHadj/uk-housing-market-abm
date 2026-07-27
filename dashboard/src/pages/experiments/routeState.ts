@@ -147,6 +147,13 @@ export function buildExperimentsPath(state: ExperimentRouteState): string {
   if (normalised.mode === 'view' && normalised.type === 'sensitivity' && normalised.experimentId) {
     params.set('experimentId', normalised.experimentId);
   }
+  if (
+    normalised.mode === 'view' &&
+    !normalised.baselineRunId &&
+    !normalised.experimentId
+  ) {
+    params.set('view', 'results');
+  }
   const basePath = normalised.type === 'sensitivity'
     ? '/sensitivity'
     : normalised.mode === 'view' && normalised.comparisonRunId

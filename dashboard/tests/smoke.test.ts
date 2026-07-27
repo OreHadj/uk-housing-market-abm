@@ -103,6 +103,7 @@ import { compareVersions, listVersions, parseVersionParts } from '../server/lib/
 import { assertAxisSpecComplete, getAxisSpec } from '../src/lib/chartAxes.js';
 import { binnedOption } from '../src/lib/compareChartOptions.js';
 import {
+  buildExperimentsPath,
   buildExperimentSearchParams,
   normaliseExperimentRouteState,
   parseExperimentRouteState
@@ -119,11 +120,13 @@ import {
   KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
   computeKpiPercentDelta,
+  formatKpiComparisonDelta,
   formatKpiDeltaValue,
   formatKpiValue,
+  getKpiComparisonDeltaLabel,
   getKpiMetricValue,
   getKpiDeltaLabel,
-  groupIndicatorsBySource,
+  groupIndicatorsByPolicyQuestion,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -360,20 +363,20 @@ assert.deepEqual(
   'Expected post-200 KPI selection to discard values before model time 200'
 );
 
-const groupedIndicators = groupIndicatorsBySource([
+const groupedIndicators = groupIndicatorsByPolicyQuestion([
   {
-    id: 'core-price',
-    title: 'Core price',
-    units: 'GBP',
+    id: 'core_mortgageApprovals',
+    title: 'Mortgage approvals',
+    units: 'count/month',
     description: '',
     source: 'core_indicator',
     available: true,
     coverageStatus: 'supported'
   },
   {
-    id: 'output-sales',
-    title: 'Output sales',
-    units: 'count',
+    id: 'output_rentalAvSalePrice',
+    title: 'Average rent',
+    units: 'GBP',
     description: '',
     source: 'output',
     available: true,
@@ -383,10 +386,10 @@ const groupedIndicators = groupIndicatorsBySource([
 assert.deepEqual(
   groupedIndicators.map((group) => ({ id: group.id, ids: group.items.map((item) => item.id) })),
   [
-    { id: 'core_indicator', ids: ['core-price'] },
-    { id: 'output', ids: ['output-sales'] }
+    { id: 'credit_access', ids: ['core_mortgageApprovals'] },
+    { id: 'rental_spillovers', ids: ['output_rentalAvSalePrice'] }
   ],
-  'Expected manual results indicators to group by core_indicator and output'
+  'Expected manual results indicators to group by policy question'
 );
 
 const resolvedDefaultIndicators = resolveSelectedIndicatorIds(
@@ -613,9 +616,9 @@ assert.deepEqual(
   resolveManualRunSelection(manualSelectionRuns, '', ''),
   {
     baselineRunId: 'v0-output',
-    comparisonRunId: 'v4.0-output'
+    comparisonRunId: ''
   },
-  'Expected manual results default selection to prefer v0-output baseline and v4.0-output comparison'
+  'Expected manual results to open with the preferred baseline and no automatic cross-era comparison'
 );
 
 assert.deepEqual(
@@ -919,6 +922,30 @@ assert.equal(
   'Expected non-percent KPI deltas to keep percent formatting'
 );
 
+assert.equal(
+  formatKpiComparisonDelta(100_000, 105_000, 'GBP'),
+  '+£5,000 (+5.00%)',
+  'Expected price comparisons to show both pound and relative changes'
+);
+
+assert.equal(
+  formatKpiComparisonDelta(4.5, 4.7, 'ratio'),
+  '+0.20x (+4.44%)',
+  'Expected ratio comparisons to show both ratio-point and relative changes'
+);
+
+assert.equal(
+  formatKpiComparisonDelta(2.7, 2.5, 'percentage points'),
+  '-0.20 pp',
+  'Expected interest-rate spread comparisons to use percentage-point changes'
+);
+
+assert.equal(
+  getKpiComparisonDeltaLabel('count/month'),
+  'count change',
+  'Expected count indicators to use an absolute-count change label'
+);
+
 const defaultExperimentRouteState = parseExperimentRouteState(new URLSearchParams(''));
 assert.deepEqual(
   defaultExperimentRouteState,
@@ -1056,6 +1083,34 @@ assert.equal(
   encodedDefaultManualExperimentQuery,
   'type=manual&mode=view',
   'Expected regenerated manual links to omit legacy default run ids.'
+);
+
+assert.equal(
+  buildExperimentsPath({
+    type: 'sensitivity',
+    mode: 'view',
+    baselineRunId: '',
+    comparisonRunId: '',
+    experimentId: '',
+    jobRef: '',
+    follow: false
+  }),
+  '/sensitivity?view=results',
+  'Expected sensitivity-result links without a selected experiment to open the results workspace.'
+);
+
+assert.equal(
+  buildExperimentsPath({
+    type: 'manual',
+    mode: 'view',
+    baselineRunId: '',
+    comparisonRunId: '',
+    experimentId: '',
+    jobRef: '',
+    follow: false
+  }),
+  '/scenarios?view=results',
+  'Expected manual-result links without a selected run to open the results workspace.'
 );
 
 const commaContainingManualRunId = 'Optimised 2011 model, default, 20-seed v0o7';

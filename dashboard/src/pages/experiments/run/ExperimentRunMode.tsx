@@ -180,6 +180,13 @@ export function ExperimentRunMode({
               canDeleteResults={canDeleteResults}
               downloadingJobRef={downloadingJobRef}
               deletingJobRef={deletingJobRef}
+              onOpenResults={(job) => {
+                if (job.type === 'manual' && job.runId) {
+                  onOpenManualResults(job.runId);
+                } else if (job.type === 'sensitivity') {
+                  onOpenSensitivityResults(job.id);
+                }
+              }}
               onCancelJob={(jobRef) => {
                 void controller.onCancelJob(jobRef);
               }}
