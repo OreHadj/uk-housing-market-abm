@@ -13,7 +13,6 @@ import type {
 } from '../../../../shared/types';
 import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
-import { GroupedCheckboxSections } from '../../../components/GroupedCheckboxSections';
 import { LoadingSkeleton, LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
 import { ManualSelectionStatusPills } from '../../../components/ManualSelectionStatusPills';
 import {
@@ -68,11 +67,6 @@ interface ManualResultsViewProps {
   sidebarSubtitle: string;
 }
 
-interface InlineInfoTipProps {
-  label: string;
-  description: string;
-}
-
 function isProtectedResultsRun(runId: string): boolean {
   return PROTECTED_RESULTS_RUN_IDS.has(runId.trim());
 }
@@ -122,22 +116,6 @@ function coverageClass(status: ResultsFileManifestEntry['coverageStatus']): stri
   }
 }
 
-function InlineInfoTip({ label, description }: InlineInfoTipProps) {
-  return (
-    <span className="manual-control-header">
-      <span>{label}</span>
-      <button type="button" className="manual-help-trigger" aria-label={`${label} help`}>
-        <span aria-hidden="true" className="manual-help-icon">
-          i
-        </span>
-        <span role="tooltip" className="manual-help-tooltip">
-          {description}
-        </span>
-      </button>
-    </span>
-  );
-}
-
 export function ManualResultsView({
   canDownloadResults,
   canDeleteResults,
@@ -153,8 +131,12 @@ export function ManualResultsView({
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
+  const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
+  const [expandedPolicyGroupId, setExpandedPolicyGroupId] = useState<string>('credit_access');
+  const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState<boolean>(
+    Boolean(requestedComparisonRunId)
+  );
   const [showAllKpiDetails, setShowAllKpiDetails] = useState<boolean>(false);
-  const [showAllKpis, setShowAllKpis] = useState<boolean>(false);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
@@ -166,7 +148,6 @@ export function ManualResultsView({
   const [isLoadingManifest, setIsLoadingManifest] = useState<boolean>(false);
   const [isDeletingRunId, setIsDeletingRunId] = useState<string>('');
   const [isDownloadingRunId, setIsDownloadingRunId] = useState<string>('');
-  const [isIndicatorSettingsOpen, setIsIndicatorSettingsOpen] = useState<boolean>(false);
   const [manifestTarget, setManifestTarget] = useState<ManifestTarget>('baseline');
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
@@ -358,6 +339,12 @@ export function ManualResultsView({
   }, [comparisonRunId, manifestTarget]);
 
   useEffect(() => {
+    if (comparisonRunId) {
+      setIsComparisonPickerOpen(true);
+    }
+  }, [comparisonRunId]);
+
+  useEffect(() => {
     if (!baselineRunId) {
       setBaselineDetail(null);
       return;
@@ -485,49 +472,29 @@ export function ManualResultsView({
       (kpi): kpi is KpiMetricSummary => Boolean(kpi)
     );
   }, [sortedKpis]);
-  const displayedKpis = showAllKpis || headlineKpis.length === 0 ? sortedKpis : headlineKpis;
   const comparisonKpiById = useMemo(
     () => new Map(comparisonCompareKpis.map((kpi) => [kpi.indicatorId, kpi])),
     [comparisonCompareKpis]
   );
-  const groupedIndicatorSections = useMemo(
-    () =>
-      groupIndicatorsByPolicyQuestion(availableIndicators).map((section) => ({
+  const groupedKpis = useMemo(() => {
+    const kpiById = new Map(sortedKpis.map((kpi) => [kpi.indicatorId, kpi]));
+    return groupIndicatorsByPolicyQuestion(availableIndicators)
+      .map((section) => ({
         id: section.id,
         title: section.title,
-        items: section.items.map((indicator) => ({
-          id: indicator.id,
-          label: indicator.title,
-          description: `${indicator.units} · ${indicator.source}${indicator.note ? ` · ${indicator.note}` : ''}`,
-          checked: selectedIndicatorIds.includes(indicator.id),
-          disabled: !indicator.available
-        }))
-      })),
-    [availableIndicators, selectedIndicatorIds]
-  );
+        items: section.items
+          .map((indicator) => kpiById.get(indicator.id))
+          .filter((kpi): kpi is KpiMetricSummary => Boolean(kpi))
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [availableIndicators, sortedKpis]);
   const overlayIndicators = comparePayload?.indicators ?? [];
-  const activeIndicatorOptions = useMemo(() => {
-    if (overlayIndicators.length > 0) {
-      return overlayIndicators.map((indicatorPayload) => ({
-        id: indicatorPayload.indicator.id,
-        title: indicatorPayload.indicator.title
-      }));
-    }
-
-    const titleById = new Map(availableIndicators.map((indicator) => [indicator.id, indicator.title]));
-    return selectedIndicatorIds.map((indicatorId) => ({
-      id: indicatorId,
-      title: titleById.get(indicatorId) ?? indicatorId
-    }));
-  }, [availableIndicators, overlayIndicators, selectedIndicatorIds]);
   const activeIndicatorPayload = useMemo(
     () => resolveActiveIndicatorPayload(overlayIndicators, selectedIndicatorIds, activeIndicatorId),
     [activeIndicatorId, overlayIndicators, selectedIndicatorIds]
   );
   const showRunsSkeleton = isLoadingRuns && runs.length === 0;
   const showRunsRefreshing = isLoadingRuns && runs.length > 0;
-  const showIndicatorsSkeleton = isLoadingDetail && availableIndicators.length === 0;
-  const showIndicatorsRefreshing = isLoadingDetail && availableIndicators.length > 0;
   const showKpiSkeleton = (isLoadingDetail || isLoadingCompare) && sortedKpis.length === 0;
   const showKpiRefreshing = (isLoadingDetail || isLoadingCompare) && sortedKpis.length > 0;
   const showOverlaySkeleton = isLoadingCompare && overlayIndicators.length === 0 && selectedIndicatorIds.length > 0;
@@ -538,6 +505,25 @@ export function ManualResultsView({
   useEffect(() => {
     setActiveIndicatorId((current) => resolveActiveIndicatorId(selectedIndicatorIds, overlayIndicators, current));
   }, [overlayIndicators, selectedIndicatorIds]);
+
+  useEffect(() => {
+    if (!isTrendModalOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsTrendModalOpen(false);
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isTrendModalOpen]);
 
   const updateSelection = useCallback(
     (nextBaselineRunId: string, nextComparisonRunId: string) => {
@@ -563,10 +549,12 @@ export function ManualResultsView({
     updateSelection(baselineRunId, comparisonRunId === runId ? '' : runId);
   };
 
-  const toggleIndicatorSelection = (indicatorId: string) => {
-    setSelectedIndicatorIds((current) =>
-      current.includes(indicatorId) ? current.filter((id) => id !== indicatorId) : [...current, indicatorId]
-    );
+  const viewIndicatorTrend = (indicatorId: string) => {
+    if (!selectedIndicatorIds.includes(indicatorId)) {
+      setSelectedIndicatorIds((current) => [...current, indicatorId]);
+    }
+    setActiveIndicatorId(indicatorId);
+    setIsTrendModalOpen(true);
   };
 
   const deleteRun = async (runId: string) => {
@@ -874,91 +862,76 @@ export function ManualResultsView({
       </div>
 
       <div className="results-main results-main-full">
-        {baselineRunId && (
-          <article className="results-card manual-results-settings-card">
-            <div className="results-panel-header">
-              <h2>Settings</h2>
-              <p>{selectedIndicatorIds.length} indicators enabled</p>
-            </div>
-            <div className="results-controls results-controls-sidebar">
-              <label>
-                <InlineInfoTip
-                  label="Window"
-                  description="post500 shows months after the main analysis cutoff at month 500. post200 shows all months after the spin-up cutoff at month 200. tail120 shows only the latest 120 months. full shows the entire run including spin-up."
-                />
-                <select
-                  value={compareWindow}
-                  onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
-                >
-                  <option value="post500">post500</option>
-                  <option value="post200">post200</option>
-                  <option value="tail120">tail120</option>
-                  <option value="full">full</option>
-                </select>
-              </label>
-              <label>
-                <InlineInfoTip
-                  label="Smoothing"
-                  description="off shows raw monthly values. 3 shows a trailing 3-month average. 12 shows a trailing 12-month average."
-                />
-                <select
-                  value={String(smoothWindow)}
-                  onChange={(event) => setSmoothWindow(Number.parseInt(event.target.value, 10) as SmoothWindow)}
-                >
-                  <option value="0">off</option>
-                  <option value="3">3</option>
-                  <option value="12">12</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="settings-disclosure">
-              <button
-                type="button"
-                className="result-group-header settings-disclosure-toggle"
-                onClick={() => setIsIndicatorSettingsOpen((current) => !current)}
-              >
-                <span className="result-group-title">{isIndicatorSettingsOpen ? '▾' : '▸'} Indicators</span>
-                <span className="result-group-counts">
-                  <span className="unchanged">{selectedIndicatorIds.length} selected</span>
-                </span>
-              </button>
-              {isIndicatorSettingsOpen && (
-                <div className="settings-disclosure-body">
-                  <p>Select indicators for overlay charts.</p>
-                  {showIndicatorsRefreshing && (
-                    <LoadingSkeleton
-                      as="span"
-                      className="loading-skeleton-pill section-loading-row"
-                      ariaLabel="Refreshing indicators"
-                    />
-                  )}
-                  {showIndicatorsSkeleton ? (
-                    <LoadingSkeletonGroup
-                      className="indicator-grid"
-                      count={6}
-                      itemClassName="loading-skeleton-card indicator-item-skeleton"
-                      ariaLabel="Loading indicators"
-                    />
-                  ) : (
-                    <GroupedCheckboxSections
-                      sections={groupedIndicatorSections}
-                      onToggle={toggleIndicatorSelection}
-                      className="param-groups indicator-settings-groups"
-                      sectionClassName="indicator-settings-section"
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </article>
-        )}
-
           <article className="results-card manual-results-summary-card">
             <div className="results-card-head">
-              <h2>Manual Results</h2>
-              <span className="manual-results-mode-pill">{mode === 'compare' ? 'Compare mode' : 'Single mode'}</span>
+              <h2>Policy run</h2>
+              <span className="manual-results-mode-pill">{mode === 'compare' ? 'Comparing runs' : 'Single run'}</span>
             </div>
+            <p>
+              Choose the completed policy run whose results you want to inspect.
+            </p>
+
+            <div className="comparison-run-pickers">
+              <label>
+                <span>Selected policy run</span>
+                <select
+                  value={baselineRunId}
+                  disabled={historyRuns.length === 0}
+                  onChange={(event) => setBaselineSelection(event.target.value)}
+                >
+                  {historyRuns.map((run) => (
+                    <option key={run.runId} value={run.runId}>{run.runId}</option>
+                  ))}
+                </select>
+                {baselineSummary && (
+                  <ManualSelectionStatusPills
+                    status={baselineSummary.status}
+                    versionLabelState={baselineVersionLabelState}
+                  />
+                )}
+              </label>
+              {isComparisonPickerOpen && (
+                <label>
+                  <span>Compare with</span>
+                  <select
+                    value={comparisonRunId}
+                    disabled={!baselineRunId || historyRuns.length < 2}
+                    onChange={(event) => updateSelection(baselineRunId, event.target.value)}
+                  >
+                    <option value="">Choose a run</option>
+                    {historyRuns
+                      .filter((run) => run.runId !== baselineRunId)
+                      .map((run) => (
+                        <option key={run.runId} value={run.runId}>{run.runId}</option>
+                      ))}
+                  </select>
+                  {comparisonSummary ? (
+                    <ManualSelectionStatusPills
+                      status={comparisonSummary.status}
+                      versionLabelState={comparisonVersionLabelState}
+                    />
+                  ) : (
+                    <small>Select a run to compare values and graph lines.</small>
+                  )}
+                </label>
+              )}
+            </div>
+            <label className="comparison-enable-toggle">
+              <input
+                type="checkbox"
+                checked={isComparisonPickerOpen}
+                disabled={!baselineRunId || historyRuns.length < 2}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  setIsComparisonPickerOpen(enabled);
+                  if (!enabled && comparisonRunId) {
+                    updateSelection(baselineRunId, '');
+                  }
+                }}
+              />
+              <span>Compare with another run</span>
+            </label>
+
             <div className="summary-links">
               <Link
                 className="summary-link-inline"
@@ -974,57 +947,20 @@ export function ManualResultsView({
               {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download Comparison Results')}
             </div>
 
-            <div className="manual-selection-summary">
-              <div className="manual-selection-summary-row">
-                <span className="manual-selection-summary-label">Baseline</span>
-                <strong>{baselineRunId || 'none'}</strong>
-                {baselineSummary && (
-                  <ManualSelectionStatusPills
-                    status={baselineSummary.status}
-                    versionLabelState={baselineVersionLabelState}
-                  />
-                )}
-              </div>
-              <div className="manual-selection-summary-row">
-                <span className="manual-selection-summary-label">Comparison</span>
-                {comparisonRunId ? (
-                  <>
-                    <strong>{comparisonRunId}</strong>
-                    {comparisonSummary && (
-                      <ManualSelectionStatusPills
-                        status={comparisonSummary.status}
-                        versionLabelState={comparisonVersionLabelState}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <span className="manual-selection-empty">None selected</span>
-                )}
-              </div>
-            </div>
-
-            <p>Compare window and indicator controls are available in the Settings panel.</p>
+            <p>Analysis-window and smoothing controls are available when a trend chart is opened.</p>
           </article>
 
           <article className="results-card manual-results-aggregate-card">
             <div className="aggregate-results-head">
               <div>
-                <h3>Aggregate Results</h3>
+                <h3>Policy impact summary</h3>
                 <p>
                   {showAllKpiDetails
-                    ? `Detailed tables show mean, CV, and range for ${showAllKpis ? 'all indicators' : 'the headline indicators'}.`
-                    : `${showAllKpis ? 'All available indicators are shown.' : 'Headline policy indicators are shown first.'} Use More details to expand the statistics. Seed uncertainty intervals are not calculated in this view.`}
+                    ? 'Headline cards show mean, CV and range over the selected analysis window.'
+                    : 'Headline outcomes are followed by every available result, grouped by policy question. Seed uncertainty intervals are not calculated in this view.'}
                 </p>
               </div>
               <div className="aggregate-results-actions">
-                <button
-                  type="button"
-                  className="table-toggle aggregate-results-toggle"
-                  aria-pressed={showAllKpis}
-                  onClick={() => setShowAllKpis((current) => !current)}
-                >
-                  {showAllKpis ? 'Headline indicators' : 'Show all indicators'}
-                </button>
                 <button
                   type="button"
                   className="table-toggle aggregate-results-toggle"
@@ -1054,7 +990,7 @@ export function ManualResultsView({
                 id="aggregate-results-grid"
                 className={['kpi-grid', showAllKpiDetails ? 'kpi-grid-detailed' : ''].filter(Boolean).join(' ')}
               >
-                {displayedKpis.map((kpi) => {
+                {headlineKpis.map((kpi) => {
                   const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
                   const meanDelta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
                   return (
@@ -1141,62 +1077,166 @@ export function ManualResultsView({
                 })}
               </div>
             )}
-          </article>
 
-          <article className="results-card manual-results-overlay-card">
-            <div className="overlay-card-head">
-              <h3>Indicator Overlays</h3>
-              <label>
-                Indicator
-                <select
-                  value={activeIndicatorId}
-                  disabled={activeIndicatorOptions.length === 0}
-                  onChange={(event) => setActiveIndicatorId(event.target.value)}
-                >
-                  {activeIndicatorOptions.map((indicator) => (
-                    <option key={indicator.id} value={indicator.id}>
-                      {indicator.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <p>
-              Overlay series are shown in raw units, and dotted lines show each selected run&apos;s mean over the
-              currently displayed data. {mode === 'compare' ? 'Baseline and comparison are labelled by role.' : 'Single-run view uses the baseline selection.'}
-            </p>
-            {showOverlayRefreshing && (
-              <LoadingSkeleton
-                as="span"
-                className="loading-skeleton-pill section-loading-row"
-                ariaLabel="Refreshing indicator overlays"
-              />
-            )}
-            {selectedIndicatorIds.length === 0 ? (
-              <p className="info-banner">Enable at least one indicator in Settings to view an overlay chart.</p>
-            ) : showOverlaySkeleton ? (
-              <LoadingSkeletonGroup
-                className="overlay-grid"
-                count={1}
-                itemClassName="loading-skeleton-card overlay-card-skeleton"
-                ariaLabel="Loading indicator overlays"
-              />
-            ) : compareError ? (
-              <p className="error-banner">{compareError}</p>
-            ) : !activeIndicatorPayload ? (
-              <p className="info-banner">No overlay data is available for the current indicator selection yet.</p>
-            ) : (
-              <div className="overlay-grid">
-                <div key={activeIndicatorPayload.indicator.id} className="overlay-card">
-                  <h4>{activeIndicatorPayload.indicator.title}</h4>
-                  <EChart
-                    option={buildManualOverlayOption(activeIndicatorPayload, baselineRunId, comparisonRunId)}
-                    className="chart"
-                  />
+            {!showKpiSkeleton && (
+              <div className="policy-results-sections">
+                <div className="policy-results-sections-head">
+                  <h3>All policy results</h3>
+                  <p>Monthly means over the selected analysis window. Open any series to inspect its path through time.</p>
                 </div>
+                {groupedKpis.map((section) => (
+                  <section key={section.id} className="policy-results-group">
+                    <button
+                      type="button"
+                      className="policy-results-group-toggle"
+                      aria-expanded={expandedPolicyGroupId === section.id}
+                      aria-controls={`policy-results-${section.id}`}
+                      onClick={() => setExpandedPolicyGroupId((current) => current === section.id ? '' : section.id)}
+                    >
+                      <span>
+                        <strong>{section.title}</strong>
+                        <small>{section.items.length} indicators</small>
+                      </span>
+                      <span aria-hidden="true" className="policy-results-chevron">
+                        {expandedPolicyGroupId === section.id ? '−' : '+'}
+                      </span>
+                    </button>
+                    {expandedPolicyGroupId === section.id && (
+                      <div id={`policy-results-${section.id}`} className="policy-results-table-wrap">
+                        <table className="policy-results-table">
+                          <thead>
+                            <tr>
+                              <th>Indicator</th>
+                              <th>{mode === 'compare' ? 'Baseline' : 'Mean'}</th>
+                              {mode === 'compare' && <th>Comparison</th>}
+                              {mode === 'compare' && <th>Change</th>}
+                              <th><span className="visually-hidden">Action</span></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {section.items.map((kpi) => {
+                              const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
+                              const delta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
+                              return (
+                                <tr key={kpi.indicatorId}>
+                                  <th scope="row">{kpi.title}</th>
+                                  <td>{formatKpiValue(kpi.mean, kpi.units)}</td>
+                                  {mode === 'compare' && (
+                                    <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}</td>
+                                  )}
+                                  {mode === 'compare' && (
+                                    <td className={deltaClassName(delta)}>
+                                      {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
+                                    </td>
+                                  )}
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="policy-trend-link"
+                                      onClick={() => viewIndicatorTrend(kpi.indicatorId)}
+                                    >
+                                      View trend
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                ))}
               </div>
             )}
           </article>
+
+          {isTrendModalOpen && (
+            <div
+              className="trend-modal-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setIsTrendModalOpen(false);
+                }
+              }}
+            >
+              <section
+                className="trend-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="trend-modal-title"
+              >
+                <div className="trend-modal-head">
+                  <div>
+                    <p className="trend-modal-eyebrow">Time series</p>
+                    <h3 id="trend-modal-title">
+                      {activeIndicatorPayload?.indicator.title ?? 'Loading indicator'}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="trend-modal-close"
+                    aria-label="Close trend chart"
+                    onClick={() => setIsTrendModalOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="trend-modal-layout">
+                  <aside className="trend-modal-settings" aria-label="Trend chart settings">
+                    <h4>Settings</h4>
+                    <label>
+                      <span>Analysis window</span>
+                      <select
+                        value={compareWindow}
+                        onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
+                      >
+                        <option value="post500">After month 500</option>
+                        <option value="post200">After month 200</option>
+                        <option value="tail120">Latest 120 months</option>
+                        <option value="full">Full run</option>
+                      </select>
+                      <small>Also updates the means in the results tables.</small>
+                    </label>
+                    <label>
+                      <span>Smoothing</span>
+                      <select
+                        value={String(smoothWindow)}
+                        onChange={(event) => setSmoothWindow(Number.parseInt(event.target.value, 10) as SmoothWindow)}
+                      >
+                        <option value="0">Raw monthly</option>
+                        <option value="3">3-month average</option>
+                        <option value="12">12-month average</option>
+                      </select>
+                      <small>Changes this graph only.</small>
+                    </label>
+                    <div className="trend-modal-reading-note">
+                      <strong>Reading the chart</strong>
+                      <span>Dotted lines show each selected run&apos;s mean.</span>
+                    </div>
+                  </aside>
+                  <div className="trend-modal-visual">
+                    {showOverlaySkeleton || showOverlayRefreshing ? (
+                      <LoadingSkeleton
+                        className="trend-modal-chart-skeleton"
+                        ariaLabel="Loading trend chart"
+                      />
+                    ) : compareError ? (
+                      <p className="error-banner">{compareError}</p>
+                    ) : !activeIndicatorPayload ? (
+                      <p className="info-banner">No trend data is available for this indicator.</p>
+                    ) : (
+                      <EChart
+                        option={buildManualOverlayOption(activeIndicatorPayload, baselineRunId, comparisonRunId)}
+                        className="trend-modal-chart"
+                      />
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
 
           <article className="results-card manual-results-files-card">
             <CollapsibleSection
