@@ -2,7 +2,9 @@ package housing;
 
 import java.util.Iterator;
 import org.apache.commons.math3.random.MersenneTwister;
-import utilities.PriorityQueue2D;
+import utilities.ArrayOrderBook;
+import utilities.OrderBook2D;
+import utilities.OrderBookFactory;
 
 /**************************************************************************************************
  * Class to represent the sales market
@@ -16,7 +18,7 @@ public class HouseSaleMarket extends HousingMarket {
     //----- Fields -----//
     //------------------//
 
-    private PriorityQueue2D<HousingMarketRecord>    offersPY;
+    private OrderBook2D<HousingMarketRecord>        offersPY;
 
     //------------------------//
     //----- Constructors -----//
@@ -24,7 +26,8 @@ public class HouseSaleMarket extends HousingMarket {
 
     HouseSaleMarket(MersenneTwister prng) {
         super(prng);
-        offersPY = new PriorityQueue2D<>(new HousingMarketRecord.PYComparator());
+        offersPY = OrderBookFactory.create(new HousingMarketRecord.PYComparator(),
+                ArrayOrderBook.BOOK_PRICE_YIELD, Model.config.TARGET_POPULATION/10);
     }
 
     //-------------------//

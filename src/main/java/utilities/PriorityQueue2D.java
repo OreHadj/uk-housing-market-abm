@@ -19,7 +19,7 @@ import java.util.TreeSet;
  * @author daniel, Adrian Carro
  *
  *************************************************************************************************/
-public class PriorityQueue2D<E> implements Iterable<E> {
+public class PriorityQueue2D<E> implements OrderBook2D<E> {
 
     //------------------//
     //----- Fields -----//

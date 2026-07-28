@@ -6,7 +6,9 @@ import java.util.Iterator;
 import org.apache.commons.math3.distribution.GeometricDistribution;
 import org.apache.commons.math3.random.MersenneTwister;
 
-import utilities.PriorityQueue2D;
+import utilities.ArrayOrderBook;
+import utilities.OrderBook2D;
+import utilities.OrderBookFactory;
 
 /**************************************************************************************************
  * Class that implements the market mechanism behind both the sale and the rental markets
@@ -22,7 +24,7 @@ public abstract class HousingMarket {
 
     private Config                                  config = Model.config; // Passes the Model's configuration parameters object to a private field
     private MersenneTwister                         prng;
-    private PriorityQueue2D<HousingMarketRecord>    offersPQ;
+    private OrderBook2D<HousingMarketRecord>        offersPQ;
     private ArrayList<HouseBidderRecord>            bids;
     private int []                                  nBidUpFrequency; // Counts the frequency of the number of bid-ups. TODO: Move to a collector class
 
@@ -31,7 +33,8 @@ public abstract class HousingMarket {
     //------------------------//
 
     HousingMarket(MersenneTwister prng) {
-        offersPQ = new PriorityQueue2D<>(new HousingMarketRecord.PQComparator()); //Priority Queue of (Price, Quality)
+        offersPQ = OrderBookFactory.create(new HousingMarketRecord.PQComparator(), //Order book of (Price, Quality)
+                ArrayOrderBook.BOOK_PRICE_QUALITY, config.TARGET_POPULATION/10);
         // The integer passed to the ArrayList constructor is an initially declared capacity (for initial memory
         // allocation purposes), it will actually have size zero and only grow by adding elements
         bids = new ArrayList<>(config.TARGET_POPULATION/10);
@@ -241,7 +244,7 @@ public abstract class HousingMarket {
 
     public ArrayList<HouseBidderRecord> getBids() { return bids; }
 
-    public PriorityQueue2D<HousingMarketRecord> getOffersPQ() { return offersPQ; }
+    public OrderBook2D<HousingMarketRecord> getOffersPQ() { return offersPQ; }
 
     private Iterator<HousingMarketRecord> getOffersIterator() { return(offersPQ.iterator()); }
 

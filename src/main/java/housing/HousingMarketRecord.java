@@ -1,5 +1,6 @@
 package housing;
 
+import utilities.ArrayOrderBook;
 import utilities.PriorityQueue2D;
 
 /**************************************************************************************************
@@ -11,7 +12,7 @@ import utilities.PriorityQueue2D;
  * @author daniel, Adrian Carro
  *
  *************************************************************************************************/
-public abstract class HousingMarketRecord {
+public abstract class HousingMarketRecord implements ArrayOrderBook.Slotted {
 
     //------------------//
     //----- Fields -----//
@@ -20,6 +21,10 @@ public abstract class HousingMarketRecord {
     private double price;
     private int id;  // In order to get a unique, repeatable ordering
     private static int id_pool = 0;
+    // Slot held by this record in each ArrayOrderBook it belongs to (the sale market keeps both a
+    // price-quality and a price-yield book over the same offers). Lets a book locate a record in O(1)
+    // without a hash lookup, which is the whole point of moving off the tree.
+    private final int[] bookSlots = {-1, -1};
 
     //------------------------//
     //----- Constructors -----//
@@ -135,6 +140,12 @@ public abstract class HousingMarketRecord {
     }
 
     public int getId() { return id; }
+
+    @Override
+    public int getBookSlot(int bookId) { return bookSlots[bookId]; }
+
+    @Override
+    public void setBookSlot(int bookId, int slot) { bookSlots[bookId] = slot; }
 
     public double getPrice() { return price; }
 
