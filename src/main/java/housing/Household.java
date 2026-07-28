@@ -1,10 +1,5 @@
 package housing;
 
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Map.Entry;
-import java.util.TreeMap;
-
 import org.apache.commons.math3.random.MersenneTwister;
 
 /**************************************************************************************************
@@ -32,8 +27,10 @@ public class Household implements IHouseOwner {
     double                      incomePercentile; // Fixed for the whole lifetime of the household
 
     private House                           home;
-    private Map<House, PaymentAgreement>    housePayments = new TreeMap<>(); // Houses owned and their payment agreements
-    private Map<House, RentalAgreement>     rentalContracts = new TreeMap<>(); // Houses rented out by this landlord and their payment agreements
+    // Array-backed, id-ordered maps (see HouseKeyedMap): same iteration order as the TreeMaps they
+    // replace, without the red-black-tree overhead on collections that usually hold 0-1 entries
+    private HouseKeyedMap<PaymentAgreement> housePayments = new HouseKeyedMap<>(); // Houses owned and their payment agreements
+    private HouseKeyedMap<RentalAgreement>  rentalContracts = new HouseKeyedMap<>(); // Houses rented out by this landlord and their payment agreements
     private double                          monthlyGrossRentalIncome = 0.0;
     private boolean                         monthlyGrossRentalIncomeDirty = false;
     private Config                          config = Model.config; // Passes the Model's configuration parameters object to a private field
@@ -118,20 +115,21 @@ public class Household implements IHouseOwner {
             bankBalance = 1.0;
             isBankrupt = true;
         }
-        // Manage owned properties and close debts on previously owned properties. To this end, first, create an
-        // iterator over the house-paymentAgreement pairs at the household's housePayments object
-        Iterator<Entry<House, PaymentAgreement>> paymentIt = housePayments.entrySet().iterator();
-        Entry<House, PaymentAgreement> entry;
+        // Manage owned properties and close debts on previously owned properties. To this end, walk the
+        // house-paymentAgreement pairs at the household's housePayments object by index; removing an entry
+        // shifts the rest left, so the index is only advanced when nothing was removed (this is the array
+        // equivalent of Iterator.remove())
         House h;
         PaymentAgreement payment;
+        int paymentIdx = 0;
         // Iterate over these house-paymentAgreement pairs...
-        while (paymentIt.hasNext()) {
-            entry = paymentIt.next();
-            h = entry.getKey();
-            payment = entry.getValue();
+        while (paymentIdx < housePayments.size()) {
+            h = housePayments.keyAt(paymentIdx);
+            payment = housePayments.valueAt(paymentIdx);
             // ...if the household is the owner of the house, then manage it
             if (h.owner == this) {
                 manageHouse(h);
+                paymentIdx++;
             // ...otherwise, if the household is not the owner nor the resident, then it is an old debt due to
             // the household's inability to pay the remaining principal off after selling a property...
             } else if (h.resident != this) {
@@ -142,8 +140,12 @@ public class Household implements IHouseOwner {
                 bankBalance -= mortgage.payoff(bankBalance);
                 // ...and remove it from the payments object as soon as the household manages to do so
                 if ((payment.nPayments == 0) & (mortgage.principal == 0.0)) {
-                    paymentIt.remove();
+                    housePayments.removeAt(paymentIdx);
+                } else {
+                    paymentIdx++;
                 }
+            } else {
+                paymentIdx++;
             }
         }
         // Make housing decisions depending on current housing state
@@ -171,9 +173,9 @@ public class Household implements IHouseOwner {
      * Record scheduled housing cash outflows before any payment is made this month.
      */
     private void recordHousingCashFlows() {
-        for (Map.Entry<House, PaymentAgreement> entry : housePayments.entrySet()) {
-            House house = entry.getKey();
-            PaymentAgreement payment = entry.getValue();
+        for (int i = 0; i < housePayments.size(); i++) {
+            House house = housePayments.keyAt(i);
+            PaymentAgreement payment = housePayments.valueAt(i);
             if (payment instanceof RentalAgreement) {
                 Model.householdStats.addRentalCashOutflow(payment.nextPayment());
             } else if (payment instanceof MortgageAgreement && house.owner == this && payment.nextPayment() > 0.0) {
@@ -202,7 +204,8 @@ public class Household implements IHouseOwner {
         // TODO: ESSENTIAL_CONSUMPTION_FRACTION is not explained in the paper, all support is said to be consumed
         monthlyDisposableIncome -= getMonthlyEssentialConsumption();
         // Subtract housing consumption
-        for(PaymentAgreement payment: housePayments.values()) {
+        for (int i = 0; i < housePayments.size(); i++) {
+            PaymentAgreement payment = housePayments.valueAt(i);
             boolean finalRentalPayment = payment instanceof RentalAgreement && payment.nPayments == 1;
             monthlyDisposableIncome -= payment.makeMonthlyPayment();
             if (finalRentalPayment) {
@@ -249,9 +252,9 @@ public class Household implements IHouseOwner {
      */
     private double getAnnualFinanceCosts() {
         double financeCosts = 0.0;
-        for (Map.Entry<House, PaymentAgreement> entry : housePayments.entrySet()) {
-            House house = entry.getKey();
-            PaymentAgreement payment = entry.getValue();
+        for (int i = 0; i < housePayments.size(); i++) {
+            House house = housePayments.keyAt(i);
+            PaymentAgreement payment = housePayments.valueAt(i);
             if (payment instanceof MortgageAgreement && house.owner == this && payment.nextPayment() != 0.0
                     && house.resident != null && house.resident.getHousePayments().get(house).nextPayment() != 0.0) {
                 financeCosts += payment.nextPayment();
@@ -549,8 +552,8 @@ public class Household implements IHouseOwner {
 
     private void recalculateMonthlyGrossRentalIncome() {
         monthlyGrossRentalIncome = 0.0;
-        for (RentalAgreement rentalAgreement : rentalContracts.values()) {
-            monthlyGrossRentalIncome += rentalAgreement.nextPayment();
+        for (int i = 0; i < rentalContracts.size(); i++) {
+            monthlyGrossRentalIncome += rentalContracts.valueAt(i).nextPayment();
         }
         monthlyGrossRentalIncomeDirty = false;
     }
@@ -572,16 +575,16 @@ public class Household implements IHouseOwner {
             System.out.println("Strange: I'm transferring all my wealth to myself");
             System.exit(0);
         }
-        // Create an iterator over the house-paymentAgreement pairs at the deceased household's housePayments object
-        Iterator<Entry<House, PaymentAgreement>> paymentIt = housePayments.entrySet().iterator();
-        Entry<House, PaymentAgreement> entry;
+        // Walk the house-paymentAgreement pairs at the deceased household's housePayments object. Every entry
+        // is removed as it is processed, so the index never advances - removeAt shifts the remainder left,
+        // preserving the ascending-id order the TreeMap iterator gave
         House h;
         PaymentAgreement payment;
+        int paymentIdx = 0;
         // Iterate over these house-paymentAgreement pairs
-        while (paymentIt.hasNext()) {
-            entry = paymentIt.next();
-            h = entry.getKey();
-            payment = entry.getValue();
+        while (paymentIdx < housePayments.size()) {
+            h = housePayments.keyAt(paymentIdx);
+            payment = housePayments.valueAt(paymentIdx);
             // If the deceased household owns the house, then...
             if (h.owner == this) {
                 // ...first, withdraw the house from any market where it is currently being offered
@@ -612,7 +615,7 @@ public class Household implements IHouseOwner {
                 bankBalance -= ((MortgageAgreement) payment).payoff();
             }
             // Remove the house-paymentAgreement entry from the deceased household's housePayments object
-            paymentIt.remove(); // TODO: Not sure this is necessary. Note, though, that this implies erasing all outstanding debt
+            housePayments.removeAt(paymentIdx); // TODO: Not sure this is necessary. Note, though, that this implies erasing all outstanding debt
         }
         // Finally, transfer all remaining liquid wealth to the beneficiary household
         beneficiary.bankBalance += Math.max(0.0, bankBalance);
@@ -692,7 +695,7 @@ public class Household implements IHouseOwner {
 
     public House getHome() { return home; }
 
-    public Map<House, PaymentAgreement> getHousePayments() { return housePayments; }
+    public HouseKeyedMap<PaymentAgreement> getHousePayments() { return housePayments; }
 
     public double getAnnualGrossEmploymentIncome() { return annualGrossEmploymentIncome; }
 
@@ -703,8 +706,8 @@ public class Household implements IHouseOwner {
      */
     public int nPropertiesForSale() {
         int n=0;
-        for(House h : housePayments.keySet()) {
-            if(h.isOnMarket()) ++n;
+        for (int i = 0; i < housePayments.size(); i++) {
+            if (housePayments.keyAt(i).isOnMarket()) ++n;
         }
         return(n);
     }
@@ -718,9 +721,9 @@ public class Household implements IHouseOwner {
      */
     public int getNProperties() {
         int nHouses = 0;
-        for (Map.Entry<House, PaymentAgreement> entry : housePayments.entrySet()) {
-            House house = entry.getKey();
-            PaymentAgreement payment = entry.getValue();
+        for (int i = 0; i < housePayments.size(); i++) {
+            House house = housePayments.keyAt(i);
+            PaymentAgreement payment = housePayments.valueAt(i);
             if (payment instanceof MortgageAgreement && house.owner == this) {
                 nHouses += 1;
             }

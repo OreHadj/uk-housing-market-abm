@@ -151,9 +151,10 @@ public class HouseholdStats {
             double housingWealth = 0.0;
             double housingGrossWealth = 0.0;
             double totalDebt = 0.0;
-            for (Map.Entry<House, PaymentAgreement> entry : h.getHousePayments().entrySet()) {
-                House house = entry.getKey();
-                PaymentAgreement payment = entry.getValue();
+            HouseKeyedMap<PaymentAgreement> payments = h.getHousePayments();
+            for (int p = 0; p < payments.size(); p++) {
+                House house = payments.keyAt(p);
+                PaymentAgreement payment = payments.valueAt(p);
                 if (payment instanceof MortgageAgreement && house.owner == h) {
                     double houseValue = Model.housingMarketStats.getExpAvSalePriceForQuality(house.getQuality());
                     housingWealth += houseValue - ((MortgageAgreement) payment).principal;
