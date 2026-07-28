@@ -47,7 +47,7 @@ export function SensitivityRunSetupPanel({ controller, runActionsDisabled }: Sen
       sensitivitySubmissionLockedByManual={controller.sensitivitySubmissionLockedByManual}
       lockMessage={
         controller.sensitivitySubmissionLockedByManual
-          ? `Sensitivity experiments are locked while manual job ${controller.lockManualId} is active.`
+          ? `Policy sensitivity sweeps are locked while policy scenario job ${controller.lockManualId} is active.`
           : null
       }
       hasActiveSensitivityJob={controller.hasActiveSensitivityJob}

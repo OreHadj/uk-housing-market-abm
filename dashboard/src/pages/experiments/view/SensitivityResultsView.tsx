@@ -334,7 +334,7 @@ export function SensitivityResultsView({
     }
 
     const confirmed = window.confirm(
-      `Delete sensitivity experiment "${experimentId}"? This permanently removes its Results folder.`
+      `Delete policy sensitivity experiment "${experimentId}"? This permanently removes its Results folder.`
     );
     if (!confirmed) {
       return;
@@ -377,9 +377,10 @@ export function SensitivityResultsView({
       {pageError && <p className="error-banner">{pageError}</p>}
 
       <article className="results-card">
-        <h2>Sensitivity Results</h2>
+        <h2>Policy sensitivity results</h2>
         <p>
-          Inspect tornado charts, KPI % differences from baseline, and per-point metrics for completed or in-progress sensitivity experiments.
+          See how housing, mortgage, and rental outcomes respond as one policy setting changes. Each tested value is
+          compared with the selected base policy.
         </p>
         <div className="summary-links">
           <Link
@@ -400,7 +401,7 @@ export function SensitivityResultsView({
               mode: 'run'
             })}
           >
-            Run Sensitivity
+            Create policy sweep
           </Link>
         </div>
       </article>
@@ -414,7 +415,7 @@ export function SensitivityResultsView({
           {isLoadingHistory ? (
             <p className="loading-banner">Loading experiments...</p>
           ) : experiments.length === 0 ? (
-            <p className="info-banner">No sensitivity experiments yet.</p>
+            <p className="info-banner">No policy sensitivity experiments yet.</p>
           ) : (
             <ul className="run-list">
               {experiments.map((experiment) => {
@@ -458,7 +459,7 @@ export function SensitivityResultsView({
         <div className="results-main">
           <article className="results-card">
             <div className="results-card-head">
-              <h3>Experiment Detail</h3>
+              <h3>Policy sweep details</h3>
               {detail && (
                 !canDownloadResults ? (
                   authEnabled ? (
@@ -485,7 +486,7 @@ export function SensitivityResultsView({
             {isLoadingDetail ? (
               <p className="loading-banner">Loading experiment detail...</p>
             ) : !detail ? (
-              <p className="info-banner">Select an experiment to view analytics.</p>
+              <p className="info-banner">Select a policy sweep to view its results.</p>
             ) : (
               <div className="sensitivity-detail-grid">
                 <p>
@@ -523,9 +524,15 @@ export function SensitivityResultsView({
           {charts && (
             <article className="results-card">
               <div className="sensitivity-trend-header">
-                <h3>Tornado + Delta Trend</h3>
+                <div>
+                  <h3>Largest outcome responses</h3>
+                  <p>
+                    Ranks indicators by their largest absolute percentage difference from the base policy anywhere
+                    in the tested range. Direction is shown in the response chart below.
+                  </p>
+                </div>
                 <label>
-                  KPI basis
+                  Summary measure
                   <select
                     value={selectedKpiKey}
                     onChange={(event) => setSelectedKpiKey(event.target.value as KpiMetricKey)}
@@ -542,7 +549,10 @@ export function SensitivityResultsView({
               <EChart className="validation-chart" option={buildTornadoOption(charts, selectedKpiKey)} />
 
               <div className="sensitivity-trend-header">
-                <h4>Indicator Delta Trend</h4>
+                <div>
+                  <h4>Response across policy values</h4>
+                  <p>Shows the direction and size of the selected outcome&apos;s difference from the base policy.</p>
+                </div>
                 <label>
                   Indicator
                   <select
@@ -571,7 +581,7 @@ export function SensitivityResultsView({
 
           {results && (
             <article className="results-card">
-              <h3>Per-Point KPI Table {selectedIndicatorTitle ? `(${selectedIndicatorTitle})` : ''}</h3>
+              <h3>Results by tested policy value {selectedIndicatorTitle ? `(${selectedIndicatorTitle})` : ''}</h3>
               {selectedIndicatorMetricByPoint.length === 0 ? (
                 <p className="info-banner">No executed points yet.</p>
               ) : (

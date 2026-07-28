@@ -37,7 +37,7 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRu
       manualSubmissionLockedBySensitivity={controller.manualSubmissionLockedBySensitivity}
       lockMessage={
         controller.manualSubmissionLockedBySensitivity
-          ? `Manual runs are locked while sensitivity experiment ${controller.lockSensitivityId} is active.`
+          ? `Policy scenario runs are locked while policy sensitivity sweep ${controller.lockSensitivityId} is active.`
           : null
       }
       onSubmit={(confirmWarnings) => {

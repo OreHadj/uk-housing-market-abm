@@ -297,7 +297,7 @@ export function App() {
               Scenarios
             </NavLink>
             <NavLink className={activePrimaryDestination === 'sensitivity' ? 'active' : undefined} to="/sensitivity">
-              Sensitivity
+              Policy sensitivity
             </NavLink>
             <NavLink className={activePrimaryDestination === 'compare' ? 'active' : undefined} to="/compare">
               Compare results

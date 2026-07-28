@@ -119,12 +119,12 @@ export function SensitivitySetupCard({
       {sensitivitySubmissionLockedByManual && lockMessage && <p className="info-banner">{lockMessage}</p>}
 
       {isLoadingOptions ? (
-        <p className="loading-banner">Loading sensitivity options...</p>
+        <p className="loading-banner">Loading policy sensitivity options...</p>
       ) : (
         <>
           <div className="scenario-builder-heading">
-            <h2>Create a sensitivity sweep</h2>
-            <p>Vary one policy lever across a range of values and compare each point against the base policy.</p>
+            <h2>Create a policy sensitivity sweep</h2>
+            <p>Vary one policy setting across a range and compare each tested value with the selected base policy.</p>
           </div>
           <div className="scenario-builder-grid">
             <div className="scenario-builder-form">
@@ -296,7 +296,7 @@ export function SensitivitySetupCard({
                   disabled={submissionBlocked}
                   onClick={() => onSubmit(false)}
                 >
-                  {isSubmitting ? 'Submitting...' : 'Start sensitivity'}
+                  {isSubmitting ? 'Submitting...' : 'Start policy sweep'}
                 </button>
                 {warnings.length > 0 && (
                   <button
@@ -323,7 +323,7 @@ export function SensitivitySetupCard({
 
             <aside className="scenario-summary" aria-labelledby="sensitivity-summary-heading">
               <p className="eyebrow">Live summary</p>
-              <h3 id="sensitivity-summary-heading">{title.trim() || 'Untitled sensitivity sweep'}</h3>
+              <h3 id="sensitivity-summary-heading">{title.trim() || 'Untitled policy sensitivity sweep'}</h3>
               <p>{sweepSentence}</p>
               <dl>
                 <div>

@@ -86,8 +86,8 @@ export const experimentTypeRegistry: Record<ExperimentType, ExperimentTypeDefini
     ViewComponent: ManualViewRenderer
   },
   sensitivity: {
-    label: 'Sensitivity',
-    viewSidebarSubtitle: 'Experiments',
+    label: 'Policy sensitivity',
+    viewSidebarSubtitle: 'Completed and in-progress policy sweeps.',
     RunSetupComponent: SensitivityRunSetupPanel,
     ViewComponent: SensitivityViewRenderer
   }

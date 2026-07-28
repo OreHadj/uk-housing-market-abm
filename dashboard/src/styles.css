@@ -2841,6 +2841,19 @@ section.block:first-of-type { border-top: none; }
   margin: 0;
 }
 
+.sensitivity-trend-header h3 {
+  margin: 0;
+}
+
+.sensitivity-trend-header > div {
+  max-width: 46rem;
+}
+
+.sensitivity-trend-header > div p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+}
+
 .sensitivity-trend-header label {
   display: grid;
   gap: 0.22rem;

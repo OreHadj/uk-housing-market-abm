@@ -10,8 +10,8 @@ const START_HERE = [
   {
     num: '02',
     to: '/sensitivity',
-    title: "Test a setting's sensitivity",
-    desc: 'Sweep one policy value across a range and watch how the outcomes move.'
+    title: 'Test policy sensitivity',
+    desc: 'Vary one policy setting across a range and compare the housing and credit responses with the base policy.'
   },
   {
     num: '03',

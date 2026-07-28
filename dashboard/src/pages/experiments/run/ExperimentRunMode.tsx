@@ -124,7 +124,7 @@ export function ExperimentRunMode({
 
       {controller.pendingSensitivityExperimentId && (
         <p className="waiting-banner">
-          Sensitivity analysis completed. Redirecting to results...{' '}
+          Policy sensitivity sweep completed. Redirecting to results...{' '}
           <Link
             to={buildExperimentsPath({
               ...DEFAULT_EXPERIMENT_ROUTE_STATE,

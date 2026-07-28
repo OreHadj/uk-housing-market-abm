@@ -132,7 +132,7 @@ export function ManualResultsView({
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
-  const [expandedPolicyGroupId, setExpandedPolicyGroupId] = useState<string>('credit_access');
+  const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>(['credit_access']);
   const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState<boolean>(
     Boolean(requestedComparisonRunId)
   );
@@ -140,6 +140,8 @@ export function ManualResultsView({
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
+  const [showBaselineTrend, setShowBaselineTrend] = useState<boolean>(true);
+  const [showComparisonTrend, setShowComparisonTrend] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string>('');
   const [compareError, setCompareError] = useState<string>('');
   const [isLoadingRuns, setIsLoadingRuns] = useState<boolean>(true);
@@ -554,6 +556,8 @@ export function ManualResultsView({
       setSelectedIndicatorIds((current) => [...current, indicatorId]);
     }
     setActiveIndicatorId(indicatorId);
+    setShowBaselineTrend(true);
+    setShowComparisonTrend(true);
     setIsTrendModalOpen(true);
   };
 
@@ -941,7 +945,7 @@ export function ManualResultsView({
                   mode: 'view'
                 })}
               >
-                Open Sensitivity Results
+                Open Policy Sensitivity
               </Link>
               {renderDownloadAction(baselineRunId, 'Download Baseline Results')}
               {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download Comparison Results')}
@@ -1089,19 +1093,25 @@ export function ManualResultsView({
                     <button
                       type="button"
                       className="policy-results-group-toggle"
-                      aria-expanded={expandedPolicyGroupId === section.id}
+                      aria-expanded={expandedPolicyGroupIds.includes(section.id)}
                       aria-controls={`policy-results-${section.id}`}
-                      onClick={() => setExpandedPolicyGroupId((current) => current === section.id ? '' : section.id)}
+                      onClick={() =>
+                        setExpandedPolicyGroupIds((current) =>
+                          current.includes(section.id)
+                            ? current.filter((groupId) => groupId !== section.id)
+                            : [...current, section.id]
+                        )
+                      }
                     >
                       <span>
                         <strong>{section.title}</strong>
                         <small>{section.items.length} indicators</small>
                       </span>
                       <span aria-hidden="true" className="policy-results-chevron">
-                        {expandedPolicyGroupId === section.id ? '−' : '+'}
+                        {expandedPolicyGroupIds.includes(section.id) ? '−' : '+'}
                       </span>
                     </button>
-                    {expandedPolicyGroupId === section.id && (
+                    {expandedPolicyGroupIds.includes(section.id) && (
                       <div id={`policy-results-${section.id}`} className="policy-results-table-wrap">
                         <table className="policy-results-table">
                           <thead>
@@ -1228,8 +1238,20 @@ export function ManualResultsView({
                       <p className="info-banner">No trend data is available for this indicator.</p>
                     ) : (
                       <EChart
-                        option={buildManualOverlayOption(activeIndicatorPayload, baselineRunId, comparisonRunId)}
+                        option={buildManualOverlayOption(
+                          activeIndicatorPayload,
+                          baselineRunId,
+                          comparisonRunId,
+                          {
+                            Baseline: showBaselineTrend,
+                            Comparison: showComparisonTrend
+                          }
+                        )}
                         className="trend-modal-chart"
+                        onLegendSelectionChange={(selected) => {
+                          setShowBaselineTrend(selected.Baseline ?? showBaselineTrend);
+                          setShowComparisonTrend(selected.Comparison ?? showComparisonTrend);
+                        }}
                       />
                     )}
                   </div>

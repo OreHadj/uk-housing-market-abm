@@ -70,9 +70,9 @@ export function ExperimentsPage({
     resultsAction: 'View completed scenario results',
     resultsPath: '/scenarios?view=results'
   } : {
-    heading: 'Sensitivity analyses',
-    description: 'Test how results change when a policy setting is varied across a range of values.',
-    resultsAction: 'View sensitivity results',
+    heading: 'Policy sensitivity',
+    description: 'Vary one policy setting across a defined range and compare every tested value with the selected base policy.',
+    resultsAction: 'View policy sensitivity results',
     resultsPath: '/sensitivity?view=results'
   }, [workspace]);
 
@@ -113,7 +113,7 @@ export function ExperimentsPage({
             authEnabled={authEnabled}
             requestedExperimentId={experimentId}
             onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
-            sidebarSubtitle="Sensitivity analyses"
+            sidebarSubtitle="Completed and in-progress policy sweeps"
           />
         )
       ) : (

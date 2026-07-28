@@ -54,7 +54,8 @@ function computeVisibleMean(points: ResultsCompareSeries['points']): number | nu
 export function buildManualOverlayOption(
   indicatorPayload: ResultsCompareIndicator,
   baselineRunId: string,
-  comparisonRunId: string
+  comparisonRunId: string,
+  selectedSeries?: Record<string, boolean>
 ): EChartsOption {
   const xValues = indicatorPayload.seriesByRun[0]?.points.map((point) => String(point.modelTime)) ?? [];
   const meanBySeriesName = new Map<string, number>();
@@ -130,7 +131,8 @@ export function buildManualOverlayOption(
       }
     },
     legend: {
-      top: 4
+      top: 4,
+      selected: selectedSeries
     },
     grid: {
       left: 72,
