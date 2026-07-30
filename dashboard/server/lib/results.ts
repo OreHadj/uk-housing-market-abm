@@ -1040,6 +1040,8 @@ function alignSeriesByModelTime(seriesByRun: Array<{ runId: string; points: Resu
  * intent behind a run — the policy table says what was set, the title says why — so it is surfaced
  * wherever runs are listed. Returns null for runs with no manifest (older or externally produced).
  */
+const MAX_RUN_TITLE_LENGTH = 120;
+
 function readRunTitle(runPath: string): string | null {
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(runPath, RUN_MANIFEST_FILE_NAME), 'utf-8')) as {
@@ -1129,14 +1131,14 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
     fileCount,
     status,
     configAvailable,
-    parseCoverage: coverage
+    parseCoverage: coverage,
+    policySettings
   };
 
   const detail: ResultsRunDetail = {
     ...summary,
     indicators,
-    kpiSummary,
-    policySettings
+    kpiSummary
   };
 
   return { summary, detail, manifest };
@@ -1144,6 +1146,48 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
 
 export function getResultsIndicatorCatalog(): ResultsIndicatorMeta[] {
   return ALL_INDICATORS.map(toIndicatorMeta);
+}
+
+/**
+ * Renames a run by rewriting the title in its manifest. The manifest is the run's own record, so the
+ * name travels with the results folder rather than living in separate dashboard state. An empty title
+ * clears the name, and the run falls back to being identified by its id.
+ */
+export function renameResultsRun(
+  pathsInput: RuntimePathInput,
+  runId: string,
+  title: string
+): { runId: string; title: string | null } {
+  const paths = resolveRuntimePaths(pathsInput);
+  const resultsRoot = resolveResultsRoot(paths);
+  const runPath = ensureRunExists(resultsRoot, runId);
+  const manifestPath = path.join(runPath, RUN_MANIFEST_FILE_NAME);
+
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Run "${runId}" has no dashboard manifest, so it cannot be renamed.`);
+  }
+
+  const trimmed = title.trim();
+  if (trimmed.length > MAX_RUN_TITLE_LENGTH) {
+    throw new Error(`Run name must be ${MAX_RUN_TITLE_LENGTH} characters or fewer.`);
+  }
+
+  let manifest: { run?: Record<string, unknown> };
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { run?: Record<string, unknown> };
+  } catch (error) {
+    throw new Error(`Run "${runId}" has an unreadable manifest: ${(error as Error).message}`);
+  }
+  if (!manifest.run || typeof manifest.run !== 'object') {
+    throw new Error(`Run "${runId}" has a manifest with no run record, so it cannot be renamed.`);
+  }
+
+  const nextTitle = trimmed === '' ? null : trimmed;
+  manifest.run.title = nextTitle;
+  (manifest as { updatedAt?: string }).updatedAt = new Date().toISOString();
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+  return { runId, title: nextTitle };
 }
 
 export function getResultsRuns(pathsInput: RuntimePathInput): ResultsRunSummary[] {

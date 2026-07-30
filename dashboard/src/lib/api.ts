@@ -310,6 +310,18 @@ export async function fetchResultsRunFiles(runId: string): Promise<ResultsFileMa
   return payload.files;
 }
 
+export async function renameResultsRun(runId: string, title: string): Promise<{ runId: string; title: string | null }> {
+  return requestJsonWithInit<{ runId: string; title: string | null }>(
+    buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/title`),
+    'Failed to rename run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    }
+  );
+}
+
 export async function deleteResultsRun(runId: string, deleteKey?: string): Promise<ResultsRunDeleteResponse> {
   return requestJsonWithInit<ResultsRunDeleteResponse>(
     buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}`),

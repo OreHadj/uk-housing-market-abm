@@ -548,6 +548,75 @@ section.block:first-of-type { border-top: none; }
   word-break: break-all;
 }
 
+/* A run's full recorded policy, so it stays identifiable when the name is missing or vague. Laid out
+   as label/value rows matching the policy table on the results side, at list density. */
+.run-item-policy {
+  margin-top: 0.4rem;
+  border-top: 1px solid rgba(17, 32, 24, 0.09);
+  padding-top: 0.4rem;
+}
+
+.run-item-policy-head {
+  margin: 0 0 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.run-item-policy-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  font-size: 0.73rem;
+}
+
+.run-item-policy-list div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.16rem 0;
+}
+
+.run-item-policy-list dt {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.run-item-policy-list dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* A setting that differs from the matched baseline policy — the reason this run is distinctive. */
+.run-item-policy-list .is-changed dt,
+.run-item-policy-list .is-changed dd {
+  color: #0b7285;
+}
+
+.run-item-policy-list .is-changed dt {
+  font-weight: 600;
+}
+
+.run-rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.run-rename-form input {
+  flex: 1 1 10rem;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid rgba(17, 32, 24, 0.24);
+  border-radius: 0.4rem;
+}
+
 .run-item-head {
   display: flex;
   align-items: start;

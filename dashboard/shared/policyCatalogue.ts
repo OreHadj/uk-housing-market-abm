@@ -203,6 +203,50 @@ export const DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID = 'owner_occupier_lti_soft_ma
 const LEGACY_2011_VERSIONS = new Set(['v0', 'v0o', 'v0oo', 'v0o1', 'v0o2', 'v0o3', 'v0o6', 'v0o7']);
 const CENTRAL_BANK_POLICY_KEY_SET = new Set<string>(CENTRAL_BANK_POLICY_KEYS);
 
+/** How a run's recorded policy relates to the baseline policy it most closely matches. */
+export interface RunPolicySummary {
+  basePolicyId: BasePolicyId | null;
+  basePolicyTitle: string | null;
+  deviations: Array<{ key: string; value: number; baseValue: number }>;
+}
+
+const POLICY_VALUE_EPSILON = 1e-9;
+
+/**
+ * Describes a run's recorded policy relative to the baseline it best matches, so a run can be
+ * identified by what it actually did rather than by whatever name it was given. The baseline is not
+ * stored on a completed run, so it is inferred as the option agreeing with the most settings.
+ */
+export function summariseRunPolicy(settings: ReadonlyArray<{ key: string; value: number }>): RunPolicySummary {
+  if (settings.length === 0) {
+    return { basePolicyId: null, basePolicyTitle: null, deviations: [] };
+  }
+
+  let best: { option: BasePolicyOption; matches: number } | null = null;
+  for (const option of BASE_POLICY_OPTIONS) {
+    const matches = settings.filter((setting) => {
+      const baseValue = Number(option.values[setting.key]);
+      return Number.isFinite(baseValue) && Math.abs(baseValue - setting.value) < POLICY_VALUE_EPSILON;
+    }).length;
+    if (!best || matches > best.matches) {
+      best = { option, matches };
+    }
+  }
+  if (!best) {
+    return { basePolicyId: null, basePolicyTitle: null, deviations: [] };
+  }
+
+  const deviations = settings.flatMap((setting) => {
+    const baseValue = Number(best.option.values[setting.key]);
+    if (!Number.isFinite(baseValue) || Math.abs(baseValue - setting.value) < POLICY_VALUE_EPSILON) {
+      return [];
+    }
+    return [{ key: setting.key, value: setting.value, baseValue }];
+  });
+
+  return { basePolicyId: best.option.id, basePolicyTitle: best.option.title, deviations };
+}
+
 export function getDefaultBasePolicyId(baseline: string): BasePolicyId {
   return LEGACY_2011_VERSIONS.has(baseline) ? '2011' : '2024';
 }

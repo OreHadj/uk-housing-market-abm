@@ -22,20 +22,16 @@ import {
   fetchModelRunJobs,
   fetchResultsCompare,
   fetchResultsRunDetail,
+  renameResultsRun,
   fetchResultsRunFiles,
   fetchResultsRuns,
   fetchVersions,
   isRetryableApiError
 } from '../../../lib/api';
 import {
-  HEADLINE_KPI_IDS,
-  KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
   formatKpiComparisonDelta,
-  formatKpiDeltaValue,
   formatKpiValue,
-  getKpiComparisonDeltaLabel,
-  getKpiMetricValue,
   groupIndicatorsByPolicyQuestion,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
@@ -45,6 +41,7 @@ import {
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
 import { buildResultsRunVersionLabelState } from '../../../lib/versionLabels';
+import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
@@ -118,6 +115,7 @@ function coverageClass(status: ResultsFileManifestEntry['coverageStatus']): stri
 }
 
 export function ManualResultsView({
+  canWrite,
   canDownloadResults,
   canDeleteResults,
   deleteKeyRequired,
@@ -130,6 +128,9 @@ export function ManualResultsView({
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
+  const [renamingRunId, setRenamingRunId] = useState<string>('');
+  const [renameDraft, setRenameDraft] = useState<string>('');
+  const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
@@ -138,7 +139,6 @@ export function ManualResultsView({
   const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState<boolean>(
     Boolean(requestedComparisonRunId)
   );
-  const [showAllKpiDetails, setShowAllKpiDetails] = useState<boolean>(false);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
@@ -488,6 +488,39 @@ export function ManualResultsView({
   // Runs are identified by an opaque timestamped id; the scenario name is what a reader recognises.
   // Fall back to the id whenever a run carries no title so nothing is ever unlabelled.
   const runLabel = (runId: string) => runById.get(runId)?.title ?? runId;
+
+  const submitRename = async (runId: string) => {
+    setIsSavingRename(true);
+    setLoadError('');
+    try {
+      await renameResultsRun(runId, renameDraft);
+      setRenamingRunId('');
+      setRenameDraft('');
+      await loadRuns();
+    } catch (error) {
+      setLoadError((error as Error).message);
+    } finally {
+      setIsSavingRename(false);
+    }
+  };
+
+  /**
+   * A run's full recorded policy, plus which settings deviate from the baseline it matches. Shown in
+   * full on every run so a run stays identifiable when its name is missing or unclear.
+   */
+  const describeRunPolicy = (run: ResultsRunSummary) => {
+    if (run.policySettings.length === 0) {
+      return null;
+    }
+    const summary = summariseRunPolicy(run.policySettings);
+    const changedKeys = new Set(summary.deviations.map((deviation) => deviation.key));
+    const heading = summary.basePolicyTitle
+      ? summary.deviations.length === 0
+        ? `${summary.basePolicyTitle}, unchanged`
+        : `${summary.basePolicyTitle} \u00b7 ${summary.deviations.length} changed`
+      : `${run.policySettings.length} Central Bank settings`;
+    return { heading, changedKeys };
+  };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
   const availableIndicators = useMemo(() => baselineDetail?.indicators ?? [], [baselineDetail]);
@@ -517,12 +550,6 @@ export function ManualResultsView({
     [comparisonRunId, comparePayload]
   );
   const sortedKpis = useMemo(() => sortKpis(baselineCompareKpis), [baselineCompareKpis]);
-  const headlineKpis = useMemo(() => {
-    const kpiById = new Map(sortedKpis.map((kpi) => [kpi.indicatorId, kpi]));
-    return HEADLINE_KPI_IDS.map((indicatorId) => kpiById.get(indicatorId)).filter(
-      (kpi): kpi is KpiMetricSummary => Boolean(kpi)
-    );
-  }, [sortedKpis]);
   const comparisonKpiById = useMemo(
     () => new Map(comparisonCompareKpis.map((kpi) => [kpi.indicatorId, kpi])),
     [comparisonCompareKpis]
@@ -782,8 +809,76 @@ export function ManualResultsView({
                       >
                         <div className="run-item-head">
                           <div className="run-item-name">
-                            <strong>{run.title ?? run.runId}</strong>
-                            {run.title && <span className="run-item-id">{run.runId}</span>}
+                            {renamingRunId === run.runId ? (
+                              <form
+                                className="run-rename-form"
+                                onSubmit={(event) => {
+                                  event.preventDefault();
+                                  void submitRename(run.runId);
+                                }}
+                              >
+                                <input
+                                  type="text"
+                                  value={renameDraft}
+                                  maxLength={120}
+                                  autoFocus
+                                  aria-label={`Rename ${run.title ?? run.runId}`}
+                                  placeholder="Scenario name"
+                                  disabled={isSavingRename}
+                                  onChange={(event) => setRenameDraft(event.target.value)}
+                                />
+                                <button type="submit" className="run-select-btn" disabled={isSavingRename}>
+                                  {isSavingRename ? 'Saving...' : 'Save'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="table-toggle"
+                                  disabled={isSavingRename}
+                                  onClick={() => {
+                                    setRenamingRunId('');
+                                    setRenameDraft('');
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </form>
+                            ) : (
+                              <>
+                                <strong>{run.title ?? run.runId}</strong>
+                                {run.title && <span className="run-item-id">{run.runId}</span>}
+                              </>
+                            )}
+                            {(() => {
+                              const policy = describeRunPolicy(run);
+                              if (!policy) {
+                                return null;
+                              }
+                              return (
+                                <div className="run-item-policy">
+                                  <p className="run-item-policy-head">{policy.heading}</p>
+                                  <dl className="run-item-policy-list">
+                                    {run.policySettings.map((setting) => {
+                                      const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                                      const isChanged = policy.changedKeys.has(setting.key);
+                                      return (
+                                        <div
+                                          key={setting.key}
+                                          className={isChanged ? 'is-changed' : undefined}
+                                          title={setting.key}
+                                        >
+                                          <dt>{display?.label ?? setting.key}</dt>
+                                          <dd>
+                                            {display
+                                              ? formatPolicyValue(setting.value, display.unit)
+                                              : String(setting.value)}
+                                          </dd>
+                                        </div>
+                                      );
+                                    })}
+                                  </dl>
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div className="run-role-chips">
                             {isBaselineSelected && <span className="run-role-chip">Baseline</span>}
@@ -807,6 +902,18 @@ export function ManualResultsView({
                           >
                             {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
                           </button>
+                          {canWrite && renamingRunId !== run.runId && (
+                            <button
+                              type="button"
+                              className="table-toggle"
+                              onClick={() => {
+                                setRenamingRunId(run.runId);
+                                setRenameDraft(run.title ?? '');
+                              }}
+                            >
+                              Rename
+                            </button>
+                          )}
                         </div>
 
                         <div className="run-meta">
@@ -1057,31 +1164,11 @@ export function ManualResultsView({
           </article>
 
           <article className="results-card manual-results-aggregate-card">
-            <div className="aggregate-results-head">
-              <div>
-                <h3>Policy impact summary</h3>
-                <p>
-                  {showAllKpiDetails
-                    ? 'Headline cards show mean, CV and range over the selected analysis window.'
-                    : 'Headline outcomes are followed by every available result, grouped by policy question. Seed uncertainty intervals are not calculated in this view.'}
-                </p>
-              </div>
-              <div className="aggregate-results-actions">
-                <button
-                  type="button"
-                  className="table-toggle aggregate-results-toggle"
-                  aria-pressed={showAllKpiDetails}
-                  onClick={() => setShowAllKpiDetails((current) => !current)}
-                >
-                  {showAllKpiDetails ? 'Hide details' : 'More details'}
-                </button>
-              </div>
-            </div>
             {showKpiRefreshing && (
               <LoadingSkeleton
                 as="span"
                 className="loading-skeleton-pill section-loading-row"
-                ariaLabel="Refreshing aggregate results"
+                ariaLabel="Refreshing policy results"
               />
             )}
             {showKpiSkeleton ? (
@@ -1089,102 +1176,9 @@ export function ManualResultsView({
                 className="kpi-grid"
                 count={4}
                 itemClassName="loading-skeleton-card kpi-card-skeleton"
-                ariaLabel="Loading aggregate results"
+                ariaLabel="Loading policy results"
               />
             ) : (
-              <div
-                id="aggregate-results-grid"
-                className={['kpi-grid', showAllKpiDetails ? 'kpi-grid-detailed' : ''].filter(Boolean).join(' ')}
-              >
-                {headlineKpis.map((kpi) => {
-                  const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
-                  const meanDelta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
-                  return (
-                    <div key={kpi.indicatorId} className="kpi-card">
-                      <p className="kpi-title">{kpi.title}</p>
-                      {!showAllKpiDetails ? (
-                        mode === 'single' ? (
-                          <p className="kpi-value">Mean (month): {formatKpiValue(kpi.mean, kpi.units)}</p>
-                        ) : (
-                          <div className="manual-kpi-compare-grid">
-                            <p>
-                              <span>Baseline</span>
-                              {formatKpiValue(kpi.mean, kpi.units)}
-                            </p>
-                            <p>
-                              <span>Comparison</span>
-                              {formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}
-                            </p>
-                            <p className={`manual-kpi-delta ${deltaClassName(meanDelta)}`}>
-                              <span>{getKpiComparisonDeltaLabel(kpi.units)}</span>
-                              {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
-                            </p>
-                          </div>
-                        )
-                      ) : (
-                        <div className="manual-kpi-detail-table-wrap">
-                          {mode === 'single' ? (
-                            <table className="manual-kpi-detail-table single">
-                              <thead>
-                                <tr>
-                                  <th>Metric</th>
-                                  <th>Value</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {KPI_DETAIL_ROWS.map((row) => {
-                                  const value = getKpiMetricValue(kpi, row.key);
-                                  const units = row.units === 'dynamic' ? kpi.units : row.units;
-                                  return (
-                                    <tr key={row.key}>
-                                      <td>{row.label}</td>
-                                      <td>{formatKpiValue(value, units)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          ) : (
-                            <table className="manual-kpi-detail-table compare">
-                              <thead>
-                                <tr>
-                                  <th>Metric</th>
-                                  <th>Baseline</th>
-                                  <th>Comparison</th>
-                                  <th>Delta</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {KPI_DETAIL_ROWS.map((row) => {
-                                  const baselineValue = getKpiMetricValue(kpi, row.key);
-                                  const comparisonValue = getKpiMetricValue(comparisonKpi, row.key);
-                                  const units = row.units === 'dynamic' ? kpi.units : row.units;
-                                  const delta = computeKpiDeltaValue(baselineValue, comparisonValue, units);
-                                  const formattedDelta =
-                                    row.units === 'dynamic'
-                                      ? formatKpiComparisonDelta(baselineValue, comparisonValue, units)
-                                      : formatKpiDeltaValue(delta, units);
-                                  return (
-                                    <tr key={row.key}>
-                                      <td>{row.label}</td>
-                                      <td>{formatKpiValue(baselineValue, units)}</td>
-                                      <td>{formatKpiValue(comparisonValue, units)}</td>
-                                      <td className={deltaClassName(delta)}>{formattedDelta}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {!showKpiSkeleton && (
               <div className="policy-results-sections">
                 <div className="policy-results-sections-head">
                   <h3>All policy results</h3>

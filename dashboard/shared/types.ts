@@ -417,6 +417,12 @@ export interface ResultsCoverageSummary {
   errorCount: number;
 }
 
+/** One Central Bank policy setting, as recorded in a completed run's config.properties. */
+export interface ResultsPolicySetting {
+  key: string;
+  value: number;
+}
+
 export interface ResultsRunSummary {
   runId: string;
   /** Scenario name given when the run was created; null for runs with no readable manifest. */
@@ -429,6 +435,8 @@ export interface ResultsRunSummary {
   status: ResultsRunStatus;
   configAvailable: boolean;
   parseCoverage: ResultsCoverageSummary;
+  /** Empty when the run predates policy recording, or its config could not be read. */
+  policySettings: ResultsPolicySetting[];
 }
 
 export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
@@ -437,17 +445,9 @@ export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
   note?: string;
 }
 
-/** One Central Bank policy setting, as recorded in a completed run's config.properties. */
-export interface ResultsPolicySetting {
-  key: string;
-  value: number;
-}
-
 export interface ResultsRunDetail extends ResultsRunSummary {
   indicators: ResultsIndicatorAvailability[];
   kpiSummary: KpiMetricSummary[];
-  /** Empty when the run predates policy recording, or its config could not be read. */
-  policySettings: ResultsPolicySetting[];
 }
 
 export interface ResultsFileManifestEntry {

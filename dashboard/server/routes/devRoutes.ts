@@ -12,7 +12,8 @@ import {
   getResultsRunDetail,
   getResultsRunFiles,
   getResultsRuns,
-  getResultsSeries
+  getResultsSeries,
+  renameResultsRun
 } from '../lib/results';
 import {
   cancelModelRunJob,
@@ -224,6 +225,26 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
         res.destroy(error as Error);
         return;
       }
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  app.post('/api/results/runs/:runId/title', async (req, res) => {
+    if (!context.requireExperimentsFeature(req, res)) {
+      return;
+    }
+    if (!context.requireWriteAccess(req, res)) {
+      return;
+    }
+
+    try {
+      const title = typeof req.body?.title === 'string' ? req.body.title : '';
+      if (context.remoteExecution) {
+        res.status(501).json({ error: 'Renaming runs is not supported for remotely executed results.' });
+        return;
+      }
+      res.json(renameResultsRun(context.runtimePaths, String(req.params.runId ?? ''), title));
+    } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }
   });

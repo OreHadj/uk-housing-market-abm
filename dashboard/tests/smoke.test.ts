@@ -570,6 +570,7 @@ const manualSelectionRuns = [
     sizeBytes: 1,
     fileCount: 1,
     title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -587,6 +588,7 @@ const manualSelectionRuns = [
     sizeBytes: 1,
     fileCount: 1,
     title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -604,6 +606,7 @@ const manualSelectionRuns = [
     sizeBytes: 1,
     fileCount: 1,
     title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
