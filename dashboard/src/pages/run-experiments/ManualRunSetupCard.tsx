@@ -132,6 +132,11 @@ export function ManualRunSetupCard({
     [activeInstruments, changedPolicyKeys]
   );
 
+  // The benchmark choice reflects both conditions: nothing changed *and* no instrument opened.
+  // Selecting an instrument unticks it straight away, so the two choices never read as
+  // simultaneously active while the user is part-way through setting a value.
+  const benchmarkSelected = isBenchmark && visibleInstruments.size === 0;
+
   const resetKeysToBaseline = (keys: readonly string[]) => {
     if (!selectedBasePolicy) return;
     for (const key of keys) {
@@ -165,7 +170,10 @@ export function ManualRunSetupCard({
     setActiveInstruments((current) => new Set(current).add(id));
   };
 
-  const scenarioSentence = describeScenarioPolicy(changedPolicyKeys);
+  const scenarioSentence =
+    isBenchmark && !benchmarkSelected
+      ? 'Set a value on the selected instrument, or this scenario will run as the unchanged baseline policy.'
+      : describeScenarioPolicy(changedPolicyKeys);
   const policyTypeSummary = isBenchmark
     ? BENCHMARK_OPTION.label
     : changedInstrumentLabels(changedPolicyKeys).join(' + ');
@@ -269,11 +277,11 @@ export function ManualRunSetupCard({
                   instruments to test how they interact.
                 </p>
                 <div className="policy-choice-grid" role="group" aria-label="Policy change">
-                  <label className={`policy-choice ${isBenchmark ? 'selected' : ''}`}>
+                  <label className={`policy-choice ${benchmarkSelected ? 'selected' : ''}`}>
                     <input
                       type="checkbox"
                       name="policy-benchmark"
-                      checked={isBenchmark}
+                      checked={benchmarkSelected}
                       disabled={formDisabled}
                       onChange={selectBenchmark}
                     />

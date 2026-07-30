@@ -128,6 +128,9 @@ export function ManualResultsView({
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
+  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
+  // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
+  const [previewRunId, setPreviewRunId] = useState<string>('');
   const [renamingRunId, setRenamingRunId] = useState<string>('');
   const [renameDraft, setRenameDraft] = useState<string>('');
   const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
@@ -615,8 +618,9 @@ export function ManualResultsView({
   );
 
   const setBaselineSelection = (runId: string) => {
+    // Deliberately leaves Run History open: selecting a run is often the first of several
+    // comparisons, and collapsing the list would throw away the user's place in it.
     updateSelection(runId, comparisonRunId === runId ? '' : comparisonRunId);
-    setIsHistoryExpanded(false);
   };
 
   const toggleComparisonSelection = (runId: string) => {
@@ -792,6 +796,7 @@ export function ManualResultsView({
                   ariaLabel="Loading runs"
                 />
               ) : (
+                <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
                 <ul className="run-list">
                   {historyRuns.map((run) => {
                     const isBaselineSelected = baselineRunId === run.runId;
@@ -802,10 +807,13 @@ export function ManualResultsView({
                         className={[
                           'run-item',
                           isBaselineSelected ? 'selected-baseline' : '',
-                          isComparisonSelected ? 'selected-comparison' : ''
+                          isComparisonSelected ? 'selected-comparison' : '',
+                          previewRunId === run.runId ? 'is-previewed' : ''
                         ]
                           .filter(Boolean)
                           .join(' ')}
+                        onMouseEnter={() => setPreviewRunId(run.runId)}
+                        onFocus={() => setPreviewRunId(run.runId)}
                       >
                         <div className="run-item-head">
                           <div className="run-item-name">
@@ -848,37 +856,6 @@ export function ManualResultsView({
                                 {run.title && <span className="run-item-id">{run.runId}</span>}
                               </>
                             )}
-                            {(() => {
-                              const policy = describeRunPolicy(run);
-                              if (!policy) {
-                                return null;
-                              }
-                              return (
-                                <div className="run-item-policy">
-                                  <p className="run-item-policy-head">{policy.heading}</p>
-                                  <dl className="run-item-policy-list">
-                                    {run.policySettings.map((setting) => {
-                                      const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
-                                      const isChanged = policy.changedKeys.has(setting.key);
-                                      return (
-                                        <div
-                                          key={setting.key}
-                                          className={isChanged ? 'is-changed' : undefined}
-                                          title={setting.key}
-                                        >
-                                          <dt>{display?.label ?? setting.key}</dt>
-                                          <dd>
-                                            {display
-                                              ? formatPolicyValue(setting.value, display.unit)
-                                              : String(setting.value)}
-                                          </dd>
-                                        </div>
-                                      );
-                                    })}
-                                  </dl>
-                                </div>
-                              );
-                            })()}
                           </div>
                           <div className="run-role-chips">
                             {isBaselineSelected && <span className="run-role-chip">Baseline</span>}
@@ -918,11 +895,7 @@ export function ManualResultsView({
 
                         <div className="run-meta">
                           <span className={statusClass(run.status)}>{run.status}</span>
-                          <span>{(run.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
                         </div>
-                        <p>
-                          Coverage: {run.parseCoverage.supportedCount}/{run.parseCoverage.requiredCount} supported
-                        </p>
                         {canDeleteResults && (
                           <button
                             type="button"
@@ -942,6 +915,55 @@ export function ManualResultsView({
                     );
                   })}
                 </ul>
+                {(() => {
+                  const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
+                  if (!detailRun) {
+                    return null;
+                  }
+                  const policy = describeRunPolicy(detailRun);
+                  return (
+                    <div className="run-history-preview" aria-live="polite">
+                      <p className="run-history-preview-eyebrow">
+                        {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
+                      </p>
+                      <h4>{detailRun.title ?? detailRun.runId}</h4>
+                      {detailRun.title && <p className="run-item-id">{detailRun.runId}</p>}
+                      <div className="run-meta">
+                        <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
+                        <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                        <span>
+                          Coverage {detailRun.parseCoverage.supportedCount}/{detailRun.parseCoverage.requiredCount}
+                        </span>
+                      </div>
+                      {policy ? (
+                        <div className="run-item-policy">
+                          <p className="run-item-policy-head">{policy.heading}</p>
+                          <dl className="run-item-policy-list">
+                            {detailRun.policySettings.map((setting) => {
+                              const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                              const isChanged = policy.changedKeys.has(setting.key);
+                              return (
+                                <div
+                                  key={setting.key}
+                                  className={isChanged ? 'is-changed' : undefined}
+                                  title={setting.key}
+                                >
+                                  <dt>{display?.label ?? setting.key}</dt>
+                                  <dd>
+                                    {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
+                                  </dd>
+                                </div>
+                              );
+                            })}
+                          </dl>
+                        </div>
+                      ) : (
+                        <p className="info-banner">No policy settings recorded for this run.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+                </div>
               )}
               {failedHistoryJobs.length > 0 && (
                 <ul className="run-list run-history-failed-list">

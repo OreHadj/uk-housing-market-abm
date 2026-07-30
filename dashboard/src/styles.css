@@ -548,6 +548,89 @@ section.block:first-of-type { border-top: none; }
   word-break: break-all;
 }
 
+/* Run History is a scannable list on the left with a detail panel on the right. The list stays narrow
+   so many runs are visible at once; hovering or focusing one describes it in full beside the list,
+   rather than expanding every row. */
+.run-history-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.run-history-split > .run-list {
+  max-height: 60vh;
+}
+
+.run-history-preview {
+  position: sticky;
+  top: 0.5rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(17, 32, 24, 0.14);
+  border-radius: 0.65rem;
+  background: var(--panel-muted);
+}
+
+.run-history-preview h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+.run-history-preview-eyebrow {
+  margin: 0 0 0.15rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.run-history-preview .run-meta {
+  margin-top: 0.4rem;
+}
+
+/* The panel has roughly 60% of the card's width to itself, so the summary is set larger than the
+   list-density type it inherited from the run rows. */
+.run-history-preview .run-item-id {
+  font-size: 0.8rem;
+}
+
+.run-history-preview .run-item-policy {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+}
+
+.run-history-preview .run-item-policy-head {
+  margin-bottom: 0.4rem;
+  font-size: 0.82rem;
+}
+
+.run-history-preview .run-item-policy-list {
+  font-size: 0.88rem;
+}
+
+.run-history-preview .run-item-policy-list div {
+  padding: 0.3rem 0;
+  gap: 1rem;
+}
+
+/* The row the detail panel is currently describing. */
+.run-item.is-previewed {
+  border-color: var(--accent);
+  background: rgba(11, 114, 133, 0.04);
+}
+
+@media (max-width: 900px) {
+  .run-history-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .run-history-preview {
+    position: static;
+  }
+}
+
 /* A run's full recorded policy, so it stays identifiable when the name is missing or vague. Laid out
    as label/value rows matching the policy table on the results side, at list density. */
 .run-item-policy {

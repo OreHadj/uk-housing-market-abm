@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ModelRunParameterDefinition } from '../../../shared/types';
 import {
   formatExactModelValue,
@@ -47,82 +47,88 @@ interface PolicyValueFieldProps {
 }
 
 /**
- * A Central Bank policy value shown and edited in a human-friendly unit (base rate & affordability cap
- * as a percentage, ICR floor as a ratio). A "Use base policy value" checkbox makes the two states
- * unambiguous:
+ * A Central Bank policy value shown and edited in its own unit (percentages for rates, caps and
+ * lending shares; a multiple for LTI thresholds; months for the enforcement window; a ratio for the
+ * ICR floor).
  *
- *  - Checked (default): the input is locked and greyed, showing the base policy's exact value in its
- *    display unit at full precision (5.10833333%, not the 2-dp rounded stand-in). On submit that exact
- *    stored fraction (0.0510833333) is passed through byte-for-byte.
- *  - Unchecked: the box clears to empty so the user types a fresh override; whatever they type is
- *    submitted as a plain reading of the displayed unit (5.11% -> 0.0511). An empty box is left as an
- *    invalid/empty value for submit-time validation to catch.
+ * The field is directly editable — the baseline value is pre-filled, so there is nothing to unlock
+ * before typing. Whether the value is still the baseline or a user override is shown by the caller,
+ * derived from the value itself rather than from a separate checkbox that could disagree with it.
  *
- * Re-checking discards any typed value and returns to the base policy value. Switching the base policy
- * returns to the checked state (the run controller already overwrites the stored value on a
- * base-policy switch, so any override is discarded there regardless).
+ * Two invariants are enforced, so a scenario can never be submitted with a blank or negative policy
+ * value:
+ *
+ *  - only a finite, non-negative number is ever committed to the form;
+ *  - on blur, text that is blank, malformed or negative is replaced by the last committed value.
+ *
+ * Mid-typing states like "4." or "0.9" are left alone: the local text is only re-synced when the
+ * stored value changes from outside the field (a baseline switch, or an instrument being reset), which
+ * is detected numerically rather than by string comparison.
+ *
+ * An untouched field emits no change at all, so the base policy's exact stored fraction
+ * (0.0510833333, not a 2-dp stand-in) is submitted byte-for-byte.
  */
 function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suffix, disabled, mode, onChange }: PolicyValueFieldProps) {
-  // Fall back to the current stored value if the base policy has no value for this key (not expected
-  // for these fields, but keeps the control usable rather than blank).
-  const baseFraction =
-    typeof basePolicyValue === 'number' && Number.isFinite(basePolicyValue)
-      ? basePolicyValue
-      : Number.parseFloat(typeof value === 'string' ? value : '');
-  const baseFractionString = Number.isFinite(baseFraction) ? String(baseFraction) : '';
-  // Full precision, not the 2-dp rounded display: while locked this is a read-out of the exact base
-  // policy value, so it must not round the value it stands for.
-  const baseDisplay = formatExactScaled(baseFraction, scale);
+  const storedString = typeof value === 'string' ? value : '';
+  const storedNumber = Number.parseFloat(storedString);
+  const fallbackNumber =
+    typeof basePolicyValue === 'number' && Number.isFinite(basePolicyValue) ? basePolicyValue : Number.NaN;
+  const effectiveNumber = Number.isFinite(storedNumber) ? storedNumber : fallbackNumber;
+  const displayText = Number.isFinite(effectiveNumber) ? formatExactScaled(effectiveNumber, scale) : '';
 
-  const [useBasePolicy, setUseBasePolicy] = useState(true);
-  // Only meaningful while unchecked; empty means "type a fresh override" (the box clears on untick).
-  const [editText, setEditText] = useState('');
+  const [text, setText] = useState(displayText);
+  const committedRef = useRef<number | null>(Number.isFinite(effectiveNumber) ? effectiveNumber : null);
 
-  // A base-policy switch changes the base value; return to carrying it through and clear any
-  // half-typed override so re-unticking starts from an empty box again.
+  // Adopt a value changed from outside the field. Compared numerically so an in-progress edit such as
+  // "4." is not overwritten by its own echo.
   useEffect(() => {
-    setUseBasePolicy(true);
-    setEditText('');
-  }, [baseFractionString]);
+    if (!Number.isFinite(effectiveNumber)) {
+      return;
+    }
+    if (committedRef.current !== null && Math.abs(committedRef.current - effectiveNumber) < 1e-12) {
+      return;
+    }
+    committedRef.current = effectiveNumber;
+    setText(formatExactScaled(effectiveNumber, scale));
+  }, [effectiveNumber, scale]);
 
   const help = getParameterHelp(parameter, mode);
   const exactNote = typeof value === 'string' ? ` Exact model value: ${formatExactModelValue(value)}.` : '';
-  const info = `${help} Keep "Use base policy value" ticked to submit the base policy's exact value; untick to type your own.${exactNote}`;
-
-  const handleToggle = (checked: boolean) => {
-    setUseBasePolicy(checked);
-    setEditText('');
-    // Ticked carries the base policy fraction through byte-exact; unticked clears to an empty override
-    // box (the submitted value stays empty/invalid until the user types one).
-    onChange(parameter, checked ? baseFractionString : '');
-  };
+  const info = `${help} Starts at the baseline policy value; type to override it. Negative and empty values are not accepted.${exactNote}`;
 
   const handleEdit = (raw: string) => {
-    setEditText(raw);
-    onChange(parameter, scaledInputToStoredFraction(raw, scale));
+    setText(raw);
+    const parsed = Number.parseFloat(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      // Keep the last valid stored value; blur restores the text so nothing invalid can be submitted.
+      return;
+    }
+    const stored = scaledInputToStoredFraction(raw, scale);
+    committedRef.current = Number.parseFloat(stored);
+    onChange(parameter, stored);
+  };
+
+  const handleBlur = () => {
+    const parsed = Number.parseFloat(text);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return;
+    }
+    setText(Number.isFinite(effectiveNumber) ? formatExactScaled(effectiveNumber, scale) : '');
   };
 
   return (
     <div className="run-param-item cap-field">
       <InfoLabel label={label} info={info} />
-      <label className="policy-value-toggle">
-        <input
-          type="checkbox"
-          checked={useBasePolicy}
-          disabled={disabled}
-          onChange={(event) => handleToggle(event.target.checked)}
-        />
-        <span>Use base policy value</span>
-      </label>
       <span className="cap-value-field">
         <input
           type="number"
           step="any"
-          className={useBasePolicy ? 'cap-value-input--locked' : undefined}
-          value={useBasePolicy ? baseDisplay : editText}
-          disabled={disabled || useBasePolicy}
+          min={0}
+          value={text}
+          disabled={disabled}
           aria-label={`${label} value`}
           onChange={(event) => handleEdit(event.target.value)}
+          onBlur={handleBlur}
         />
         {suffix ? (
           <span className="cap-value-suffix" aria-hidden="true">
