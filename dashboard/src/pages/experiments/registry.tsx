@@ -80,14 +80,14 @@ const SensitivityViewRenderer: ComponentType<ExperimentViewRendererProps> = ({
 
 export const experimentTypeRegistry: Record<ExperimentType, ExperimentTypeDefinition> = {
   manual: {
-    label: 'Policy scenario',
-    viewSidebarSubtitle: 'Baseline required, comparison optional.',
+    label: 'Scenario',
+    viewSidebarSubtitle: 'Selected run required, comparison optional.',
     RunSetupComponent: ManualRunSetupPanel,
     ViewComponent: ManualViewRenderer
   },
   sensitivity: {
-    label: 'Policy sensitivity',
-    viewSidebarSubtitle: 'Completed and in-progress policy sweeps.',
+    label: 'Sensitivity analysis',
+    viewSidebarSubtitle: 'Completed and in-progress sensitivity analyses.',
     RunSetupComponent: SensitivityRunSetupPanel,
     ViewComponent: SensitivityViewRenderer
   }

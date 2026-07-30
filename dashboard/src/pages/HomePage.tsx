@@ -3,21 +3,21 @@ import { Link } from 'react-router-dom';
 const START_HERE = [
   {
     num: '01',
-    to: '/scenarios',
+    to: '/scenarios/new',
     title: 'Run a policy scenario',
-    desc: 'Set the Central Bank toolkit — LTV / LTI caps — and run it against a no-policy benchmark.'
+    desc: 'Set the Central Bank toolkit — LTV / LTI caps — and compare it with an unchanged reference-policy run.'
   },
   {
     num: '02',
     to: '/sensitivity',
     title: 'Test policy sensitivity',
-    desc: 'Vary one policy setting across a range and compare the housing and credit responses with the base policy.'
+    desc: 'Vary one policy instrument across a range and compare the housing and credit responses with the baseline policy.'
   },
   {
     num: '03',
-    to: '/compare',
+    to: '/scenarios',
     title: 'Compare completed results',
-    desc: 'Diff two finished runs side by side.'
+    desc: 'Open a finished scenario, then diff it against another run side by side.'
   },
   {
     num: '04',
@@ -43,14 +43,14 @@ export function HomePage() {
           See what a mortgage-policy change <em>does</em> to the UK housing market.
         </h2>
         <p className="lede">
-          Run an LTV or LTI cap against a no-policy benchmark and read the effects — on lending, house prices,
+          Run an LTV or LTI cap against an unchanged reference policy and read the effects — on lending, house prices,
           first-time buyers, and the buy-to-let and rental markets.
         </p>
         <div className="cta-row">
-          <Link className="btn-primary" to="/scenarios">
+          <Link className="btn-primary" to="/scenarios/new">
             Create a policy scenario <span aria-hidden="true">→</span>
           </Link>
-          <Link className="text-link" to="/compare">or compare existing results</Link>
+          <Link className="text-link" to="/scenarios">or compare existing results</Link>
         </div>
         <aside className="notice" aria-label="Research simulation disclaimer">
           <strong>Research simulation — not a policy forecast</strong>

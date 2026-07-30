@@ -11,6 +11,7 @@ import type {
   ResultsFileType,
   ResultsIndicatorAvailability,
   ResultsIndicatorMeta,
+  ResultsPolicySetting,
   ResultsRunDetail,
   ResultsRunStatus,
   ResultsRunSummary,
@@ -26,6 +27,8 @@ import {
   type RuntimePaths
 } from './runtimePaths';
 import { isDashboardManagedRun } from './runOwnership';
+import { CENTRAL_BANK_POLICY_KEYS } from '../../shared/policyCatalogue';
+import { RUN_MANIFEST_FILE_NAME } from './runManifest';
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
@@ -1026,6 +1029,65 @@ function alignSeriesByModelTime(seriesByRun: Array<{ runId: string; points: Resu
   });
 }
 
+/**
+ * Reads the Central Bank policy a completed run was executed with, straight from the
+ * config.properties written into its results folder. This is the only record of the policy behind a
+ * result, so it is read back from the run itself rather than reconstructed from the request that
+ * created it. Returns an empty list when the file is missing or unreadable (older or external runs).
+ */
+/**
+ * Reads the scenario name a run was created with from its manifest. The name is the only record of
+ * intent behind a run — the policy table says what was set, the title says why — so it is surfaced
+ * wherever runs are listed. Returns null for runs with no manifest (older or externally produced).
+ */
+function readRunTitle(runPath: string): string | null {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(runPath, RUN_MANIFEST_FILE_NAME), 'utf-8')) as {
+      run?: { title?: unknown };
+    };
+    const title = manifest.run?.title;
+    if (typeof title !== 'string') {
+      return null;
+    }
+    const trimmed = title.trim();
+    return trimmed === '' ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting[] {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(configPath, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  const values = new Map<string, number>();
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === '' || line.startsWith('#') || line.startsWith('!')) {
+      continue;
+    }
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex === -1) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const parsed = Number.parseFloat(line.slice(separatorIndex + 1).trim());
+    if (Number.isFinite(parsed)) {
+      values.set(key, parsed);
+    }
+  }
+
+  // Emit in catalogue order so the block reads the same way for every run, not in file order.
+  return CENTRAL_BANK_POLICY_KEYS.filter((key) => values.has(key)).map((key) => ({
+    key,
+    value: values.get(key) as number
+  }));
+}
+
 function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDiagnostics {
   const paths = resolveRuntimePaths(pathsInput);
   const resultsRoot = resolveResultsRoot(paths);
@@ -1034,7 +1096,10 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
   const { sizeBytes, fileCount } = computeFolderSizeAndFileCount(runPath);
   const { status, coverage } = computeRunStatusAndCoverage(runPath);
   const manifest = buildManifest(paths, runPath);
-  const configAvailable = fs.existsSync(path.join(runPath, 'config.properties'));
+  const configPath = path.join(runPath, 'config.properties');
+  const configAvailable = fs.existsSync(configPath);
+  const policySettings = readCentralBankPolicySettings(configPath);
+  const title = readRunTitle(runPath);
 
   const indicators: ResultsIndicatorAvailability[] = ALL_INDICATORS.map((indicator) => {
     const series = getRawSeriesForIndicator(runPath, indicator.id);
@@ -1056,6 +1121,7 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
 
   const summary: ResultsRunSummary = {
     runId,
+    title,
     path: formatRuntimePath(paths, runPath),
     modifiedAt: toIsoTime(runStats.mtime),
     createdAt: toIsoTime(runStats.birthtime),
@@ -1069,7 +1135,8 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
   const detail: ResultsRunDetail = {
     ...summary,
     indicators,
-    kpiSummary
+    kpiSummary,
+    policySettings
   };
 
   return { summary, detail, manifest };

@@ -52,7 +52,7 @@ interface BasePolicyDefinition {
 const BASE_POLICY_DEFINITIONS: BasePolicyDefinition[] = [
   {
     id: '2011',
-    title: '2011 base policy',
+    title: '2011 baseline policy',
     buildSummary: (values) =>
       `2011 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate and central-bank mortgage limits aligned to lender limits, so the macroprudential constraints are mostly non-binding.`,
     values: {
@@ -71,7 +71,7 @@ const BASE_POLICY_DEFINITIONS: BasePolicyDefinition[] = [
   },
   {
     id: '2024',
-    title: '2024 base policy',
+    title: '2024 baseline policy',
     buildSummary: (values) =>
       `2024 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate, a 4.5x owner-occupier LTI flow limit with a 15% quota over 12 months, ${describeAffordabilityCap(values)}, and ${describeIcrFloor(values)}.`,
     values: {

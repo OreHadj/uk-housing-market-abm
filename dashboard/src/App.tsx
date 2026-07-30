@@ -9,7 +9,7 @@ import {
   setApiViewMode
 } from './lib/api';
 import { ComparePage } from './pages/ComparePage';
-import { ExperimentsPage, ManualComparisonPage } from './pages/ExperimentsPage';
+import { ExperimentsPage } from './pages/ExperimentsPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { ValidationPage } from './pages/ValidationPage';
@@ -19,7 +19,7 @@ const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
 const EXPERIMENTS_VIEW_PATH = '/scenarios';
 
-type PrimaryDestination = 'home' | 'scenarios' | 'sensitivity' | 'compare' | 'calibration' | 'validation';
+type PrimaryDestination = 'home' | 'scenarios' | 'sensitivity' | 'calibration' | 'validation';
 
 function getActivePrimaryDestination(pathname: string, search: string): PrimaryDestination | null {
   if (pathname === '/') return 'home';
@@ -28,11 +28,20 @@ function getActivePrimaryDestination(pathname: string, search: string): PrimaryD
 
   const params = new URLSearchParams(search);
   const type = params.get('type');
-  if (pathname === '/scenarios' || pathname === '/scenarios/new' || pathname === '/runs' || pathname === '/new-scenario') return 'scenarios';
+  if (pathname === '/scenarios' || pathname === '/scenarios/new' || pathname === '/runs' || pathname === '/new-scenario' || pathname === '/compare') return 'scenarios';
   if (pathname === '/sensitivity' || pathname === '/sensitivity/new') return 'sensitivity';
-  if (pathname === '/compare') return 'compare';
   if (pathname !== '/results') return null;
   return type === 'sensitivity' ? 'sensitivity' : 'scenarios';
+}
+
+/**
+ * /compare was a separate page that rendered the same ManualResultsView as /scenarios, differing
+ * only in its heading. Comparison is a state of that view, so the alias redirects and carries its
+ * run-selection params through, keeping any links already shared elsewhere working.
+ */
+function LegacyCompareRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/scenarios${location.search}`} replace />;
 }
 
 function LegacyResultsRedirect() {
@@ -297,10 +306,7 @@ export function App() {
               Scenarios
             </NavLink>
             <NavLink className={activePrimaryDestination === 'sensitivity' ? 'active' : undefined} to="/sensitivity">
-              Policy sensitivity
-            </NavLink>
-            <NavLink className={activePrimaryDestination === 'compare' ? 'active' : undefined} to="/compare">
-              Compare results
+              Sensitivity
             </NavLink>
             <NavLink className={activePrimaryDestination === 'calibration' ? 'active' : undefined} to="/calibration">
               Calibration
@@ -437,10 +443,7 @@ export function App() {
                 />
               }
             />
-            <Route
-              path="/compare"
-              element={<ManualComparisonPage canWrite={authStatus.canWrite} canDownloadResults={authStatus.canDownloadResults} canDeleteResults={authStatus.canDeleteResults} deleteKeyRequired={authStatus.deleteKeyRequired} authEnabled={authStatus.authEnabled} />}
-            />
+            <Route path="/compare" element={<LegacyCompareRedirect />} />
             <Route path="/calibration" element={<ComparePage />} />
             {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
             {experimentsVisible && (

@@ -78,3 +78,48 @@ export function formatExactModelValue(value: string): string {
   }
   return String(Number(parsed.toPrecision(15)));
 }
+
+export type PolicyUnit = 'percentage' | 'multiple' | 'months' | 'ratio';
+
+/**
+ * Human-readable name and unit for each Central Bank policy key, in Bank of England terms. Single
+ * source for anywhere a policy setting is named: the scenario builder's inputs and the policy
+ * settings recorded against a completed run. Keeping one map means a run's recorded policy is
+ * always described with the same words as the form that produced it.
+ */
+export const CENTRAL_BANK_POLICY_DISPLAY: Record<string, { label: string; unit: PolicyUnit }> = {
+  CENTRAL_BANK_INITIAL_BASE_RATE: { label: 'Bank Rate (initial)', unit: 'percentage' },
+  CENTRAL_BANK_LTV_HARD_MAX_FTB: { label: 'LTV limit — first-time buyers', unit: 'percentage' },
+  CENTRAL_BANK_LTV_HARD_MAX_HM: { label: 'LTV limit — home movers', unit: 'percentage' },
+  CENTRAL_BANK_LTV_HARD_MAX_BTL: { label: 'LTV limit — buy-to-let', unit: 'percentage' },
+  CENTRAL_BANK_LTI_SOFT_MAX_FTB: { label: 'LTI threshold — first-time buyers', unit: 'multiple' },
+  CENTRAL_BANK_LTI_SOFT_MAX_HM: { label: 'LTI threshold — home movers', unit: 'multiple' },
+  CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_FTB: {
+    label: 'Flow limit above threshold — first-time buyers',
+    unit: 'percentage'
+  },
+  CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_HM: {
+    label: 'Flow limit above threshold — home movers',
+    unit: 'percentage'
+  },
+  CENTRAL_BANK_LTI_MONTHS_TO_CHECK: { label: 'Flow assessment period', unit: 'months' },
+  CENTRAL_BANK_AFFORDABILITY_HARD_MAX: { label: 'Affordability cap', unit: 'percentage' },
+  CENTRAL_BANK_ICR_HARD_MIN: { label: 'Interest coverage ratio floor', unit: 'ratio' }
+};
+
+/** Formats a stored policy value in its display unit, e.g. 0.95 -> "95%", 4.5 -> "4.5x income". */
+export function formatPolicyValue(value: number, unit: PolicyUnit): string {
+  if (!Number.isFinite(value)) {
+    return 'Not set';
+  }
+  switch (unit) {
+    case 'percentage':
+      return `${Number((value * 100).toPrecision(15)).toLocaleString('en-GB')}%`;
+    case 'multiple':
+      return `${value.toLocaleString('en-GB')}× income`;
+    case 'months':
+      return `${value.toLocaleString('en-GB')} months`;
+    case 'ratio':
+      return value.toLocaleString('en-GB');
+  }
+}

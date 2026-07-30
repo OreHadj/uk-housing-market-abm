@@ -1,13 +1,7 @@
 // Author: Max Stoddard
 import type { EChartsOption } from 'echarts';
 import type { KpiMetricKey, SensitivityDeltaTrendSeries } from '../../shared/types';
-
-const KPI_LABELS: Record<KpiMetricKey, string> = {
-  mean: 'Mean (monthly)',
-  cv: 'CV (monthly)',
-  annualisedTrend: 'Annualised Trend',
-  range: 'Range (monthly, P95-P5)'
-};
+import { KPI_LABELS } from './kpiLabels';
 
 interface AxisDomain {
   min: number;
@@ -76,7 +70,7 @@ export function buildDeltaTrendOption(
     },
     yAxis: {
       type: 'value',
-      name: `% diff ${KPI_LABELS[kpi] ?? kpi}`,
+      name: `% diff ${KPI_LABELS[kpi]?.short ?? kpi}`,
       nameLocation: 'middle',
       nameGap: 48,
       scale: true,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   KpiMetricKey,
@@ -20,15 +20,12 @@ import {
   fetchSensitivityExperiments,
   isRetryableApiError
 } from '../../../lib/api';
+import { KPI_LABELS, SELECTABLE_KPI_KEYS } from '../../../lib/kpiLabels';
 import { buildDeltaTrendOption } from '../../../lib/sensitivityChartOptions';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
 
-const KPI_OPTIONS: Array<{ key: KpiMetricKey; label: string }> = [
-  { key: 'mean', label: 'Mean (monthly)' },
-  { key: 'cv', label: 'CV (monthly)' },
-  { key: 'range', label: 'Range (monthly, P95-P5)' }
-];
+const KPI_OPTIONS = SELECTABLE_KPI_KEYS.map((key) => ({ key, ...KPI_LABELS[key] }));
 
 interface SensitivityResultsViewProps {
   canWrite: boolean;
@@ -78,7 +75,7 @@ function formatSignedPercent(value: number | null): string {
 }
 
 function formatBasePolicyLabel(basePolicy: SensitivityExperimentSummary['basePolicy']): string {
-  return basePolicy ? `${basePolicy} base policy` : 'Not recorded';
+  return basePolicy ? `${basePolicy} baseline policy` : 'Not recorded';
 }
 
 function formatPointValue(value: number | null, valuesByKey?: Record<string, number>): string {
@@ -87,13 +84,18 @@ function formatPointValue(value: number | null, valuesByKey?: Record<string, num
   }
   const values = Object.values(valuesByKey ?? {}).filter((item) => Number.isFinite(item));
   if (values.length === 0) {
-    return 'base policy values';
+    return 'baseline policy values';
   }
-  return `base policy values (${values.map((item) => formatMetric(item)).join(', ')})`;
+  return `baseline policy values (${values.map((item) => formatMetric(item)).join(', ')})`;
 }
 
-function buildTornadoOption(charts: SensitivityExperimentChartsPayload, kpi: KpiMetricKey): EChartsOption {
-  const sorted = [...charts.tornado].sort((left, right) => {
+function isComparableBar(bar: SensitivityExperimentChartsPayload['tornado'][number], kpi: KpiMetricKey): boolean {
+  const value = bar.maxAbsDeltaByKpi[kpi];
+  return value !== null && Number.isFinite(value);
+}
+
+function buildTornadoOption(bars: SensitivityExperimentChartsPayload['tornado'], kpi: KpiMetricKey): EChartsOption {
+  const sorted = [...bars].sort((left, right) => {
     const leftValue = left.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
     const rightValue = right.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
     return rightValue - leftValue;
@@ -126,7 +128,7 @@ function buildTornadoOption(charts: SensitivityExperimentChartsPayload, kpi: Kpi
     },
     yAxis: {
       type: 'value',
-      name: `Max |% diff ${KPI_OPTIONS.find((option) => option.key === kpi)?.label ?? kpi}|`,
+      name: `Max |% diff ${KPI_LABELS[kpi]?.short ?? kpi}|`,
       nameGap: 42,
       nameLocation: 'middle'
     },
@@ -162,7 +164,28 @@ export function SensitivityResultsView({
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(false);
   const [isDownloadingExperiment, setIsDownloadingExperiment] = useState<boolean>(false);
   const [isDeletingExperimentId, setIsDeletingExperimentId] = useState<string>('');
+  const [isRunPickerOpen, setIsRunPickerOpen] = useState<boolean>(false);
   const [pageError, setPageError] = useState<string>('');
+
+  useEffect(() => {
+    if (!isRunPickerOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsRunPickerOpen(false);
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isRunPickerOpen]);
 
   useEffect(() => {
     // Wait for the experiment list to load before syncing the selection back to the URL. On mount
@@ -312,6 +335,21 @@ export function SensitivityResultsView({
     return activeDeltaSeries.title;
   }, [activeDeltaSeries]);
 
+  const selectedExperiment = useMemo(
+    () => experiments.find((experiment) => experiment.experimentId === selectedExperimentId) ?? null,
+    [experiments, selectedExperimentId]
+  );
+
+  const comparableTornadoBars = useMemo(
+    () => (charts ? charts.tornado.filter((bar) => isComparableBar(bar, selectedKpiKey)) : []),
+    [charts, selectedKpiKey]
+  );
+
+  const incomparableTornadoTitles = useMemo(
+    () => (charts ? charts.tornado.filter((bar) => !isComparableBar(bar, selectedKpiKey)).map((bar) => bar.title) : []),
+    [charts, selectedKpiKey]
+  );
+
   const downloadSelectedExperiment = async () => {
     if (!selectedExperimentId || !canDownloadResults) {
       return;
@@ -377,10 +415,10 @@ export function SensitivityResultsView({
       {pageError && <p className="error-banner">{pageError}</p>}
 
       <article className="results-card">
-        <h2>Policy sensitivity results</h2>
+        <h2>Sensitivity analysis</h2>
         <p>
-          See how housing, mortgage, and rental outcomes respond as one policy setting changes. Each tested value is
-          compared with the selected base policy.
+          See how housing, mortgage, and rental outcomes respond as one policy instrument changes. Each tested value
+          is compared with the selected baseline policy.
         </p>
         <div className="summary-links">
           <Link
@@ -391,75 +429,146 @@ export function SensitivityResultsView({
               mode: 'view'
             })}
           >
-            Open Model Runs
+            Open Scenarios
           </Link>
           <Link
             className="summary-link-inline"
-            to={buildExperimentsPath({
-              ...DEFAULT_EXPERIMENT_ROUTE_STATE,
-              type: 'sensitivity',
-              mode: 'run'
-            })}
+            to="/sensitivity/new"
           >
-            Create policy sweep
+            New sensitivity analysis
           </Link>
         </div>
       </article>
 
-      <div className="results-grid">
-        <aside className="results-panel">
-          <div className="results-panel-header">
-            <h2>Runs</h2>
-            <p>{sidebarSubtitle}</p>
+      <article className="results-card run-history-card sensitivity-run-history-card">
+        <div className="disclosure-preview-head">
+          <div className="disclosure-preview-title">
+            <h3>Run History</h3>
+            <p>{experiments.length} sensitivity {experiments.length === 1 ? 'run' : 'runs'}</p>
           </div>
-          {isLoadingHistory ? (
-            <p className="loading-banner">Loading experiments...</p>
-          ) : experiments.length === 0 ? (
-            <p className="info-banner">No policy sensitivity experiments yet.</p>
-          ) : (
-            <ul className="run-list">
-              {experiments.map((experiment) => {
-                const canDeleteExperiment = isFinishedStatus(experiment.status);
-                return (
-                  <li
-                    key={experiment.experimentId}
-                    className={`run-item ${selectedExperimentId === experiment.experimentId ? 'focused' : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className="run-focus-btn"
-                      onClick={() => setSelectedExperimentId(experiment.experimentId)}
-                    >
-                      {selectedExperimentId === experiment.experimentId ? 'Viewing' : 'View'}
-                    </button>
-                    <strong>{experiment.title || experiment.experimentId}</strong>
-                    <p>Package: {experiment.parameter.title}</p>
-                    <p>Base policy: {formatBasePolicyLabel(experiment.basePolicy)}</p>
-                    <p>
-                      <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
-                    </p>
-                    {canDeleteResults && (
-                      <button
-                        type="button"
-                        className="danger-button"
-                        disabled={isDeletingExperimentId === experiment.experimentId || !canDeleteExperiment}
-                        onClick={() => void deleteExperiment(experiment.experimentId)}
-                        title={!canDeleteExperiment ? 'Cancel or wait for this experiment to finish before deleting.' : undefined}
-                      >
-                        {isDeletingExperimentId === experiment.experimentId ? 'Deleting...' : 'Delete'}
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </aside>
+          <button
+            type="button"
+            className="disclosure-preview-toggle"
+            disabled={isLoadingHistory || experiments.length === 0}
+            aria-haspopup="dialog"
+            aria-expanded={isRunPickerOpen}
+            onClick={() => setIsRunPickerOpen(true)}
+          >
+            Select run
+          </button>
+        </div>
 
-        <div className="results-main">
+        {isLoadingHistory ? (
+          <p className="loading-banner">Loading experiments...</p>
+        ) : selectedExperiment ? (
+          <button
+            type="button"
+            className="run-preview-card is-active"
+            aria-haspopup="dialog"
+            onClick={() => setIsRunPickerOpen(true)}
+          >
+            <span className="run-preview-title">{selectedExperiment.title || selectedExperiment.experimentId}</span>
+            <span className="run-preview-meta">
+              <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
+              <span>{selectedExperiment.parameter.title}</span>
+              <span className="run-preview-action">Change run</span>
+            </span>
+          </button>
+        ) : (
+          <p className="info-banner">No sensitivity analyses yet. Create one to begin.</p>
+        )}
+      </article>
+
+      <div
+        hidden={!isRunPickerOpen}
+        className="scenario-create-modal-backdrop"
+        role="presentation"
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget) {
+            setIsRunPickerOpen(false);
+          }
+        }}
+      >
+        <section
+          className="scenario-create-modal sensitivity-run-picker-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="sensitivity-run-picker-title"
+        >
+          <div className="scenario-create-modal-head">
+            <div>
+              <p className="trend-modal-eyebrow">Run history</p>
+              <h2 id="sensitivity-run-picker-title">Select a sensitivity run</h2>
+              <p>Choose one analysis to inspect. Sensitivity runs are viewed individually, not compared.</p>
+            </div>
+            <button
+              type="button"
+              className="trend-modal-close"
+              aria-label="Close sensitivity run selection"
+              onClick={() => setIsRunPickerOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="scenario-create-modal-body">
+            <p className="sensitivity-run-picker-subtitle">{sidebarSubtitle}</p>
+            {experiments.length === 0 ? (
+              <p className="info-banner">No sensitivity analyses yet.</p>
+            ) : (
+              <ul className="run-list sensitivity-run-picker-list">
+                {experiments.map((experiment) => {
+                  const isSelected = selectedExperimentId === experiment.experimentId;
+                  const canDeleteExperiment = isFinishedStatus(experiment.status);
+                  return (
+                    <li
+                      key={experiment.experimentId}
+                      className={`run-item ${isSelected ? 'focused' : ''}`}
+                    >
+                      <div className="run-item-head">
+                        <strong>{experiment.title || experiment.experimentId}</strong>
+                        {isSelected && <span className="run-role-chip">Selected</span>}
+                      </div>
+                      <p>Instrument: {experiment.parameter.title}</p>
+                      <p>Baseline policy: {formatBasePolicyLabel(experiment.basePolicy)}</p>
+                      <p>
+                        <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
+                      </p>
+                      <div className="manual-run-action-row">
+                        <button
+                          type="button"
+                          className={`run-select-btn ${isSelected ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectedExperimentId(experiment.experimentId);
+                            setIsRunPickerOpen(false);
+                          }}
+                        >
+                          {isSelected ? 'Viewing this run' : 'View run'}
+                        </button>
+                        {canDeleteResults && (
+                          <button
+                            type="button"
+                            className="danger-button"
+                            disabled={isDeletingExperimentId === experiment.experimentId || !canDeleteExperiment}
+                            onClick={() => void deleteExperiment(experiment.experimentId)}
+                            title={!canDeleteExperiment ? 'Cancel or wait for this experiment to finish before deleting.' : undefined}
+                          >
+                            {isDeletingExperimentId === experiment.experimentId ? 'Deleting...' : 'Delete'}
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <div className="results-main">
           <article className="results-card">
             <div className="results-card-head">
-              <h3>Policy sweep details</h3>
+              <h3>Analysis details</h3>
               {detail && (
                 !canDownloadResults ? (
                   authEnabled ? (
@@ -486,7 +595,7 @@ export function SensitivityResultsView({
             {isLoadingDetail ? (
               <p className="loading-banner">Loading experiment detail...</p>
             ) : !detail ? (
-              <p className="info-banner">Select a policy sweep to view its results.</p>
+              <p className="info-banner">Select a sensitivity analysis to view its results.</p>
             ) : (
               <div className="sensitivity-detail-grid">
                 <p>
@@ -496,16 +605,16 @@ export function SensitivityResultsView({
                   <strong>Status:</strong> <span className={statusClass(detail.status)}>{formatStatus(detail.status)}</span>
                 </p>
                 <p>
-                  <strong>Baseline:</strong> {detail.baseline}
+                  <strong>Calibration vintage:</strong> {detail.baseline}
                 </p>
                 <p>
-                  <strong>Base policy:</strong> {formatBasePolicyLabel(detail.basePolicy)}
+                  <strong>Baseline policy:</strong> {formatBasePolicyLabel(detail.basePolicy)}
                 </p>
                 <p>
-                  <strong>Package:</strong> {detail.parameter.title}
+                  <strong>Instrument:</strong> {detail.parameter.title}
                 </p>
                 <p>
-                  <strong>Package description:</strong> {detail.parameter.description}
+                  <strong>Instrument description:</strong> {detail.parameter.description}
                 </p>
                 <p>
                   <strong>Range:</strong> {detail.parameter.min} to {detail.parameter.max}
@@ -527,12 +636,12 @@ export function SensitivityResultsView({
                 <div>
                   <h3>Largest outcome responses</h3>
                   <p>
-                    Ranks indicators by their largest absolute percentage difference from the base policy anywhere
-                    in the tested range. Direction is shown in the response chart below.
+                    Ranks indicators by their largest absolute percentage difference from the baseline policy
+                    anywhere in the tested range. Direction is shown in the response chart below.
                   </p>
                 </div>
                 <label>
-                  Summary measure
+                  Outcome measure
                   <select
                     value={selectedKpiKey}
                     onChange={(event) => setSelectedKpiKey(event.target.value as KpiMetricKey)}
@@ -546,12 +655,28 @@ export function SensitivityResultsView({
                 </label>
               </div>
 
-              <EChart className="validation-chart" option={buildTornadoOption(charts, selectedKpiKey)} />
+              {comparableTornadoBars.length === 0 ? (
+                <p className="info-banner">
+                  No indicator can be compared with the baseline policy on this measure. The baseline policy values
+                  sit too close to zero for a percentage difference to be meaningful.
+                </p>
+              ) : (
+                <EChart className="validation-chart" option={buildTornadoOption(comparableTornadoBars, selectedKpiKey)} />
+              )}
+
+              {incomparableTornadoTitles.length > 0 && (
+                <p className="info-banner">
+                  Not ranked ({incomparableTornadoTitles.length}): {incomparableTornadoTitles.join(', ')}. The
+                  baseline policy value for these sits near zero relative to their own variation, so a percentage
+                  difference would be dominated by the denominator rather than by the policy. Compare them on the raw
+                  values in the table below instead.
+                </p>
+              )}
 
               <div className="sensitivity-trend-header">
                 <div>
                   <h4>Response across policy values</h4>
-                  <p>Shows the direction and size of the selected outcome&apos;s difference from the base policy.</p>
+                  <p>Shows the direction and size of the selected outcome&apos;s difference from the baseline policy.</p>
                 </div>
                 <label>
                   Indicator
@@ -581,7 +706,7 @@ export function SensitivityResultsView({
 
           {results && (
             <article className="results-card">
-              <h3>Results by tested policy value {selectedIndicatorTitle ? `(${selectedIndicatorTitle})` : ''}</h3>
+              <h3>Results by tested value {selectedIndicatorTitle ? `(${selectedIndicatorTitle})` : ''}</h3>
               {selectedIndicatorMetricByPoint.length === 0 ? (
                 <p className="info-banner">No executed points yet.</p>
               ) : (
@@ -592,12 +717,14 @@ export function SensitivityResultsView({
                         <th>Point</th>
                         <th>Value</th>
                         <th>Status</th>
-                        <th>Mean (monthly)</th>
-                        <th>% diff Mean (monthly)</th>
-                        <th>CV (monthly)</th>
-                        <th>% diff CV (monthly)</th>
-                        <th>Range (monthly, P95-P5)</th>
-                        <th>% diff Range (monthly, P95-P5)</th>
+                        {SELECTABLE_KPI_KEYS.map((key) => (
+                          <Fragment key={key}>
+                            <th title={KPI_LABELS[key].label}>{KPI_LABELS[key].short}</th>
+                            <th title={`Percentage difference from the baseline policy — ${KPI_LABELS[key].label}`}>
+                              % diff {KPI_LABELS[key].short}
+                            </th>
+                          </Fragment>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -610,12 +737,12 @@ export function SensitivityResultsView({
                             <td>
                               <span className={statusClass(point.status)}>{formatStatus(point.status)}</span>
                             </td>
-                            <td>{formatMetric(values?.kpi.mean ?? null)}</td>
-                            <td>{formatSignedPercent(values?.deltaFromBaseline.mean ?? null)}</td>
-                            <td>{formatMetric(values?.kpi.cv ?? null)}</td>
-                            <td>{formatSignedPercent(values?.deltaFromBaseline.cv ?? null)}</td>
-                            <td>{formatMetric(values?.kpi.range ?? null)}</td>
-                            <td>{formatSignedPercent(values?.deltaFromBaseline.range ?? null)}</td>
+                            {SELECTABLE_KPI_KEYS.map((key) => (
+                              <Fragment key={key}>
+                                <td>{formatMetric(values?.kpi[key] ?? null)}</td>
+                                <td>{formatSignedPercent(values?.deltaFromBaseline[key] ?? null)}</td>
+                              </Fragment>
+                            ))}
                           </tr>
                         );
                       })}
@@ -625,7 +752,6 @@ export function SensitivityResultsView({
               )}
             </article>
           )}
-        </div>
       </div>
     </section>
   );

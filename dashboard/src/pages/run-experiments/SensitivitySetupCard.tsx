@@ -103,15 +103,15 @@ export function SensitivitySetupCard({
   const pointCount = sampleValues.length;
   const sweepSentence = (() => {
     if (!selectedPackage) {
-      return 'Choose a policy package and range to define the sweep.';
+      return 'Choose a policy instrument and range to define the analysis.';
     }
     if (pointCount === 0) {
-      return `This experiment varies ${selectedPackage.title}. Enter a valid min, max, and sample count to see the points tested.`;
+      return `This experiment varies ${selectedPackage.title}. Enter a valid min, max, and sample count to see the values tested.`;
     }
-    const baseName = selectedBasePolicy?.title ?? 'the base policy';
-    return `This experiment varies ${selectedPackage.title} across ${pointCount} point${
+    const baseName = selectedBasePolicy?.title ?? 'the baseline policy';
+    return `This experiment varies ${selectedPackage.title} across ${pointCount} value${
       pointCount === 1 ? '' : 's'
-    }; every other lever stays at the ${baseName} value.`;
+    }; every other instrument stays at the ${baseName} value.`;
   })();
 
   return (
@@ -119,12 +119,12 @@ export function SensitivitySetupCard({
       {sensitivitySubmissionLockedByManual && lockMessage && <p className="info-banner">{lockMessage}</p>}
 
       {isLoadingOptions ? (
-        <p className="loading-banner">Loading policy sensitivity options...</p>
+        <p className="loading-banner">Loading sensitivity analysis options...</p>
       ) : (
         <>
           <div className="scenario-builder-heading">
-            <h2>Create a policy sensitivity sweep</h2>
-            <p>Vary one policy setting across a range and compare each tested value with the selected base policy.</p>
+            <h2>Create a sensitivity analysis</h2>
+            <p>Vary one policy instrument across a range and compare each tested value with the selected baseline policy.</p>
           </div>
           <div className="scenario-builder-grid">
             <div className="scenario-builder-form">
@@ -144,10 +144,10 @@ export function SensitivitySetupCard({
               </section>
 
               <section className="scenario-section">
-                <h3>Policy sweep</h3>
-                <p className="scenario-section-intro">Choose the policy lever to vary and the range of values to test.</p>
+                <h3>Policy instrument</h3>
+                <p className="scenario-section-intro">Choose the policy instrument to vary and the range of values to test.</p>
                 <label className="scenario-field">
-                  <InfoLabel label="Policy package to sweep" info={SETTING_HELP.sensitivityPolicyPackage} />
+                  <InfoLabel label="Policy instrument to vary" info={SETTING_HELP.sensitivityPolicyPackage} />
                   <select
                     value={policyPackageId}
                     disabled={executionDisabled}
@@ -197,10 +197,10 @@ export function SensitivitySetupCard({
               </section>
 
               <section className="scenario-section">
-                <h3>Base policy</h3>
-                <p className="scenario-section-intro">Every lever that isn&apos;t being swept stays at this policy&apos;s value.</p>
+                <h3>Baseline policy</h3>
+                <p className="scenario-section-intro">Every instrument that isn&apos;t being varied stays at this policy&apos;s value.</p>
                 <label className="scenario-field">
-                  <InfoLabel label="Base policy" info={SETTING_HELP.basePolicy} />
+                  <InfoLabel label="Baseline policy" info={SETTING_HELP.basePolicy} />
                   <select
                     value={basePolicy}
                     disabled={executionDisabled}
@@ -236,7 +236,7 @@ export function SensitivitySetupCard({
                   <div className="scenario-advanced-panel-heading">
                     <p className="eyebrow">Advanced</p>
                     <h3>Simulation settings</h3>
-                    <p>Configure execution details without changing the policy sweep itself.</p>
+                    <p>Configure execution details without changing the analysis itself.</p>
                   </div>
                   <div className="scenario-advanced-content">
                     <div className="scenario-fields-grid">
@@ -296,7 +296,7 @@ export function SensitivitySetupCard({
                   disabled={submissionBlocked}
                   onClick={() => onSubmit(false)}
                 >
-                  {isSubmitting ? 'Submitting...' : 'Start policy sweep'}
+                  {isSubmitting ? 'Submitting...' : 'Start sensitivity analysis'}
                 </button>
                 {warnings.length > 0 && (
                   <button
@@ -323,23 +323,23 @@ export function SensitivitySetupCard({
 
             <aside className="scenario-summary" aria-labelledby="sensitivity-summary-heading">
               <p className="eyebrow">Live summary</p>
-              <h3 id="sensitivity-summary-heading">{title.trim() || 'Untitled policy sensitivity sweep'}</h3>
+              <h3 id="sensitivity-summary-heading">{title.trim() || 'Untitled sensitivity analysis'}</h3>
               <p>{sweepSentence}</p>
               <dl>
                 <div>
-                  <dt>Package varied</dt>
-                  <dd>{selectedPackage ? selectedPackage.title : 'No package selected'}</dd>
+                  <dt>Instrument varied</dt>
+                  <dd>{selectedPackage ? selectedPackage.title : 'No instrument selected'}</dd>
                 </div>
                 <div>
-                  <dt>Base policy</dt>
+                  <dt>Baseline policy</dt>
                   <dd>{selectedBasePolicy ? selectedBasePolicy.title : 'Not set'}</dd>
                 </div>
                 <div>
-                  <dt>Base policy values</dt>
+                  <dt>Baseline policy values</dt>
                   <dd>{basePolicyValues ?? 'Not set'}</dd>
                 </div>
                 <div>
-                  <dt>Points tested</dt>
+                  <dt>Values tested</dt>
                   <dd>{sampleValues.length > 0 ? sampleValues.join(', ') : 'Enter a valid min, max, and sample count.'}</dd>
                 </div>
                 <div>
@@ -411,7 +411,7 @@ function buildSensitivitySampleValues(
     .sort((left, right) => left - right)
     .map((value) => formatPolicyValue(value, policyPackage.type));
   const usesDistinctBaseValues = baseline === null && baseValues.every((value) => value >= min && value <= max);
-  return usesDistinctBaseValues ? [`base policy values (${formatPackageBaseValues(policyPackage, basePolicy)})`, ...formattedValues] : formattedValues;
+  return usesDistinctBaseValues ? [`baseline policy values (${formatPackageBaseValues(policyPackage, basePolicy)})`, ...formattedValues] : formattedValues;
 }
 
 function getPackageBaseValues(policyPackage: SensitivityPolicyPackageDefinition, basePolicy: BasePolicyOption): number[] {

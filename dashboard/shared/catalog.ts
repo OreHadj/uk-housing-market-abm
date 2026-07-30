@@ -130,7 +130,7 @@ export const PARAMETER_CATALOG: ParameterCardMeta[] = [
   },
   {
     id: 'rent_purchase_choice',
-    title: 'Rent vs Purchase Decision Sensitivity',
+    title: 'Rent vs Purchase Decision Noise',
     group: 'Housing & Rental Market',
     format: 'scalar_pair',
     configKeys: ['PSYCHOLOGICAL_COST_OF_RENTING', 'SENSITIVITY_RENT_OR_PURCHASE'],

@@ -94,6 +94,12 @@ const TERMINAL_STATUSES = new Set<SensitivityExperimentStatus>(['succeeded', 'fa
 const KPI_KEYS = ['mean', 'cv', 'annualisedTrend', 'range'] as const;
 const SENSITIVITY_RESULTS_WINDOW_TYPE = 'post_200' as const;
 const BASELINE_EPSILON = 1e-12;
+// A percentage difference is only meaningful when the baseline sits far enough from zero.
+// Growth-rate indicators (credit growth, quarterly house-price growth) oscillate around zero,
+// so an economically trivial absolute change becomes a headline percentage and dominates the
+// tornado ranking. Judge "far enough from zero" against the series' own P95-P5 spread, which
+// keeps the test scale-free across indicators measured in counts, ratios and percentages.
+const MIN_BASELINE_TO_SPREAD_RATIO = 0.05;
 
 interface PolicyBindingValues {
   bankInitialRate: number | null;
@@ -1820,13 +1826,41 @@ function parseSeedCount(valuesByKey: Map<string, number | boolean>): number {
   return parseSeedCountValue(valuesByKey.get('N_SIMS') ?? 1, 'Seeds per sampled point');
 }
 
+/**
+ * True when the baseline mean is so close to zero, relative to the series' own spread, that a
+ * percentage difference against it carries no information. Falls back to the plain epsilon check
+ * when no usable spread is available.
+ */
+function isBaselineMeanNearZero(baseline: KpiMetricValues): boolean {
+  const mean = baseline.mean;
+  if (mean === null || !Number.isFinite(mean)) {
+    return true;
+  }
+  if (Math.abs(mean) < BASELINE_EPSILON) {
+    return true;
+  }
+  const spread = baseline.range;
+  if (spread === null || !Number.isFinite(spread) || spread <= 0) {
+    return false;
+  }
+  return Math.abs(mean) < MIN_BASELINE_TO_SPREAD_RATIO * spread;
+}
+
 function computeKpiPercentDiffFromBaseline(current: KpiMetricValues, baseline: KpiMetricValues): KpiMetricValues {
   const percentDiff = buildEmptyKpiValues();
+  // `mean` and `cv` both collapse when the baseline mean sits near zero: the first divides by it
+  // directly, the second is stdev/|mean|. `range` and `annualisedTrend` never divide by the mean,
+  // so they stay comparable and keep only the plain epsilon guard.
+  const meanNearZero = isBaselineMeanNearZero(baseline);
   for (const key of KPI_KEYS) {
     const currentValue = current[key];
     const baselineValue = baseline[key];
+    const dividesByMean = key === 'mean' || key === 'cv';
     percentDiff[key] =
-      currentValue === null || baselineValue === null || Math.abs(baselineValue) < BASELINE_EPSILON
+      currentValue === null ||
+      baselineValue === null ||
+      Math.abs(baselineValue) < BASELINE_EPSILON ||
+      (dividesByMean && meanNearZero)
         ? null
         : ((currentValue - baselineValue) / baselineValue) * 100;
   }

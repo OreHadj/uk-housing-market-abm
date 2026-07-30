@@ -14,28 +14,67 @@ import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
 type FormValue = string | boolean;
-type PolicyType = 'benchmark' | 'ltv' | 'lti';
+type PolicyInstrument = 'ltv' | 'lti';
 
-const LTV_FIELDS: Array<{ key: string; label: string }> = [
-  { key: 'CENTRAL_BANK_LTV_HARD_MAX_FTB', label: 'First-time buyers' },
-  { key: 'CENTRAL_BANK_LTV_HARD_MAX_HM', label: 'Home movers' },
-  { key: 'CENTRAL_BANK_LTV_HARD_MAX_BTL', label: 'Buy-to-let investors' }
+const BENCHMARK_OPTION = {
+  label: 'Baseline policy — no additional change',
+  description: 'Run the selected baseline policy unchanged, to serve as the counterfactual.'
+};
+
+const POLICY_INSTRUMENT_OPTIONS: ReadonlyArray<{
+  value: PolicyInstrument;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'ltv',
+    label: 'Loan-to-value (LTV) limit',
+    description: 'Cap the mortgage as a share of property value, per borrower group.'
+  },
+  {
+    value: 'lti',
+    label: 'Loan-to-income (LTI) flow limit',
+    description: 'Cap the share of new lending at or above an income multiple.'
+  }
 ];
 
-const LTI_FIELDS: Array<{ key: string; label: string; unit: 'multiple' | 'percentage' | 'months' }> = [
-  { key: 'CENTRAL_BANK_LTI_SOFT_MAX_FTB', label: 'First-time buyer loan-to-income threshold', unit: 'multiple' },
-  { key: 'CENTRAL_BANK_LTI_SOFT_MAX_HM', label: 'Home mover loan-to-income threshold', unit: 'multiple' },
+const LTV_FIELDS: Array<{ key: string; label: string; group: string }> = [
+  { key: 'CENTRAL_BANK_LTV_HARD_MAX_FTB', label: 'LTV limit — first-time buyers', group: 'first-time buyers' },
+  { key: 'CENTRAL_BANK_LTV_HARD_MAX_HM', label: 'LTV limit — home movers', group: 'home movers' },
+  { key: 'CENTRAL_BANK_LTV_HARD_MAX_BTL', label: 'LTV limit — buy-to-let', group: 'buy-to-let' }
+];
+
+const LTI_FIELDS: Array<{ key: string; label: string; group: string; unit: 'multiple' | 'percentage' | 'months' }> = [
+  {
+    key: 'CENTRAL_BANK_LTI_SOFT_MAX_FTB',
+    label: 'LTI threshold — first-time buyers',
+    group: 'first-time buyers',
+    unit: 'multiple'
+  },
+  {
+    key: 'CENTRAL_BANK_LTI_SOFT_MAX_HM',
+    label: 'LTI threshold — home movers',
+    group: 'home movers',
+    unit: 'multiple'
+  },
   {
     key: 'CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_FTB',
-    label: 'First-time buyer lending allowed above threshold',
+    label: 'Flow limit above threshold — first-time buyers',
+    group: 'first-time buyers',
     unit: 'percentage'
   },
   {
     key: 'CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_HM',
-    label: 'Home mover lending allowed above threshold',
+    label: 'Flow limit above threshold — home movers',
+    group: 'home movers',
     unit: 'percentage'
   },
-  { key: 'CENTRAL_BANK_LTI_MONTHS_TO_CHECK', label: 'Assessment period', unit: 'months' }
+  {
+    key: 'CENTRAL_BANK_LTI_MONTHS_TO_CHECK',
+    label: 'Flow assessment period',
+    group: 'assessment period',
+    unit: 'months'
+  }
 ];
 
 const PRIMARY_POLICY_KEYS = new Set([...LTV_FIELDS.map((field) => field.key), ...LTI_FIELDS.map((field) => field.key)]);
@@ -146,40 +185,75 @@ export function ManualRunSetupCard({
   lockMessage,
   onSubmit
 }: ManualRunSetupCardProps) {
-  const [policyType, setPolicyType] = useState<PolicyType>('benchmark');
+  const [activeInstruments, setActiveInstruments] = useState<ReadonlySet<PolicyInstrument>>(new Set());
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const orderedSnapshots = orderExperimentModelOptions(snapshots);
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy);
   const parametersByKey = useMemo(() => new Map(policyParameters.map((parameter) => [parameter.key, parameter])), [policyParameters]);
   const additionalPolicyParameters = policyParameters.filter((parameter) => !PRIMARY_POLICY_KEYS.has(parameter.key));
+  const isBenchmark = activeInstruments.size === 0;
 
-  const selectPolicyType = (nextPolicyType: PolicyType) => {
-    setPolicyType(nextPolicyType);
-    if (nextPolicyType === 'benchmark' && selectedBasePolicy) {
-      for (const parameter of policyParameters) {
-        const baseValue = selectedBasePolicy.values[parameter.key];
-        if (baseValue !== undefined) onFormValueChange(parameter, String(baseValue));
-      }
+  const resetToBase = (keys: readonly string[]) => {
+    if (!selectedBasePolicy) return;
+    for (const key of keys) {
+      const parameter = parametersByKey.get(key);
+      const baseValue = selectedBasePolicy.values[key];
+      if (parameter && baseValue !== undefined) onFormValueChange(parameter, String(baseValue));
     }
+  };
+
+  const selectBenchmark = () => {
+    setActiveInstruments(new Set());
+    resetToBase(policyParameters.map((parameter) => parameter.key));
+  };
+
+  const toggleInstrument = (instrument: PolicyInstrument) => {
+    // Turning an instrument off returns its fields to the baseline policy, so a hidden
+    // section can never leave a stale override in the submitted scenario.
+    if (activeInstruments.has(instrument)) {
+      resetToBase((instrument === 'ltv' ? LTV_FIELDS : LTI_FIELDS).map((field) => field.key));
+    }
+    setActiveInstruments((current) => {
+      const next = new Set(current);
+      if (next.has(instrument)) {
+        next.delete(instrument);
+      } else {
+        next.add(instrument);
+      }
+      return next;
+    });
   };
 
   const changedLtvGroups = LTV_FIELDS.filter((field) =>
     differsFromBase(formValues[field.key], selectedBasePolicy?.values[field.key])
-  ).map((field) => field.label);
+  ).map((field) => field.group);
   const changedLtiGroups = LTI_FIELDS.filter(
     (field) => field.unit !== 'months' && differsFromBase(formValues[field.key], selectedBasePolicy?.values[field.key])
-  ).map((field) => field.label.replace(/ loan-to-income threshold| lending allowed above threshold/, ''));
+  ).map((field) => field.group);
   const uniqueLtiGroups = [...new Set(changedLtiGroups)];
 
   const scenarioSentence = (() => {
-    if (policyType === 'benchmark') return 'This scenario keeps the selected benchmark policy unchanged.';
-    if (policyType === 'ltv') {
-      if (changedLtvGroups.length === 0) return 'Choose one or more loan-to-value limits to change relative to the benchmark.';
-      return `This scenario changes maximum loan-to-value ratios for ${changedLtvGroups.join(', ')}.`;
+    if (isBenchmark) {
+      return 'This scenario runs the selected baseline policy without an additional policy change.';
     }
-    if (uniqueLtiGroups.length === 0) return 'Choose a loan-to-income threshold or lending allowance to change relative to the benchmark.';
-    return `This scenario changes loan-to-income flow restrictions for ${uniqueLtiGroups.join(' and ')}.`;
+    const clauses: string[] = [];
+    if (activeInstruments.has('ltv') && changedLtvGroups.length > 0) {
+      clauses.push(`LTV limits for ${changedLtvGroups.join(', ')}`);
+    }
+    if (activeInstruments.has('lti') && uniqueLtiGroups.length > 0) {
+      clauses.push(`the LTI flow limit for ${uniqueLtiGroups.join(' and ')}`);
+    }
+    if (clauses.length === 0) {
+      return 'Change one or more limits relative to the baseline policy.';
+    }
+    return `This scenario changes ${clauses.join(', and ')}.`;
   })();
+
+  const policyTypeSummary = isBenchmark
+    ? BENCHMARK_OPTION.label
+    : POLICY_INSTRUMENT_OPTIONS.filter((option) => activeInstruments.has(option.value))
+        .map((option) => option.label)
+        .join(' + ');
 
   const advancedSummary = [
     parameters.find((parameter) => parameter.key === 'N_STEPS')
@@ -220,23 +294,62 @@ export function ManualRunSetupCard({
               </label>
             </section>
 
+            <section className="scenario-section" aria-labelledby="baseline-policy-heading">
+              <h3 id="baseline-policy-heading">Baseline policy</h3>
+              <p className="scenario-section-intro">
+                The real-world regime this scenario departs from. Every setting you do not change stays at its value,
+                and results are reported against it.
+              </p>
+              <label className="scenario-field">
+                <InfoLabel label="Baseline policy" info={SETTING_HELP.basePolicy} />
+                <select
+                  value={basePolicy}
+                  disabled={formDisabled}
+                  onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}
+                >
+                  {basePolicies.map((policy) => (
+                    <option key={policy.id} value={policy.id}>
+                      {policy.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {selectedBasePolicy ? (
+                <div className="scenario-reference-note">
+                  <p><strong>{selectedBasePolicy.title}</strong></p>
+                  <p>{selectedBasePolicy.summary}</p>
+                </div>
+              ) : null}
+            </section>
+
             <section className="scenario-section">
               <h3>Policy change</h3>
-              <p className="scenario-section-intro">Select the kind of mortgage-policy scenario you want to explore.</p>
-              <div className="policy-choice-grid" role="radiogroup" aria-label="Policy type">
-                {([
-                  ['benchmark', 'Benchmark', 'Keep the selected reference policy unchanged.'],
-                  ['ltv', 'Loan-to-value restriction', 'Set maximum mortgage sizes relative to property value.'],
-                  ['lti', 'Loan-to-income flow restriction', 'Limit the share of lending above an income multiple.']
-                ] as const).map(([value, label, description]) => (
-                  <label className={`policy-choice ${policyType === value ? 'selected' : ''}`} key={value}>
+              <p className="scenario-section-intro">
+                Changes applied on top of the baseline policy. Combine both to test how the two instruments interact.
+              </p>
+              <div className="policy-choice-grid" role="group" aria-label="Policy change">
+                <label className={`policy-choice ${isBenchmark ? 'selected' : ''}`}>
+                  <input
+                    type="checkbox"
+                    name="policy-benchmark"
+                    checked={isBenchmark}
+                    disabled={formDisabled}
+                    onChange={selectBenchmark}
+                  />
+                  <span>
+                    <strong>{BENCHMARK_OPTION.label}</strong>
+                    <small>{BENCHMARK_OPTION.description}</small>
+                  </span>
+                </label>
+                {POLICY_INSTRUMENT_OPTIONS.map(({ value, label, description }) => (
+                  <label className={`policy-choice ${activeInstruments.has(value) ? 'selected' : ''}`} key={value}>
                     <input
-                      type="radio"
-                      name="policy-type"
+                      type="checkbox"
+                      name={`policy-${value}`}
                       value={value}
-                      checked={policyType === value}
+                      checked={activeInstruments.has(value)}
                       disabled={formDisabled}
-                      onChange={() => selectPolicyType(value)}
+                      onChange={() => toggleInstrument(value)}
                     />
                     <span>
                       <strong>{label}</strong>
@@ -247,18 +360,12 @@ export function ManualRunSetupCard({
               </div>
             </section>
 
-            {policyType === 'benchmark' && selectedBasePolicy && (
-              <section className="scenario-section scenario-reference-note">
-                <h3>Reference policy</h3>
-                <p><strong>{selectedBasePolicy.title}</strong></p>
-                <p>{selectedBasePolicy.summary}</p>
-              </section>
-            )}
-
-            {policyType === 'ltv' && (
+            {activeInstruments.has('ltv') && (
               <section className="scenario-section" aria-labelledby="ltv-settings-heading">
-                <h3 id="ltv-settings-heading">Loan-to-value limits</h3>
-                <p className="scenario-section-intro">Set the maximum mortgage as a percentage of the property value for each borrower group.</p>
+                <h3 id="ltv-settings-heading">Loan-to-value (LTV) limits</h3>
+                <p className="scenario-section-intro">
+                  The maximum mortgage as a percentage of property value. Applies to every new loan in the borrower group.
+                </p>
                 <div className="scenario-fields-grid">
                   {LTV_FIELDS.map((field) => {
                     const parameter = parametersByKey.get(field.key);
@@ -278,10 +385,13 @@ export function ManualRunSetupCard({
               </section>
             )}
 
-            {policyType === 'lti' && (
+            {activeInstruments.has('lti') && (
               <section className="scenario-section" aria-labelledby="lti-settings-heading">
-                <h3 id="lti-settings-heading">Loan-to-income flow limits</h3>
-                <p className="scenario-section-intro">Set the income multiple, permitted lending share above it, and the assessment period.</p>
+                <h3 id="lti-settings-heading">Loan-to-income (LTI) flow limit</h3>
+                <p className="scenario-section-intro">
+                  The income multiple defining a high-LTI loan, and the maximum share of a lender&apos;s new lending
+                  allowed at or above it. The 2024 baseline is 4.5&times; income with a 15% flow limit.
+                </p>
                 <div className="scenario-fields-grid">
                   {LTI_FIELDS.map((field) => {
                     const parameter = parametersByKey.get(field.key);
@@ -310,6 +420,70 @@ export function ManualRunSetupCard({
               <span>Advanced simulation settings</span>
               <span aria-hidden="true">{advancedOpen ? '−' : '+'}</span>
             </button>
+
+            {advancedOpen && (
+              <aside
+                className="scenario-advanced-panel scenario-advanced-panel--inline"
+                aria-labelledby="scenario-advanced-heading"
+              >
+                <div className="scenario-advanced-panel-heading">
+                  <p className="eyebrow">Advanced</p>
+                  <h3 id="scenario-advanced-heading">Simulation settings</h3>
+                  <p>Configure execution details without changing the policy scenario itself.</p>
+                </div>
+                <div className="scenario-advanced-content">
+                  <div className="scenario-fields-grid">
+                    <label className="scenario-field">
+                      <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
+                      <select value={selectedBaseline} disabled={formDisabled} onChange={(event) => onBaselineChange(event.target.value)}>
+                        {orderedSnapshots.map((snapshot) => (
+                          <option key={snapshot.version} value={snapshot.version}>
+                            {formatExperimentModelOption(snapshot, orderedSnapshots)}
+                          </option>
+                        ))}
+                      </select>
+                      <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
+                        View in Calibration
+                      </Link>
+                    </label>
+                  </div>
+
+                  <h4>Simulation controls</h4>
+                  <GeneralModelControl
+                    mode="manual"
+                    parameters={parameters}
+                    formValues={formValues}
+                    executionDisabled={formDisabled}
+                    onFormValueChange={onFormValueChange}
+                    maxWorkers={maxWorkers}
+                    maxWorkersCap={maxWorkersCap}
+                    onMaxWorkersChange={onMaxWorkersChange}
+                    maxWorkersHint={SETTING_HELP.maxWorkers}
+                    includeFixedControls
+                    embedded
+                  />
+
+                  {additionalPolicyParameters.length > 0 && (
+                    <div className="scenario-additional-policy">
+                      <h4>Other policy controls</h4>
+                      <div className="scenario-fields-grid">
+                        {additionalPolicyParameters.map((parameter) => (
+                          <CentralBankPolicyInput
+                            key={parameter.key}
+                            parameter={parameter}
+                            value={formValues[parameter.key]}
+                            basePolicyValue={selectedBasePolicy?.values[parameter.key]}
+                            executionDisabled={formDisabled}
+                            mode="manual"
+                            onChange={onFormValueChange}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </aside>
+            )}
 
             {warnings.length > 0 && (
               <div className="run-warning-card">
@@ -344,84 +518,20 @@ export function ManualRunSetupCard({
             )}
           </div>
 
-          {advancedOpen ? (
-          <aside className="scenario-advanced-panel" aria-labelledby="scenario-advanced-heading">
-            <div className="scenario-advanced-panel-heading">
-              <p className="eyebrow">Advanced</p>
-              <h3 id="scenario-advanced-heading">Simulation settings</h3>
-              <p>Configure execution details without changing the policy scenario itself.</p>
-            </div>
-            <div className="scenario-advanced-content">
-              <div className="scenario-fields-grid">
-                <label className="scenario-field">
-                  <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
-                  <select value={selectedBaseline} disabled={formDisabled} onChange={(event) => onBaselineChange(event.target.value)}>
-                    {orderedSnapshots.map((snapshot) => (
-                      <option key={snapshot.version} value={snapshot.version}>
-                        {formatExperimentModelOption(snapshot, orderedSnapshots)}
-                      </option>
-                    ))}
-                  </select>
-                  <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
-                    View in Calibration
-                  </Link>
-                </label>
-
-                <label className="scenario-field">
-                  <InfoLabel label="Reference policy" info={SETTING_HELP.basePolicy} />
-                  <select value={basePolicy} disabled={formDisabled} onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}>
-                    {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.title}</option>)}
-                  </select>
-                </label>
-              </div>
-
-              <h4>Simulation controls</h4>
-              <GeneralModelControl
-                mode="manual"
-                parameters={parameters}
-                formValues={formValues}
-                executionDisabled={formDisabled}
-                onFormValueChange={onFormValueChange}
-                maxWorkers={maxWorkers}
-                maxWorkersCap={maxWorkersCap}
-                onMaxWorkersChange={onMaxWorkersChange}
-                maxWorkersHint={SETTING_HELP.maxWorkers}
-                includeFixedControls
-                embedded
-              />
-
-              {additionalPolicyParameters.length > 0 && (
-                <div className="scenario-additional-policy">
-                  <h4>Other policy controls</h4>
-                  <div className="scenario-fields-grid">
-                    {additionalPolicyParameters.map((parameter) => (
-                      <CentralBankPolicyInput
-                        key={parameter.key}
-                        parameter={parameter}
-                        value={formValues[parameter.key]}
-                        basePolicyValue={selectedBasePolicy?.values[parameter.key]}
-                        executionDisabled={formDisabled}
-                        mode="manual"
-                        onChange={onFormValueChange}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </aside>
-          ) : (
           <aside className="scenario-summary" aria-labelledby="scenario-summary-heading">
             <p className="eyebrow">Live summary</p>
             <h3 id="scenario-summary-heading">{title.trim() || 'Untitled policy scenario'}</h3>
             <p>{scenarioSentence}</p>
             <dl>
-              <div><dt>Reference policy</dt><dd>{selectedBasePolicy?.title ?? 'Not selected'}</dd></div>
-              <div><dt>Policy type</dt><dd>{policyType === 'benchmark' ? 'Benchmark' : policyType === 'ltv' ? 'Loan-to-value restriction' : 'Loan-to-income flow restriction'}</dd></div>
-              {policyType === 'ltv' && LTV_FIELDS.map((field) => (
+              <div><dt>Baseline policy</dt><dd>{selectedBasePolicy?.title ?? 'Not selected'}</dd></div>
+              <div>
+                <dt>Policy type</dt>
+                <dd>{policyTypeSummary}</dd>
+              </div>
+              {activeInstruments.has('ltv') && LTV_FIELDS.map((field) => (
                 <div key={field.key}><dt>{field.label}</dt><dd>{formatValue(formValues[field.key], 'percentage')}</dd></div>
               ))}
-              {policyType === 'lti' && LTI_FIELDS.map((field) => (
+              {activeInstruments.has('lti') && LTI_FIELDS.map((field) => (
                 <div key={field.key}><dt>{field.label}</dt><dd>{formatValue(formValues[field.key], field.unit)}</dd></div>
               ))}
             </dl>
@@ -431,7 +541,6 @@ export function ManualRunSetupCard({
               <p>Seeds are managed by the existing repeated-run process.</p>
             </div>
           </aside>
-          )}
         </div>
         </>
       )}

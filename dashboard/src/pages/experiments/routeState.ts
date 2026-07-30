@@ -154,11 +154,9 @@ export function buildExperimentsPath(state: ExperimentRouteState): string {
   ) {
     params.set('view', 'results');
   }
-  const basePath = normalised.type === 'sensitivity'
-    ? '/sensitivity'
-    : normalised.mode === 'view' && normalised.comparisonRunId
-      ? '/compare'
-      : '/scenarios';
+  // Comparing two runs is a state of the scenarios results view, not a separate page, so a
+  // comparison selection stays on /scenarios rather than routing to the old /compare alias.
+  const basePath = normalised.type === 'sensitivity' ? '/sensitivity' : '/scenarios';
   const query = params.toString();
   return query ? `${basePath}?${query}` : basePath;
 }

@@ -569,6 +569,7 @@ const manualSelectionRuns = [
     createdAt: '2026-03-09T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -585,6 +586,7 @@ const manualSelectionRuns = [
     createdAt: '2026-03-08T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -601,6 +603,7 @@ const manualSelectionRuns = [
     createdAt: '2026-03-07T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {

@@ -45,6 +45,7 @@ import {
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
 import { buildResultsRunVersionLabelState } from '../../../lib/versionLabels';
+import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
 
@@ -128,6 +129,7 @@ export function ManualResultsView({
 }: ManualResultsViewProps) {
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
+  const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
@@ -347,6 +349,33 @@ export function ManualResultsView({
   }, [comparisonRunId]);
 
   useEffect(() => {
+    // The comparison run's policy is fetched separately from its results so the policy block can
+    // show both sides of a comparison; without it the block would silently describe only the
+    // baseline while the page header says "Comparing runs".
+    if (!comparisonRunId) {
+      setComparisonDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchResultsRunDetail(comparisonRunId)
+      .then((payload) => {
+        if (!cancelled) {
+          setComparisonDetail(payload);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setComparisonDetail(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [comparisonRunId]);
+
+  useEffect(() => {
     if (!baselineRunId) {
       setBaselineDetail(null);
       return;
@@ -456,9 +485,29 @@ export function ManualResultsView({
   }, [compareWindow, selectedIndicatorIds, selectedRunIds, smoothWindow]);
 
   const runById = useMemo(() => new Map(historyRuns.map((run) => [run.runId, run])), [historyRuns]);
+  // Runs are identified by an opaque timestamped id; the scenario name is what a reader recognises.
+  // Fall back to the id whenever a run carries no title so nothing is ever unlabelled.
+  const runLabel = (runId: string) => runById.get(runId)?.title ?? runId;
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
   const availableIndicators = useMemo(() => baselineDetail?.indicators ?? [], [baselineDetail]);
+
+  const policySettings = baselineDetail?.policySettings ?? [];
+  // Collapsed, the disclosure is only worth opening if it says something. A plain count does that for
+  // a single run; for a comparison the useful headline is how many settings actually differ.
+  const changedPolicyCount = useMemo(() => {
+    if (!comparisonDetail) {
+      return 0;
+    }
+    return policySettings.filter((setting) => {
+      const other = comparisonDetail.policySettings.find((item) => item.key === setting.key)?.value;
+      return other !== undefined && other !== setting.value;
+    }).length;
+  }, [comparisonDetail, policySettings]);
+
+  const policySettingsSummary = comparisonDetail
+    ? `${changedPolicyCount} of ${policySettings.length} settings differ`
+    : `${policySettings.length} Central Bank settings`;
   const baselineCompareKpis = useMemo(
     () => comparePayload?.kpiSummaryByRun.find((entry) => entry.runId === baselineRunId)?.kpiSummary ?? [],
     [baselineRunId, comparePayload]
@@ -732,7 +781,10 @@ export function ManualResultsView({
                           .join(' ')}
                       >
                         <div className="run-item-head">
-                          <strong>{run.runId}</strong>
+                          <div className="run-item-name">
+                            <strong>{run.title ?? run.runId}</strong>
+                            {run.title && <span className="run-item-id">{run.runId}</span>}
+                          </div>
                           <div className="run-role-chips">
                             {isBaselineSelected && <span className="run-role-chip">Baseline</span>}
                             {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
@@ -884,7 +936,9 @@ export function ManualResultsView({
                   onChange={(event) => setBaselineSelection(event.target.value)}
                 >
                   {historyRuns.map((run) => (
-                    <option key={run.runId} value={run.runId}>{run.runId}</option>
+                    <option key={run.runId} value={run.runId}>
+                      {run.title ? `${run.title} — ${run.runId}` : run.runId}
+                    </option>
                   ))}
                 </select>
                 {baselineSummary && (
@@ -906,7 +960,9 @@ export function ManualResultsView({
                     {historyRuns
                       .filter((run) => run.runId !== baselineRunId)
                       .map((run) => (
-                        <option key={run.runId} value={run.runId}>{run.runId}</option>
+                        <option key={run.runId} value={run.runId}>
+                          {run.title ? `${run.title} — ${run.runId}` : run.runId}
+                        </option>
                       ))}
                   </select>
                   {comparisonSummary ? (
@@ -936,6 +992,52 @@ export function ManualResultsView({
               <span>Compare with another run</span>
             </label>
 
+            {baselineDetail && policySettings.length > 0 && (
+              <div className="run-policy-disclosure">
+                <div className="run-policy-head">
+                  <strong>Policy settings used</strong>
+                  <small>{policySettingsSummary}</small>
+                </div>
+
+                <div className="policy-settings-table-wrap">
+                    <table className="policy-settings-table">
+                      <thead>
+                        <tr>
+                          <th>Setting</th>
+                          <th title={baselineDetail.runId}>{runLabel(baselineDetail.runId)}</th>
+                          {comparisonDetail && (
+                            <th title={comparisonDetail.runId}>{runLabel(comparisonDetail.runId)}</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {policySettings.map((setting) => {
+                          const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                          const format = (value: number) =>
+                            display ? formatPolicyValue(value, display.unit) : String(value);
+                          const comparisonValue = comparisonDetail?.policySettings.find(
+                            (item) => item.key === setting.key
+                          )?.value;
+                          const differs = comparisonValue !== undefined && comparisonValue !== setting.value;
+                          return (
+                            <tr key={setting.key} className={differs ? 'policy-settings-row-changed' : undefined}>
+                              <th scope="row" title={setting.key}>
+                                {display?.label ?? setting.key}
+                                {differs && <span className="policy-settings-changed-chip">changed</span>}
+                              </th>
+                              <td>{format(setting.value)}</td>
+                              {comparisonDetail && (
+                                <td>{comparisonValue === undefined ? 'Not recorded' : format(comparisonValue)}</td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                </div>
+              </div>
+            )}
+
             <div className="summary-links">
               <Link
                 className="summary-link-inline"
@@ -945,7 +1047,7 @@ export function ManualResultsView({
                   mode: 'view'
                 })}
               >
-                Open Policy Sensitivity
+                Open Sensitivity analysis
               </Link>
               {renderDownloadAction(baselineRunId, 'Download Baseline Results')}
               {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download Comparison Results')}

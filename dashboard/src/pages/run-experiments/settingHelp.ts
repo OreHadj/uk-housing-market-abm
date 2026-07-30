@@ -4,14 +4,14 @@ import type { ModelRunParameterDefinition } from '../../../shared/types';
 export type ExperimentControlMode = 'manual' | 'sensitivity';
 
 export const SETTING_HELP = {
-  sensitivityPolicyParameter: 'Policy setting varied across the sweep. Choose the lever to test against the selected baseline.',
-  sensitivityPolicyPackage: 'One or more compatible monetary-policy levers varied together across the sweep.',
-  basePolicy: 'Central-bank settings applied after calibration inputs and before manual edits or sampled sweeps.',
+  sensitivityPolicyParameter: 'Policy instrument varied across the analysis. Choose the one to test against the selected baseline policy.',
+  sensitivityPolicyPackage: 'One or more related central-bank policy settings varied together across the analysis.',
+  basePolicy: 'The real-world policy regime every untouched setting is held at, and that results are compared against.',
   optionalExperimentTitle: 'Short label used to identify this experiment in results and logs.',
   optionalRunTitle: 'Short label used to identify this run in results and logs.',
   calibrationParameterVersion: 'Baseline model inputs used before manual overrides or sensitivity sampling.',
-  minValue: 'Lowest sampled value for the selected policy setting.',
-  maxValue: 'Highest sampled value for the selected policy setting.',
+  minValue: 'Lowest sampled value for the selected policy instrument.',
+  maxValue: 'Highest sampled value for the selected policy instrument.',
   sampleCount:
     'Sampled values include the minimum and maximum. The baseline point is added when it is not already on the grid.',
   maxWorkers: 'Independent model runs allowed to execute in parallel. Higher values can finish faster and use more CPU.'

@@ -385,7 +385,11 @@ nav.main a:hover, nav.main button:hover { color: var(--text); background: var(--
 nav.main a.active { color: var(--text); font-weight: 600; }
 nav.main a.active::after { content: ""; position: absolute; left: 0.72rem; right: 0.72rem;
   bottom: -0.9rem; height: 2px; background: var(--accent); border-radius: 2px; }
-.top-right { display: flex; flex-direction: column; align-items: flex-end; gap: 0.55rem; }
+/* The nav is anchored to a left edge just past the brand, and grows rightwards. Right-aligning it
+   made its position depend on how many items it had, so adding or removing one shifted every
+   existing item sideways. Growing to fill the row fixes the anchor to the brand's width alone. */
+.top-right { display: flex; flex-direction: column; align-items: flex-start; gap: 0.55rem;
+  flex: 1 1 auto; }
 /* Dev-only runtime control pinned to the far top-right corner, clear of the nav */
 header.top .env-controls { position: absolute; top: 0.55rem; right: 1.2rem; z-index: 2; margin: 0; }
 
@@ -528,6 +532,20 @@ section.block:first-of-type { border-top: none; }
 .run-item.selected-comparison {
   border-color: rgba(24, 149, 139, 0.4);
   box-shadow: 0 0 0 2px rgba(24, 149, 139, 0.08);
+}
+
+/* A run is named by its scenario title, with the opaque generated id kept underneath so it stays
+   identifiable in logs and downloads. */
+.run-item-name {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.run-item-id {
+  color: var(--muted);
+  font-size: 0.72rem;
+  word-break: break-all;
 }
 
 .run-item-head {
@@ -1216,13 +1234,10 @@ section.block:first-of-type { border-top: none; }
   background: var(--hover);
 }
 
-.policy-results-table td.positive {
-  color: var(--ok);
-  font-weight: 700;
-}
-
-.policy-results-table td.negative {
-  color: var(--warn);
+.policy-results-table td.positive,
+.policy-results-table td.negative,
+.policy-results-table td.neutral {
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -1399,18 +1414,12 @@ section.block:first-of-type { border-top: none; }
 }
 
 .manual-kpi-delta.positive,
-.manual-kpi-detail-table td.positive {
-  color: var(--ok);
-}
-
 .manual-kpi-delta.negative,
-.manual-kpi-detail-table td.negative {
-  color: var(--warn);
-}
-
 .manual-kpi-delta.neutral,
+.manual-kpi-detail-table td.positive,
+.manual-kpi-detail-table td.negative,
 .manual-kpi-detail-table td.neutral {
-  color: var(--muted);
+  color: var(--text);
 }
 
 .manual-kpi-detail-table-wrap {
@@ -1912,6 +1921,79 @@ section.block:first-of-type { border-top: none; }
 .scenario-summary dd {
   margin: 0;
   font-weight: 700;
+}
+
+/* Policy settings recorded against a completed run, one column per run so a comparison shows both
+   policies side by side. Mirrors the sensitivity point table's density. */
+/* Sits inside the run-selection card, so it reads as detail about the runs just chosen rather than
+   as a finding in its own right. Collapsed by default. */
+.run-policy-disclosure {
+  margin-top: 0.85rem;
+  border-top: 1px solid rgba(17, 32, 24, 0.09);
+  padding-top: 0.85rem;
+}
+
+.run-policy-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.run-policy-head small {
+  color: var(--muted);
+}
+
+.policy-settings-table-wrap {
+  overflow-x: auto;
+  margin-top: 0.75rem;
+}
+
+.policy-settings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.policy-settings-table th,
+.policy-settings-table td {
+  text-align: left;
+  padding: 0.55rem 0.75rem 0.55rem 0;
+  border-bottom: 1px solid rgba(17, 32, 24, 0.09);
+  white-space: nowrap;
+}
+
+.policy-settings-table thead th {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.policy-settings-table tbody th {
+  font-weight: 400;
+  white-space: normal;
+}
+
+.policy-settings-table tbody td {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-settings-row-changed td {
+  color: var(--accent-2, #0b7285);
+}
+
+.policy-settings-changed-chip {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 0.3rem;
+  background: rgba(11, 114, 133, 0.12);
+  color: #0b7285;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .scenario-summary-advanced {
@@ -3487,6 +3569,114 @@ section.block:first-of-type { border-top: none; }
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 0.65rem;
+}
+
+.scenario-launch-button {
+  padding: 0.85rem 1.25rem;
+  font-size: 1.05rem;
+  font-weight: 800;
+}
+
+.scenario-create-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(10, 24, 17, 0.56);
+  backdrop-filter: blur(3px);
+}
+
+.scenario-create-modal-backdrop[hidden] {
+  display: none;
+}
+
+.scenario-create-modal {
+  width: min(1440px, 98vw);
+  max-height: 94vh;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid rgba(17, 32, 24, 0.12);
+  border-radius: 1.15rem;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgba(10, 24, 17, 0.28);
+}
+
+.scenario-create-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.35rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+.scenario-create-modal-head h2,
+.scenario-create-modal-head p {
+  margin: 0;
+}
+
+.scenario-create-modal-head > div > p:last-child {
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+
+.scenario-create-modal-body {
+  overflow-y: auto;
+  padding: clamp(1rem, 2vw, 1.75rem);
+}
+
+.scenario-create-modal-body .scenario-builder-surface {
+  border: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.scenario-create-modal-body .scenario-builder-heading {
+  display: none;
+}
+
+.scenario-create-modal-body .scenario-builder-grid {
+  grid-template-columns: minmax(660px, 1.55fr) minmax(340px, 0.75fr);
+  gap: clamp(1.5rem, 3vw, 3.25rem);
+}
+
+.scenario-create-modal-body .policy-choice {
+  padding: 1rem;
+}
+
+.scenario-create-modal-body .scenario-summary {
+  padding: 1.3rem;
+}
+
+.sensitivity-run-history-card {
+  width: 100%;
+}
+
+.sensitivity-run-picker-modal {
+  width: min(760px, 96vw);
+}
+
+.sensitivity-run-picker-subtitle {
+  margin: 0 0 0.8rem;
+  color: var(--muted);
+}
+
+.sensitivity-run-picker-list {
+  max-height: none;
+  overflow: visible;
+}
+
+@media (max-width: 1220px) {
+  .scenario-create-modal-body .scenario-builder-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-create-modal-body .scenario-summary {
+    position: static;
+  }
 }
 
 .danger-button {

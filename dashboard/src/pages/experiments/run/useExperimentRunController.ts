@@ -652,7 +652,7 @@ export function useExperimentRunController({
 
   const onSubmitSensitivity = async (confirmWarnings: boolean) => {
     if (!selectedSensitivityPackage) {
-      setPageError('Select a policy package for sensitivity.');
+      setPageError('Select a policy instrument for the sensitivity analysis.');
       return;
     }
 

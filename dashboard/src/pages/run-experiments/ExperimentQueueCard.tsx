@@ -20,7 +20,7 @@ function formatStatus(status: ExperimentJobSummary['status']): string {
 }
 
 function typeLabel(type: ExperimentJobSummary['type']): string {
-  return type === 'manual' ? 'Policy scenario' : 'Policy sensitivity';
+  return type === 'manual' ? 'Scenario' : 'Sensitivity analysis';
 }
 
 function isFinishedStatus(status: ExperimentJobSummary['status']): boolean {
@@ -64,12 +64,12 @@ export function ExperimentQueueCard({
 }: ExperimentQueueCardProps) {
   return (
     <article className="results-card">
-      <h3>{workspaceType === 'manual' ? 'Policy scenario runs' : 'Policy sensitivity history'}</h3>
+      <h3>{workspaceType === 'manual' ? 'Scenario runs' : 'Sensitivity analysis history'}</h3>
       {isLoading ? (
         <p className="loading-banner">Loading experiment jobs...</p>
       ) : jobs.length === 0 ? (
         <p className="info-banner">
-          {workspaceType === 'manual' ? 'No policy scenario runs submitted yet.' : 'No policy sweeps submitted yet.'}
+          {workspaceType === 'manual' ? 'No scenario runs submitted yet.' : 'No sensitivity analyses submitted yet.'}
         </p>
       ) : (
         <ul className="job-list">
