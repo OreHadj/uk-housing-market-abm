@@ -5390,12 +5390,12 @@ try {
   );
   const orderedExperimentSnapshots = orderExperimentModelOptions(runOptions.snapshots);
  const promotedExperimentSnapshots = orderExperimentModelOptions([
-    { version: 'v1.0', status: 'stable' },
-    { version: 'v5o3', status: 'stable' },
-    { version: 'v0o7', status: 'stable' },
-    { version: 'v0o2', status: 'stable' },
-    { version: 'v0oo', status: 'stable' },
-    { version: 'v0', status: 'stable' }
+    { version: 'v1.0', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
+    { version: 'v5o3', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
+    { version: 'v0o7', status: 'stable', evidenceYear: 2011, outputCalibrated: true },
+    { version: 'v0o2', status: 'stable', evidenceYear: 2011, outputCalibrated: true },
+    { version: 'v0oo', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
+    { version: 'v0', status: 'stable', evidenceYear: null, outputCalibrated: false }
   ]);
   assert.deepEqual(
     promotedExperimentSnapshots.slice(0, 3).map((snapshot) => snapshot.version),
@@ -5410,17 +5410,20 @@ try {
   assert.deepEqual(
     orderedExperimentSnapshots.slice(0, 4).map((snapshot) => formatExperimentModelOption(snapshot, orderedExperimentSnapshots)),
     [
-      'Optimised 2011 model (Stable, v0o7)',
-      'Original 2011 model (Stable, v0)',
-      'Optimised 2024 model (Beta, v5o3)',
-      '2024 model v1.1 (Beta, In progress)'
+      'v0o7 — Optimised for 2011 evidence (Stable)',
+      'v0 — Original 2011 model (Stable)',
+      'v5o3 — Optimised for 2024 evidence (Beta)',
+      'v1.1 — 2024 data version, inherits an earlier calibration (Beta, In progress)'
     ],
-    'Expected canonical experiment model option labels to include version ids inside lifecycle badges'
+    'Expected every experiment model option to lead with its version id and state its evidence era'
   );
   assert.equal(
-    formatExperimentModelOption({ version: 'v4.4', status: 'stable' }, [{ version: 'v4.4', status: 'stable' }]),
-    'Latest 2024 model (Beta, v4.4)',
-    'Expected non-optimised 2024 experiment labels to keep latest lifecycle wording when applicable'
+    formatExperimentModelOption(
+      { version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
+      [{ version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false }]
+    ),
+    'v4.4 — 2024 data version, inherits an earlier calibration (Beta)',
+    'Expected input-data snapshots to be labelled as data versions rather than as calibrations'
   );
 
   assertSettingHelpCopy();

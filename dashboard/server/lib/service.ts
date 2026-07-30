@@ -1152,9 +1152,10 @@ export function getInProgressVersions(pathsInput: RuntimePathInput): string[] {
 export function getValidationOverview(
   pathsInput: RuntimePathInput,
   version?: string,
-  validationTargetYear?: number
+  validationTargetYear?: number,
+  comparisonVersion?: string
 ): ValidationOverviewPayload {
-  return getTrackedValidationOverview(pathsInput, version, validationTargetYear);
+  return getTrackedValidationOverview(pathsInput, version, validationTargetYear, comparisonVersion);
 }
 
 export function getParameterCatalog() {

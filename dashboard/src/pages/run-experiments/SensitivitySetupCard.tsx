@@ -9,6 +9,7 @@ import type {
   SensitivityPolicyPackageDefinition
 } from '../../../shared/types';
 import {
+  formatEvidenceNote,
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../../lib/experimentVersionOptions';
@@ -253,9 +254,24 @@ export function SensitivitySetupCard({
                             </option>
                           ))}
                         </select>
-                        <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
-                          View in Calibration
-                        </Link>
+                        {selectedSnapshot && (
+                          <p className="scenario-evidence-note">
+                            <strong>{selectedSnapshot.version}</strong> · {formatEvidenceNote(selectedSnapshot)}
+                          </p>
+                        )}
+                        <p className="scenario-field-links">
+                          <Link
+                            className="summary-link-inline"
+                            to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
+                              selectedSnapshot?.evidenceYear ?? 2024
+                            }&from=sensitivity`}
+                          >
+                            Compare how models fit the evidence
+                          </Link>
+                          <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
+                            View this model&rsquo;s assumptions
+                          </Link>
+                        </p>
                       </label>
                     </div>
 

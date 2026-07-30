@@ -1,6 +1,5 @@
 // Author: Max Stoddard
 import type { ModelRunSnapshotOption } from '../../shared/types';
-import { formatModelVersionBaseLabel } from './versionLabels';
 
 const OPTIMISED_2011_VERSION = 'v0o7';
 const OPTIMISED_2024_VERSION = 'v5o3';
@@ -10,22 +9,6 @@ const LEGACY_2011_VERSIONS = new Set([...LEGACY_2011_VERSION_IDS, ORIGINAL_2011_
 
 function statusSuffix(snapshot: ModelRunSnapshotOption): string {
   return snapshot.status === 'in_progress' ? ', In progress' : '';
-}
-
-function formatCanonicalExperimentBaseLabel(baseLabel: string, version: string): string | null {
-  if (baseLabel === 'Original 2011 model' || baseLabel === 'Optimised 2011 model') {
-    return baseLabel;
-  }
-
-  if (baseLabel === `Optimised 2024 model ${version}`) {
-    return 'Optimised 2024 model';
-  }
-
-  if (baseLabel === `Latest 2024 model ${version}`) {
-    return 'Latest 2024 model';
-  }
-
-  return null;
 }
 
 export function orderExperimentModelOptions(snapshots: readonly ModelRunSnapshotOption[]): ModelRunSnapshotOption[] {
@@ -46,19 +29,28 @@ export function orderExperimentModelOptions(snapshots: readonly ModelRunSnapshot
   ];
 }
 
-export function formatExperimentModelOption(snapshot: ModelRunSnapshotOption, snapshots: readonly ModelRunSnapshotOption[]): string {
-  const optimised2024 = snapshots.find((item) => item.version === OPTIMISED_2024_VERSION);
-  const fallbackLatest2024 =
-    snapshots.find((item) => !LEGACY_2011_VERSIONS.has(item.version) && item.status !== 'in_progress') ??
-    snapshots.find((item) => !LEGACY_2011_VERSIONS.has(item.version));
-  const latest2024 = optimised2024 ?? fallbackLatest2024;
-  const baseLabel = formatModelVersionBaseLabel(snapshot.version, { isLatest: latest2024?.version === snapshot.version });
-  const canonicalBaseLabel = formatCanonicalExperimentBaseLabel(baseLabel, snapshot.version);
-  const releaseState = LEGACY_2011_VERSIONS.has(snapshot.version) ? 'Stable' : `Beta${statusSuffix(snapshot)}`;
-
-  if (canonicalBaseLabel) {
-    return `${canonicalBaseLabel} (${releaseState}, ${snapshot.version})`;
+/**
+ * Short statement of what a snapshot was tuned against. Output calibrations were fitted to a
+ * specific evidence year; input/data snapshots inherit whatever fit came before them.
+ */
+export function formatEvidenceNote(
+  snapshot: Pick<ModelRunSnapshotOption, 'version' | 'evidenceYear' | 'outputCalibrated'>
+): string {
+  if (snapshot.version === ORIGINAL_2011_VERSION) {
+    return 'Original 2011 model';
   }
+  if (snapshot.evidenceYear === null) {
+    return snapshot.outputCalibrated ? 'Output-calibrated' : 'Data version';
+  }
+  return snapshot.outputCalibrated
+    ? `Optimised for ${snapshot.evidenceYear} evidence`
+    : `${snapshot.evidenceYear} data version, inherits an earlier calibration`;
+}
 
-  return `${baseLabel} (${releaseState})`;
+export function formatExperimentModelOption(snapshot: ModelRunSnapshotOption, snapshots: readonly ModelRunSnapshotOption[]): string {
+  void snapshots;
+  const releaseState = LEGACY_2011_VERSIONS.has(snapshot.version) ? 'Stable' : `Beta${statusSuffix(snapshot)}`;
+  // The version id always leads, so what is actually being run is never hidden behind a friendly
+  // name, and every option states the evidence era it was tuned against rather than only some.
+  return `${snapshot.version} — ${formatEvidenceNote(snapshot)} (${releaseState})`;
 }

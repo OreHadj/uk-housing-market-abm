@@ -19,7 +19,11 @@ import {
   findPolicyInstrument,
   type PolicyInstrumentId
 } from '../../lib/manualScenarioPolicy';
-import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
+import {
+  formatEvidenceNote,
+  formatExperimentModelOption,
+  orderExperimentModelOptions
+} from '../../lib/experimentVersionOptions';
 import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { GeneralModelControl } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
@@ -103,6 +107,11 @@ export function ManualRunSetupCard({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const orderedSnapshots = orderExperimentModelOptions(snapshots);
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy);
+  const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.version === selectedBaseline);
+  // A 2011-evidence model run against a 2024 policy rulebook is a silent era mismatch, and it is
+  // the current default (v0o7 is 2011 evidence), so it is stated rather than left to be inferred.
+  const evidenceEraMismatch =
+    selectedSnapshot?.evidenceYear != null && String(selectedSnapshot.evidenceYear) !== basePolicy;
   const parametersByKey = useMemo(
     () => new Map(policyParameters.map((parameter) => [parameter.key, parameter])),
     [policyParameters]
@@ -237,12 +246,37 @@ export function ManualRunSetupCard({
                         </option>
                       ))}
                     </select>
-                    <Link
-                      className="summary-link-inline"
-                      to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}
-                    >
-                      View in Calibration
-                    </Link>
+                    {selectedSnapshot && (
+                      <p className="scenario-evidence-note">
+                        <strong>{selectedSnapshot.version}</strong> · {formatEvidenceNote(selectedSnapshot)}
+                      </p>
+                    )}
+                    {evidenceEraMismatch && selectedSnapshot && (
+                      <p className="scenario-evidence-warning">
+                        This model was scored against <strong>{selectedSnapshot.evidenceYear}</strong> evidence, but the
+                        baseline policy regime below is <strong>{basePolicy}</strong>. Results mix two eras.
+                      </p>
+                    )}
+                    <p className="scenario-field-links">
+                      <Link
+                        className="summary-link-inline"
+                        to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
+                          selectedSnapshot?.evidenceYear ?? 2024
+                        }&from=scenario`}
+                      >
+                        Compare how models fit the evidence
+                      </Link>
+                      <Link
+                        className="summary-link-inline"
+                        to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}
+                      >
+                        View this model&rsquo;s assumptions
+                      </Link>
+                    </p>
+                    <p className="scenario-field-hint">
+                      Deciding which model to use? Validation scores each one against real-world evidence,
+                      indicator by indicator.
+                    </p>
                   </label>
 
                   <label className="scenario-field">

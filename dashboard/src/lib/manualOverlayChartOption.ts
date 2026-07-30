@@ -2,8 +2,8 @@
 import type { EChartsOption } from 'echarts';
 import type { ResultsCompareIndicator, ResultsCompareSeries } from '../../shared/types';
 
-const BASELINE_COLOR = '#0b7285';
-const COMPARISON_COLOR = '#18958b';
+export const BASELINE_COLOR = '#0b7285';
+export const COMPARISON_COLOR = '#18958b';
 const FALLBACK_COLOR = '#495057';
 
 function formatOverlayValue(value: number, units: string): string {

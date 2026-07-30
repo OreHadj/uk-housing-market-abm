@@ -2601,9 +2601,200 @@ section.block:first-of-type { border-top: none; }
 .legend-iqr::before { background: #536b61; }
 .legend-mean::before { border-left: 3px solid #d9480f; }
 .legend-source::before {
-  transform: rotate(45deg) scale(0.65);
-  border: 2px solid #6741d9;
-  background: #fff;
+  width: 0.2rem;
+  border-left: 2px solid #354d43;
+}
+
+/* Loss decomposition — the composite is an unweighted mean, so it splits exactly by theme. */
+/* Compare mode: two models share one axis, distinguished only by colour. */
+.validation-decomposition-bar-comparison {
+  margin-top: 2px;
+}
+
+.validation-decomposition-list strong em {
+  display: block;
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 500;
+}
+
+/* One line per model: swatch + version, figure, verdict. Both models read identically. */
+.validation-row-deviation-compare {
+  grid-template-columns: auto auto auto;
+  justify-content: start;
+  gap: 0.28rem 0.5rem;
+  align-items: center;
+}
+
+.validation-row-deviation-compare > strong {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.validation-series-label {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.validation-row-loss-compare {
+  align-content: center;
+}
+
+.validation-row-loss-compare > strong {
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.validation-series-key {
+  display: inline-block;
+  flex: none;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+}
+
+.validation-series-key-selected {
+  background: #0b7285;
+}
+
+.validation-series-key-comparison {
+  background: #18958b;
+}
+
+.validation-sort-note {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* Return trip from Validation to the setup form the analyst came from. */
+.validation-return-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.9rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(11, 114, 133, 0.25);
+  border-radius: 6px;
+  background: rgba(11, 114, 133, 0.06);
+}
+
+.validation-return-bar p {
+  flex: 1 1 22rem;
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.scenario-field-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  margin: 0.4rem 0 0;
+}
+
+.scenario-field-hint {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+/* Model identity: which snapshot is running, and what evidence era it was tuned against. */
+.scenario-evidence-note {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.scenario-evidence-warning {
+  margin: 0.4rem 0 0;
+  padding: 0.45rem 0.65rem;
+  border-left: 3px solid #8a5a00;
+  border-radius: 3px;
+  background: #fff9e6;
+  color: #8a5a00;
+  font-size: 0.78rem;
+}
+
+.validation-loss-decomposition {
+  margin-top: 1.25rem;
+}
+
+.validation-decomposition-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.validation-decomposition-list li {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 3fr) 3.5rem;
+  gap: 0.75rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.validation-decomposition-list strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.validation-decomposition-track {
+  height: 0.6rem;
+  border-radius: 999px;
+  background: rgba(17, 32, 24, 0.08);
+}
+
+.validation-decomposition-bar {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: #0b7285;
+}
+
+.validation-decomposition-summary {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.validation-subgroup {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px dashed rgba(17, 32, 24, 0.18);
+  border-radius: 6px;
+  background: rgba(17, 32, 24, 0.02);
+}
+
+.validation-subgroup h5 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.validation-subgroup .validation-card-subtitle {
+  margin: 0.3rem 0 0.6rem;
+}
+
+/* Band-width caution: status and distance-from-target disagree. Advisory, not a failure. */
+.validation-band-note {
+  margin: 0;
+  padding: 0.5rem 0.8rem 0.7rem 2.1rem;
+  position: relative;
+  color: #8a5a00;
+  background: #fff9e6;
+  border-top: 1px solid rgba(138, 90, 0, 0.18);
+  font-size: 0.78rem;
+}
+
+.validation-band-note::before {
+  content: '⚠';
+  position: absolute;
+  left: 0.85rem;
 }
 
 .validation-theme + .validation-theme {
@@ -2623,10 +2814,11 @@ section.block:first-of-type { border-top: none; }
 .validation-metric-row > summary {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(170px, 1.25fr) minmax(240px, 2fr) minmax(110px, 0.8fr) 80px;
+  grid-template-columns: minmax(170px, 1.25fr) minmax(220px, 2fr) minmax(150px, 1fr) 80px;
   gap: 1rem;
   align-items: center;
-  padding: 0.8rem;
+  /* Right padding keeps the +/- disclosure marker clear of the loss figure. */
+  padding: 0.8rem 1.9rem 0.8rem 0.8rem;
   cursor: pointer;
   list-style: none;
 }
@@ -2705,12 +2897,53 @@ section.block:first-of-type { border-top: none; }
   background: #d9480f;
 }
 
+/* Deviation beyond the +/-100% axis limit: pinned to the edge, exact value in the row label. */
+.validation-mean-overflow {
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 9px solid #d9480f;
+  background: none;
+}
+
+.validation-axis-tick {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 12px;
+  transform: translate(-50%, -50%);
+  background: rgba(17, 32, 24, 0.18);
+}
+
 .validation-source-marker {
-  width: 10px;
-  height: 10px;
-  transform: translate(-50%, -50%) rotate(45deg);
-  border: 2px solid #6741d9;
-  background: #fff;
+  width: 2px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  border: 0;
+  background: #354d43;
+}
+
+.validation-range-unscaled {
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.validation-row-deviation {
+  display: grid;
+  justify-items: start;
+  gap: 0.2rem;
+}
+
+.validation-row-deviation > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.validation-row-deviation > strong {
+  font-variant-numeric: tabular-nums;
 }
 
 .validation-robustness,
@@ -4489,6 +4722,99 @@ section.block:first-of-type { border-top: none; }
   align-items: start;
 }
 
+.calibration-layout {
+  display: grid;
+  gap: 1rem;
+}
+
+.calibration-controls {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.calibration-controls > div,
+.calibration-controls label {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.calibration-controls select,
+.calibration-filter-body input {
+  min-width: 15rem;
+  border: 1px solid rgba(17, 32, 24, 0.16);
+  border-radius: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  font: inherit;
+  background: #fff;
+}
+
+.control-label {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.calibration-introduction {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.calibration-validation-link,
+.validation-calibration-link {
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.calibration-filter-body {
+  grid-template-columns: minmax(16rem, 1fr) auto;
+  align-items: end;
+}
+
+.calibration-filter-body > label {
+  grid-column: 1 / -1;
+  font-weight: 700;
+}
+
+.calibration-filter-body .param-groups {
+  grid-column: 1 / -1;
+}
+
+.calibration-overview-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+}
+
+.calibration-overview-grid > div {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.7rem;
+  border-radius: 0.7rem;
+  background: #f5f7f5;
+}
+
+.calibration-overview-grid span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.calibration-overview-wide {
+  grid-column: 1 / -1;
+}
+
+.results-head .calibration-validation-note {
+  margin-top: 0.8rem;
+  padding: 0.7rem;
+  border-left: 3px solid var(--accent);
+  background: #f5f7f5;
+  color: var(--text);
+}
+
 .compare-layout.setup-collapsed {
   grid-template-columns: 42px 1fr;
 }
@@ -5316,6 +5642,25 @@ section.block:first-of-type { border-top: none; }
 }
 
 @media (max-width: 760px) {
+  .calibration-controls {
+    align-items: stretch;
+  }
+
+  .calibration-controls > div,
+  .calibration-controls label,
+  .calibration-controls select {
+    width: 100%;
+  }
+
+  .calibration-introduction {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .calibration-overview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .app-header {
     flex-direction: column;
     align-items: start;

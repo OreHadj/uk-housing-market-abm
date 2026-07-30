@@ -261,10 +261,10 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
             <h3>{item.title}</h3>
           </span>
         </button>
-        <div className="card-status-pills">
+        {mode === 'compare' && <div className="card-status-pills">
           {hasInProgressOrigin && <span className="status-pill-in-progress">In progress</span>}
           <span className={`change-pill ${updated ? 'updated' : 'neutral'}`}>{updated ? 'Updated' : 'No change'}</span>
-        </div>
+        </div>}
       </header>
 
       {isExpanded && (
@@ -278,7 +278,7 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
             item.visualPayload.type === 'buy_quad') && (
             <div className="card-section">
               <button type="button" className="table-toggle" onClick={() => setIsTableOpen((current) => !current)}>
-                {isTableOpen ? 'Hide parameter table' : 'Show parameter table'}
+                {isTableOpen ? 'Hide exact parameter values' : 'Exact parameter values'}
               </button>
               {isTableOpen && renderScalarTable(tableRows, mode)}
             </div>
@@ -716,6 +716,7 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
           )}
 
           <div className="card-description">
+            <strong>Policy relevance</strong>
             <p>{item.explanation}</p>
           </div>
 

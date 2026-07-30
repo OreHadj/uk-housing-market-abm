@@ -84,7 +84,15 @@ export function registerPublicRoutes(app: express.Express, context: RouteContext
       const version = String(req.query.version ?? '').trim();
       const targetYearParam = Number.parseInt(String(req.query.validationTargetYear ?? '').trim(), 10);
       const validationTargetYear = [2011, 2024].includes(targetYearParam) ? targetYearParam : undefined;
-      res.json(getValidationOverview(context.runtimePaths, version || undefined, validationTargetYear));
+      const comparisonVersion = String(req.query.comparisonVersion ?? '').trim();
+      res.json(
+        getValidationOverview(
+          context.runtimePaths,
+          version || undefined,
+          validationTargetYear,
+          comparisonVersion || undefined
+        )
+      );
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
     }

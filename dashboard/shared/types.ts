@@ -357,6 +357,18 @@ export interface ValidationCompositeTrendPayload {
   referencePoints: ValidationReferenceLine[];
 }
 
+/**
+ * Compact per-metric projection used to rank and compare models without shipping every
+ * version's full summary. Always scoped to one evidence year — mixing eras is meaningless.
+ */
+export interface ValidationMetricComparisonPoint {
+  metricId: string;
+  status: ValidationMetricStatus;
+  metricLoss: number | null;
+  seedMean: number;
+  sourceValue: number | null;
+}
+
 export interface ValidationOverviewPayload {
   availableVersions: string[];
   selectedVersion: string;
@@ -364,6 +376,10 @@ export interface ValidationOverviewPayload {
   availableValidationTargetYearsByVersion: Record<string, number[]>;
   trend: ValidationCompositeTrendPayload;
   selectedSummary: ValidationVersionSummary;
+  /** Keyed by version; only versions scored against `selectedValidationTargetYear` appear. */
+  metricsByVersion: Record<string, ValidationMetricComparisonPoint[]>;
+  /** Second model for compare mode. Null when none requested, or when it has no summary for this year. */
+  comparisonSummary: ValidationVersionSummary | null;
 }
 
 export type ResultsRunStatus = 'complete' | 'partial' | 'invalid';
@@ -552,6 +568,16 @@ export type BasePolicyId = '2011' | '2024';
 export interface ModelRunSnapshotOption {
   version: string;
   status: ModelRunSnapshotStatus;
+  /**
+   * Which era of real-world evidence this snapshot was scored against
+   * (`w3` = 2011 Wave 3, `r8` = 2024 Round 8). Null when the history file has no entry.
+   */
+  evidenceYear: 2011 | 2024 | null;
+  /**
+   * True when the five unmeasurable behavioural parameters were fitted for this version
+   * (the `o`-suffixed versions). False for input/data snapshots, which inherit them.
+   */
+  outputCalibrated: boolean;
 }
 
 export interface ModelRunParameterDefinition {

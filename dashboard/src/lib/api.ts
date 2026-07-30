@@ -256,11 +256,15 @@ export async function fetchVersions(): Promise<VersionsPayload> {
 
 export async function fetchValidationOverview(
   version?: string,
-  validationTargetYear = 2024
+  validationTargetYear = 2024,
+  comparisonVersion?: string
 ): Promise<ValidationOverviewPayload> {
   const params = new URLSearchParams();
   if (version) {
     params.set('version', version);
+  }
+  if (comparisonVersion) {
+    params.set('comparisonVersion', comparisonVersion);
   }
   params.set('validationTargetYear', String(validationTargetYear));
   const query = params.toString();

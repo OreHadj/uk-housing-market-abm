@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import type { CompareResponse, ParameterCardMeta, ParameterGroup } from '../../shared/types';
 import { API_RETRY_DELAY_MS, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
 import { CollapsibleSection } from '../components/CollapsibleSection';
@@ -15,23 +15,27 @@ import {
 } from '../lib/versionLabels';
 
 const GROUP_ORDER: ParameterGroup[] = [
+  'Bank & Credit Policy',
+  'Purchase & Mortgage',
+  'BTL & Investor Behavior',
   'Housing & Rental Market',
   'Household Demographics & Wealth',
-  'Government & Tax',
-  'Purchase & Mortgage',
-  'Bank & Credit Policy',
-  'BTL & Investor Behavior'
+  'Government & Tax'
 ];
 const DEFAULT_OPEN_COMPARE_CARD_IDS = new Set<string>([
-  'house_price_lognormal',
-  'wealth_given_income_joint',
-  'downpayment_ftb_lognormal'
+  'central_bank_base_rate',
+  'central_bank_ltv_limits',
+  'central_bank_lti_soft_limits',
+  'central_bank_affordability_icr'
 ]);
 const DEFAULT_OPEN_COMPARE_GROUPS = new Set<ParameterGroup>([
-  'Housing & Rental Market',
-  'Household Demographics & Wealth',
-  'Purchase & Mortgage'
+  'Bank & Credit Policy'
 ]);
+const HISTORICAL_EVIDENCE_VERSIONS = new Set(['v0', 'v0o2', 'v0o7']);
+
+function formatOverviewDataset(dataset: CompareResponse['items'][number]['sourceInfo']['datasetsRight'][number]): string {
+  return `${dataset.fullName} (${dataset.year}${dataset.edition ? `, ${dataset.edition}` : ''})`;
+}
 
 type ChangeFilter = 'all' | 'updated' | 'unchanged';
 type ViewMode = 'single' | 'compare';
@@ -105,8 +109,7 @@ function groupCompareItems(compareData: CompareResponse | null, filter: ChangeFi
 }
 
 export function ComparePage() {
-  const [searchParams] = useSearchParams();
-  const searchParamsKey = searchParams.toString();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<ParameterCardMeta[]>([]);
@@ -122,7 +125,6 @@ export function ComparePage() {
   const [isBootstrapReady, setIsBootstrapReady] = useState<boolean>(false);
   const [isWaitingForApi, setIsWaitingForApi] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isSetupOpen, setIsSetupOpen] = useState<boolean>(false);
   const [changeFilter, setChangeFilter] = useState<ChangeFilter>('all');
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({});
 
@@ -143,20 +145,24 @@ export function ComparePage() {
 
         const versionList = versionsPayload.versions;
         const defaultDisplayVersion = getDefaultDisplayVersion(versionList, versionsPayload.inProgressVersions);
-        const currentParams = new URLSearchParams(searchParamsKey);
+        const currentParams = new URLSearchParams(window.location.search);
         const requestedModeRaw = currentParams.get('mode')?.trim() ?? '';
         const hasRequestedMode = requestedModeRaw.length > 0;
         const requestedMode: ViewMode = hasRequestedMode
           ? requestedModeRaw === 'compare'
             ? 'compare'
             : 'single'
-          : 'compare';
+          : 'single';
         const requestedVersionRaw = currentParams.get('version')?.trim() ?? '';
         const requestedVersion = versionList.includes(requestedVersionRaw) ? requestedVersionRaw : '';
         const singleVersion = requestedVersion || defaultDisplayVersion;
         const defaultCompareLeftVersion = getOriginalDisplayVersion(versionList);
-        const compareLeftVersion = hasRequestedMode ? (versionList[0] ?? '') : defaultCompareLeftVersion;
-        const compareRightVersion = requestedVersion || defaultDisplayVersion;
+        const requestedLeft = currentParams.get('left')?.trim() ?? '';
+        const requestedRight = currentParams.get('right')?.trim() ?? '';
+        const compareLeftVersion = versionList.includes(requestedLeft) ? requestedLeft : defaultCompareLeftVersion;
+        const compareRightVersion = versionList.includes(requestedRight)
+          ? requestedRight
+          : requestedVersion || defaultDisplayVersion;
 
         setVersions(versionList);
         setInProgressVersions(versionsPayload.inProgressVersions);
@@ -197,7 +203,20 @@ export function ComparePage() {
         window.clearTimeout(retryTimer);
       }
     };
-  }, [searchParamsKey]);
+  }, []);
+
+  useEffect(() => {
+    if (!isBootstrapReady) return;
+    const next = new URLSearchParams();
+    next.set('mode', mode);
+    if (mode === 'single') {
+      if (selectedVersion) next.set('version', selectedVersion);
+    } else {
+      if (left) next.set('left', left);
+      if (right) next.set('right', right);
+    }
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [isBootstrapReady, left, mode, right, searchParams, selectedVersion, setSearchParams]);
 
   useEffect(() => {
     if (mode === 'compare') {
@@ -431,28 +450,32 @@ export function ComparePage() {
     mode === 'single'
       ? renderVersionTags('Version', selectedVersion)
       : [...renderVersionTags('Left', left), ...renderVersionTags('Right', right)];
+  const overviewItems = compareData?.items ?? [];
+  const documentedDatasets = useMemo(() => {
+    const unique = new Set<string>();
+    for (const item of overviewItems) {
+      const datasets = mode === 'single'
+        ? item.sourceInfo.datasetsRight
+        : [...item.sourceInfo.datasetsLeft, ...item.sourceInfo.datasetsRight];
+      for (const dataset of datasets) unique.add(formatOverviewDataset(dataset));
+    }
+    return [...unique].sort();
+  }, [mode, overviewItems]);
+  const evidenceYears = useMemo(() => {
+    const years = new Set<string>();
+    for (const dataset of documentedDatasets) {
+      for (const match of dataset.matchAll(/\b(?:19|20)\d{2}\b/g)) years.add(match[0]);
+    }
+    return [...years].sort();
+  }, [documentedDatasets]);
+  const validationVersion = mode === 'single' ? selectedVersion : right;
+  const validationEvidenceYear = HISTORICAL_EVIDENCE_VERSIONS.has(validationVersion) ? 2011 : 2024;
 
   return (
-    <section className={`compare-layout ${isSetupOpen ? '' : 'setup-collapsed'}`}>
-      {isSetupOpen ? (
-        <aside className="sidebar">
-          <div className="sidebar-head">
-            <h2>Workspace Setup</h2>
-            <div className="sidebar-head-actions">
-              <p>{selectedIds.length} tracked</p>
-              <button
-                type="button"
-                className="sidebar-icon-toggle"
-                onClick={() => setIsSetupOpen(false)}
-                aria-label="Collapse setup panel"
-                title="Collapse setup"
-              >
-                ◂
-              </button>
-            </div>
-          </div>
-
-          <label>Mode</label>
+    <section className="calibration-layout">
+      <div className="calibration-controls results-card" aria-label="Calibration view controls">
+        <div>
+          <span className="control-label">View</span>
           <div className="mode-switch-row">
             <button
               type="button"
@@ -469,10 +492,10 @@ export function ComparePage() {
               Compare versions
             </button>
           </div>
+        </div>
 
-          {mode === 'single' ? (
-            <>
-              <label htmlFor="single-version">Version</label>
+        {mode === 'single' ? (
+            <label htmlFor="single-version"><span className="control-label">Model version</span>
               <select id="single-version" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)}>
                 {versions.map((version) => (
                   <option key={version} value={version}>
@@ -480,10 +503,10 @@ export function ComparePage() {
                   </option>
                 ))}
               </select>
-            </>
+            </label>
           ) : (
             <>
-              <label htmlFor="left-version">Left version</label>
+              <label htmlFor="left-version"><span className="control-label">From version</span>
               <select id="left-version" value={left} onChange={(event) => setLeft(event.target.value)}>
                 {versions.map((version) => (
                   <option key={version} value={version}>
@@ -491,8 +514,9 @@ export function ComparePage() {
                   </option>
                 ))}
               </select>
+              </label>
 
-              <label htmlFor="right-version">Right version</label>
+              <label htmlFor="right-version"><span className="control-label">To version</span>
               <select id="right-version" value={right} onChange={(event) => setRight(event.target.value)}>
                 {versions.map((version) => (
                   <option key={version} value={version}>
@@ -500,9 +524,31 @@ export function ComparePage() {
                   </option>
                 ))}
               </select>
+              </label>
             </>
           )}
+      </div>
 
+      <div className="compare-results">
+        <section className="summary-panel calibration-introduction">
+          <div>
+            <h2>Calibration assumptions</h2>
+            <p>Understand the selected model’s economic assumptions, the evidence used to set them, and why they matter for policy analysis.</p>
+          </div>
+          {validationVersion && (
+            <Link className="secondary-button calibration-validation-link" to={`/validation?version=${encodeURIComponent(validationVersion)}&evidenceYear=${validationEvidenceYear}`}>
+              View validation evidence
+            </Link>
+          )}
+        </section>
+
+        <CollapsibleSection
+          title="Filter assumptions"
+          defaultOpen={false}
+          summary={`${selectedIds.length} of ${catalog.length} selected`}
+          className="calibration-filter-disclosure"
+          bodyClassName="calibration-filter-body"
+        >
           <label htmlFor="search-params">Find parameters</label>
           <input
             id="search-params"
@@ -510,55 +556,12 @@ export function ComparePage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-
-          <CollapsibleSection
-            title="Parameter filters"
-            defaultOpen={false}
-            summary={`${selectedIds.length} selected`}
-            className="compare-filter-disclosure"
-            bodyClassName="compare-filter-disclosure-body"
-          >
             <button type="button" className="secondary-button" onClick={toggleAll}>
               {selectedIds.length === catalog.length ? 'Clear all' : 'Select all'}
             </button>
 
             <GroupedCheckboxSections sections={setupSections} onToggle={toggleId} />
-          </CollapsibleSection>
-        </aside>
-      ) : (
-        <button
-          type="button"
-          className="setup-rail-toggle"
-          onClick={() => setIsSetupOpen(true)}
-          aria-label="Open workspace setup"
-          title="Open workspace setup"
-        >
-          <svg viewBox="0 0 24 24" role="img" aria-hidden="true" focusable="false">
-            <path
-              d="M10.255 4.18806C9.84269 5.17755 8.68655 5.62456 7.71327 5.17535C6.10289 4.4321 4.4321 6.10289 5.17535 7.71327C5.62456 8.68655 5.17755 9.84269 4.18806 10.255C2.63693 10.9013 2.63693 13.0987 4.18806 13.745C5.17755 14.1573 5.62456 15.3135 5.17535 16.2867C4.4321 17.8971 6.10289 19.5679 7.71327 18.8246C8.68655 18.3754 9.84269 18.8224 10.255 19.8119C10.9013 21.3631 13.0987 21.3631 13.745 19.8119C14.1573 18.8224 15.3135 18.3754 16.2867 18.8246C17.8971 19.5679 19.5679 17.8971 18.8246 16.2867C18.3754 15.3135 18.8224 14.1573 19.8119 13.745C21.3631 13.0987 21.3631 10.9013 19.8119 10.255C18.8224 9.84269 18.3754 8.68655 18.8246 7.71327C19.5679 6.10289 17.8971 4.4321 16.2867 5.17535C15.3135 5.62456 14.1573 5.17755 13.745 4.18806C13.0987 2.63693 10.9013 2.63693 10.255 4.18806Z"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M15 12C15 13.6569 13.6569 15 12 15C10.3431 15 9 13.6569 9 12C9 10.3431 10.3431 9 12 9C13.6569 9 15 10.3431 15 12Z"
-              stroke="currentColor"
-              strokeWidth="2"
-            />
-          </svg>
-        </button>
-      )}
-
-      <div className="compare-results">
-        <section className="summary-panel">
-          <h2>Parameter Calibration Workspace</h2>
-          <p>
-            This page exists to visualize calibrated model parameters and to track iterative project progress as inputs are
-            refined over versions. Single-version mode is the default for reviewing the current state; compare mode is
-            available when you need version-to-version deltas.
-          </p>
-        </section>
+        </CollapsibleSection>
 
         <header className="results-head">
           <h2>
@@ -573,9 +576,22 @@ export function ComparePage() {
               {selectedVersionTags}
             </div>
           )}
-          <p>Explore how the model's assumptions have changed over time and where each update came from.</p>
+          <p>{mode === 'single' ? 'Charts show the assumptions used by this model. Plain-language notes explain their economic and policy relevance.' : 'Compare exact assumptions, deltas, and provenance across any two historical versions.'}</p>
 
-          <div className="change-filter-row">
+          {mode === 'single' && compareData && (
+            <div className="calibration-overview-grid">
+              <div><span>Status</span><strong>{inProgressSet.has(selectedVersion) ? 'In progress' : 'Stable'}</strong></div>
+              <div><span>Calibrated areas</span><strong>{overviewItems.length}</strong></div>
+              <div><span>Economic themes</span><strong>{GROUP_ORDER.length}</strong></div>
+              <div><span>Documented datasets</span><strong>{documentedDatasets.length}</strong></div>
+              <div className="calibration-overview-wide"><span>Evidence-year coverage</span><strong>{evidenceYears.length ? evidenceYears.join(', ') : 'Not documented'}</strong></div>
+            </div>
+          )}
+          {mode === 'single' && (
+            <p className="calibration-validation-note"><strong>Calibration is not validation.</strong> Calibration sets model assumptions from documented evidence; Validation separately tests simulated outcomes against independent evidence. Dataset coverage is descriptive, not a confidence or validation score.</p>
+          )}
+
+          {mode === 'compare' && <div className="change-filter-row">
             <span>Filter:</span>
             <button
               type="button"
@@ -605,7 +621,7 @@ export function ComparePage() {
                 shownCount
               )}
             </strong>
-          </div>
+          </div>}
           {isRefreshingComparedItems && (
             <LoadingSkeleton as="span" className="loading-skeleton-pill compare-refresh-pill" ariaLabel="Refreshing parameter comparison" />
           )}
@@ -649,10 +665,10 @@ export function ComparePage() {
                     <span className="result-group-title">
                       {open ? '▾' : '▸'} {groupName}
                     </span>
-                    <span className="result-group-counts">
+                    {mode === 'compare' && <span className="result-group-counts">
                       <span className="unchanged">No change: {counts.unchanged}</span>
                       <span className="updated">Updated: {counts.updated}</span>
-                    </span>
+                    </span>}
                   </button>
 
                   {open && (

@@ -336,7 +336,10 @@ export function useExperimentRunController({
     let retryTimer: number | undefined;
 
     const load = async () => {
-      const loadedOptions = await refreshOptions();
+      // A "Use this model" hand-off from Validation arrives as ?baseline=<version>. Honour it once
+      // on mount so the analyst returns to the form with the model they chose already selected.
+      const handedOffBaseline = new URLSearchParams(window.location.search).get('baseline')?.trim();
+      const loadedOptions = await refreshOptions(handedOffBaseline || undefined);
       if (cancelled) {
         return;
       }
