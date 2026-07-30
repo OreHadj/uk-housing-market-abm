@@ -9,7 +9,7 @@ export const SETTING_HELP = {
   basePolicy: 'The real-world policy regime every untouched setting is held at, and that results are compared against.',
   optionalExperimentTitle: 'Short label used to identify this experiment in results and logs.',
   optionalRunTitle: 'Short label used to identify this run in results and logs.',
-  calibrationParameterVersion: 'Baseline model inputs used before manual overrides or sensitivity sampling.',
+  calibrationParameterVersion: 'The calibrated model build the run uses: the estimated and fitted behavioural inputs, selected on validation evidence rather than as a policy choice. Change it only to reproduce an earlier analysis, or to check whether a result holds on another model version.',
   minValue: 'Lowest sampled value for the selected policy instrument.',
   maxValue: 'Highest sampled value for the selected policy instrument.',
   sampleCount:

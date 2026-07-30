@@ -115,7 +115,17 @@ import {
   validateTrustedDesktopIpcSender,
   type DesktopFrameLike
 } from '../shared/desktopSecurity.js';
-import { DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../shared/policyCatalogue.js';
+import { CENTRAL_BANK_POLICY_KEYS, DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../shared/policyCatalogue.js';
+import { CENTRAL_BANK_POLICY_DISPLAY } from '../shared/policyDisplay.js';
+import {
+  INSTRUMENT_POLICY_KEYS,
+  POLICY_INSTRUMENTS,
+  deriveChangedPolicyKeys,
+  deriveVisibleInstruments,
+  describeScenarioPolicy,
+  findPolicyInstrument,
+  instrumentForPolicyKey
+} from '../src/lib/manualScenarioPolicy.js';
 import {
   KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
@@ -195,6 +205,21 @@ function sumBinnedDensityMass(rows: number[][]): number {
 
 function assertClose(actual: number, expected: number, tolerance: number, message: string): void {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${message}: expected ${expected}, got ${actual}`);
+}
+
+/**
+ * Mirrors applyBasePolicyToFormValues in useExperimentRunController: switching the baseline policy
+ * rewrites every known policy key to the new regime's value.
+ */
+function applyBasePolicyToFormValuesForTest(
+  currentValues: Record<string, string>,
+  baseValues: Record<string, number>
+): Record<string, string> {
+  const next = { ...currentValues };
+  for (const [key, value] of Object.entries(baseValues)) {
+    next[key] = String(value);
+  }
+  return next;
 }
 
 function visibleText(markup: string): string {
@@ -5550,24 +5575,224 @@ try {
     manualSetupMarkup.includes('setting-info-trigger') && sensitivitySetupMarkup.includes('setting-info-trigger'),
     'Expected manual and sensitivity setup controls to render shared info indicators'
   );
+  const manualSetupText = visibleText(manualSetupMarkup);
+  // --- Four-section structure ---------------------------------------------------------------
   assert.ok(
-    visibleText(manualSetupMarkup).includes('Scenario details') &&
-      visibleText(manualSetupMarkup).includes('Policy change') &&
-      visibleText(manualSetupMarkup).includes('Benchmark') &&
-      visibleText(manualSetupMarkup).includes('Loan-to-value restriction') &&
-      visibleText(manualSetupMarkup).includes('Loan-to-income flow restriction'),
-    'Expected manual setup to render the guided scenario-builder identity and policy choices'
+    manualSetupText.includes('Scenario details') &&
+      manualSetupText.includes('Model baseline') &&
+      manualSetupText.includes('Policy change') &&
+      manualSetupText.includes('Advanced simulation settings'),
+    'Expected the manual scenario form to present Scenario details, Model baseline, Policy change and Advanced simulation settings'
   );
   assert.ok(
-    manualSetupMarkup.includes('role="radiogroup"') &&
-      manualSetupMarkup.includes('name="policy-type"') &&
-      manualSetupMarkup.includes('<details class="scenario-advanced">') &&
-      visibleText(manualSetupMarkup).includes('Advanced simulation settings'),
-    'Expected policy choices to be semantic radio controls and technical settings to be disclosed progressively'
+    manualSetupMarkup.indexOf('model-baseline-heading') < manualSetupMarkup.indexOf('policy-change-heading') &&
+      manualSetupMarkup.indexOf('policy-change-heading') < manualSetupMarkup.indexOf('scenario-advanced-toggle'),
+    'Expected the four sections to appear in order: details, baseline, policy change, advanced'
   );
+
+  // --- Model baseline owns calibration and the baseline policy regime -----------------------
+  const modelBaselineBlock = manualSetupMarkup.slice(
+    manualSetupMarkup.indexOf('model-baseline-heading'),
+    manualSetupMarkup.indexOf('policy-change-heading')
+  );
+  assert.ok(
+    visibleText(modelBaselineBlock).includes('Calibration version') &&
+      visibleText(modelBaselineBlock).includes('Baseline policy regime'),
+    'Expected calibration version and baseline policy regime to sit together under Model baseline'
+  );
+  assert.ok(
+    visibleText(modelBaselineBlock).includes('calibration version is the model build itself') &&
+      visibleText(modelBaselineBlock).includes('sets the starting value of every policy setting'),
+    'Expected Model baseline to explain the difference between calibration inputs and starting policy values'
+  );
+
+  // --- Policy change exposes all six instrument choices ------------------------------------
+  assert.ok(
+    manualSetupMarkup.includes('role="group"') && manualSetupMarkup.includes('name="policy-benchmark"'),
+    'Expected policy choices to be a semantic multi-select group with a benchmark option'
+  );
+  for (const instrument of POLICY_INSTRUMENTS) {
+    assert.ok(
+      manualSetupMarkup.includes(`name="policy-${instrument.id}"`),
+      `Expected a Policy change choice for the ${instrument.label} instrument`
+    );
+    assert.ok(
+      manualSetupText.includes(instrument.label),
+      `Expected the ${instrument.label} instrument to be labelled in Policy change`
+    );
+  }
+  assert.ok(
+    manualSetupText.includes('No additional policy change'),
+    'Expected the benchmark choice to be offered as "No additional policy change"'
+  );
+
+  // --- All 11 policy parameters are reachable from Policy change ---------------------------
+  assert.equal(
+    INSTRUMENT_POLICY_KEYS.length,
+    CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected every Central Bank policy key to belong to a Policy change instrument'
+  );
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    assert.ok(
+      instrumentForPolicyKey(key) !== null,
+      `Expected policy parameter ${key} to be reachable from a Policy change instrument`
+    );
+  }
+  assert.equal(
+    new Set(POLICY_INSTRUMENTS.flatMap((instrument) => instrument.keys)).size,
+    CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected each policy parameter to belong to exactly one instrument, with no duplicates'
+  );
+
+  // --- Advanced simulation settings holds only technical controls --------------------------
+  const manualCardSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'),
+    'utf-8'
+  );
+  const advancedPanelSource = manualCardSource.slice(manualCardSource.indexOf('scenario-advanced-panel-heading'));
+  assert.ok(
+    !advancedPanelSource.includes('CentralBankPolicyInput') &&
+      !advancedPanelSource.includes('onBaselineChange') &&
+      !advancedPanelSource.includes('onBasePolicyChange'),
+    'Expected Advanced simulation settings to contain no calibration selection and no policy parameters'
+  );
+  assert.ok(
+    advancedPanelSource.includes('GeneralModelControl'),
+    'Expected Advanced simulation settings to keep the technical simulation controls'
+  );
+
+  // --- Benchmark and override behaviour ---------------------------------------------------
+  const basePolicy2024 = runOptions.basePolicies.find((policy) => policy.id === '2024');
+  assert.ok(basePolicy2024, 'Expected a 2024 base policy option for the policy-change behaviour checks');
+  const allPolicyKeys = new Set<string>(CENTRAL_BANK_POLICY_KEYS);
+  const baselineFormValues: Record<string, string> = {};
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    baselineFormValues[key] = String(basePolicy2024.values[key]);
+  }
+
+  assert.equal(
+    deriveChangedPolicyKeys(baselineFormValues, basePolicy2024.values, allPolicyKeys).size,
+    0,
+    'Expected the benchmark to be active only when every policy parameter equals the baseline value'
+  );
+
+  // Changing any single parameter of any instrument must mark the scenario as changed, and reveal
+  // that instrument even when it was never ticked.
+  for (const instrument of POLICY_INSTRUMENTS) {
+    for (const key of instrument.keys) {
+      const nudged = { ...baselineFormValues, [key]: String(Number(basePolicy2024.values[key]) + 0.01) };
+      const changed = deriveChangedPolicyKeys(nudged, basePolicy2024.values, allPolicyKeys);
+      assert.deepEqual([...changed], [key], `Expected changing ${key} to mark exactly that parameter as changed`);
+      assert.ok(
+        deriveVisibleInstruments(new Set(), changed).has(instrument.id),
+        `Expected a changed ${key} to reveal the ${instrument.label} instrument rather than hide it`
+      );
+      assert.ok(
+        describeScenarioPolicy(changed).includes(instrument.label),
+        `Expected the scenario summary to name the ${instrument.label} instrument`
+      );
+    }
+  }
+
+  // An empty or half-typed override is not the benchmark, and cannot be hidden.
+  const emptyOverride = { ...baselineFormValues, CENTRAL_BANK_ICR_HARD_MIN: '' };
+  const emptyChanged = deriveChangedPolicyKeys(emptyOverride, basePolicy2024.values, allPolicyKeys);
+  assert.deepEqual([...emptyChanged], ['CENTRAL_BANK_ICR_HARD_MIN'], 'Expected an emptied policy field to count as changed');
+  assert.ok(
+    deriveVisibleInstruments(new Set(), emptyChanged).has('icr'),
+    'Expected an emptied policy field to keep its instrument on screen'
+  );
+
+  // Turning an instrument off resets its own parameters and nothing else.
+  const ltiInstrument = findPolicyInstrument('lti');
+  assert.ok(ltiInstrument, 'Expected an LTI flow limits instrument');
+  const mixedOverrides: Record<string, string> = {
+    ...baselineFormValues,
+    CENTRAL_BANK_LTI_SOFT_MAX_FTB: '4',
+    CENTRAL_BANK_LTV_HARD_MAX_HM: '0.8'
+  };
+  const afterLtiReset = { ...mixedOverrides };
+  for (const key of ltiInstrument.keys) {
+    afterLtiReset[key] = String(basePolicy2024.values[key]);
+  }
+  assert.deepEqual(
+    [...deriveChangedPolicyKeys(afterLtiReset, basePolicy2024.values, allPolicyKeys)],
+    ['CENTRAL_BANK_LTV_HARD_MAX_HM'],
+    'Expected turning off an instrument to reset only its own parameters'
+  );
+
+  // Selecting the benchmark resets all 11 policy parameters.
+  const afterBenchmarkReset = { ...mixedOverrides };
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    afterBenchmarkReset[key] = String(basePolicy2024.values[key]);
+  }
+  assert.equal(
+    deriveChangedPolicyKeys(afterBenchmarkReset, basePolicy2024.values, allPolicyKeys).size,
+    0,
+    'Expected selecting the benchmark to reset every policy parameter to the baseline'
+  );
+
+  // Switching the baseline policy cannot retain a hidden stale override: the run controller rewrites
+  // every policy value, so the same form values are re-measured against the new baseline.
+  const basePolicy2011 = runOptions.basePolicies.find((policy) => policy.id === '2011');
+  assert.ok(basePolicy2011, 'Expected a 2011 base policy option');
+  const switched = applyBasePolicyToFormValuesForTest(mixedOverrides, basePolicy2011.values);
+  assert.equal(
+    deriveChangedPolicyKeys(switched, basePolicy2011.values, allPolicyKeys).size,
+    0,
+    'Expected a base-policy switch to leave no stale policy override behind'
+  );
+  assert.ok(
+    manualCardSource.includes('}, [basePolicy]);'),
+    'Expected the card to reconcile its instrument selection when the baseline policy changes'
+  );
+
+  // Combined instruments are all described, not just LTV and LTI.
+  const combined = deriveChangedPolicyKeys(
+    {
+      ...baselineFormValues,
+      CENTRAL_BANK_INITIAL_BASE_RATE: '0.03',
+      CENTRAL_BANK_LTV_HARD_MAX_FTB: '0.9',
+      CENTRAL_BANK_LTI_SOFT_MAX_FTB: '4',
+      CENTRAL_BANK_AFFORDABILITY_HARD_MAX: '0.35',
+      CENTRAL_BANK_ICR_HARD_MIN: '1.25'
+    },
+    basePolicy2024.values,
+    allPolicyKeys
+  );
+  const combinedSentence = describeScenarioPolicy(combined);
+  for (const instrument of POLICY_INSTRUMENTS) {
+    assert.ok(
+      combinedSentence.includes(instrument.label),
+      `Expected a combined-instrument summary to mention ${instrument.label}`
+    );
+  }
+  assert.equal(
+    deriveVisibleInstruments(new Set(), combined).size,
+    POLICY_INSTRUMENTS.length,
+    'Expected every changed instrument to be revealed when instruments are combined'
+  );
+
+  // --- Keyboard and narrow-viewport behaviour ---------------------------------------------
+  assert.ok(
+    !manualSetupMarkup.includes('tabindex="-1"') &&
+      manualSetupMarkup.includes('aria-controls="scenario-advanced-panel"') &&
+      manualSetupMarkup.includes('aria-expanded='),
+    'Expected the advanced disclosure to be a keyboard-operable button wired to its panel'
+  );
+  assert.ok(
+    (manualSetupMarkup.match(/aria-labelledby="/g) ?? []).length >= 4,
+    'Expected each form section to be programmatically labelled for assistive technology'
+  );
+  const dashboardStyles = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
+  assert.ok(
+    dashboardStyles.includes('.scenario-instrument-panel .scenario-fields-grid'),
+    'Expected the instrument field grid to collapse to a single column on narrow viewports'
+  );
+
   assert.ok(
     manualSetupMarkup.includes('class="scenario-summary"') &&
-      visibleText(manualSetupMarkup).includes('This scenario keeps the selected benchmark policy unchanged.'),
+      manualSetupText.includes('This scenario runs the selected baseline policy without an additional policy change.'),
     'Expected manual setup to render a live plain-English benchmark summary by default'
   );
   const manualRunSetupPanelSource = fs.readFileSync(
@@ -5586,15 +5811,78 @@ try {
   );
   assert.ok(
     manualRunSetupCardSource.includes('const [advancedOpen, setAdvancedOpen] = useState(false);') &&
-      manualRunSetupCardSource.includes('open={advancedOpen}') &&
-      manualRunSetupCardSource.includes('setAdvancedOpen(event.currentTarget.open)'),
-    'Expected advanced simulation settings to preserve disclosure state across option refreshes'
+      manualRunSetupCardSource.includes('aria-expanded={advancedOpen}') &&
+      manualRunSetupCardSource.includes('setAdvancedOpen((open) => !open)') &&
+      manualRunSetupCardSource.includes('{advancedOpen && ('),
+    'Expected advanced simulation settings to hold their disclosure state in component state, so it survives option refreshes'
   );
   assert.ok(
-    visibleText(manualSetupMarkup).includes('Initial base rate') &&
-      visibleText(sensitivitySetupMarkup).includes('Sensitivity policy package') &&
-      visibleText(sensitivitySetupMarkup).includes('Base policy'),
+    manualSetupText.includes('Calibration version') &&
+      manualSetupText.includes('Baseline policy regime') &&
+      visibleText(sensitivitySetupMarkup).includes('Policy instrument to vary') &&
+      visibleText(sensitivitySetupMarkup).includes('Baseline policy'),
     'Expected experiment setup controls to keep user-facing labels visible'
+  );
+
+  // Rendering with every policy value moved off its baseline reveals all instruments without any
+  // interaction, so the DOM can be checked for all 11 policy fields — not just the data model.
+  const overriddenFormValues: Record<string, string | boolean> = { ...defaultExperimentFormValues };
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    overriddenFormValues[key] = String(Number(basePolicy2024.values[key]) + 0.01);
+  }
+  const manualSetupAllInstrumentsMarkup = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(ManualRunSetupCard, {
+        formDisabled: false,
+        submissionDisabled: false,
+        submissionDisabledReason: '',
+        isLoadingOptions: false,
+        selectedBaseline: runOptions.requestedBaseline,
+        onBaselineChange: noop,
+        basePolicies: runOptions.basePolicies,
+        basePolicy: '2024',
+        onBasePolicyChange: noop,
+        snapshots: runOptions.snapshots,
+        title: '',
+        onTitleChange: noop,
+        parameters: runOptions.parameters,
+        policyParameters,
+        formValues: overriddenFormValues,
+        onFormValueChange: noop,
+        maxWorkers: '1',
+        onMaxWorkersChange: noop,
+        warnings: [],
+        isSubmitting: false,
+        manualSubmissionLockedBySensitivity: false,
+        lockMessage: null,
+        onSubmit: noop
+      })
+    )
+  );
+  const allInstrumentsText = visibleText(manualSetupAllInstrumentsMarkup);
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    const label = CENTRAL_BANK_POLICY_DISPLAY[key]?.label;
+    assert.ok(label, `Expected a display label for policy key ${key}`);
+    assert.ok(
+      allInstrumentsText.includes(label),
+      `Expected policy field "${label}" to be rendered under Policy change`
+    );
+  }
+  for (const instrument of POLICY_INSTRUMENTS) {
+    assert.ok(
+      manualSetupAllInstrumentsMarkup.includes(`instrument-${instrument.id}-heading`),
+      `Expected the ${instrument.label} instrument panel to be revealed by a changed value`
+    );
+  }
+  assert.ok(
+    (allInstrumentsText.match(/Override/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected every overridden policy field to be marked as an override against its baseline value'
+  );
+  assert.ok(
+    !allInstrumentsText.includes('This scenario runs the selected baseline policy without an additional policy change.'),
+    'Expected a scenario with overrides not to describe itself as the unchanged baseline'
   );
   assert.equal(
     /CENTRAL_BANK_|<small>SEED<\/small>|<small>N_STEPS<\/small>/.test(
@@ -8239,8 +8527,9 @@ assert.ok(
   'App should expose Sensitivity as a separate primary destination'
 );
 assert.ok(
-  appSource.includes('to="/compare"') && appSource.includes('Compare results'),
-  'App should expose the semantic Compare results destination in the header'
+  appSource.includes('<Route path="/compare" element={<LegacyCompareRedirect />} />') &&
+    !appSource.includes('>\n              Compare results\n            </NavLink>'),
+  'App should redirect the retired /compare alias into the scenarios workspace rather than offering it as a destination'
 );
 assert.ok(
   appSource.includes('to="/calibration"') && appSource.includes('Calibration'),
@@ -8279,12 +8568,12 @@ assert.ok(
 const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsPage.tsx'), 'utf-8');
 assert.ok(
   experimentsPageSource.includes("heading: 'Policy scenarios'") &&
-    experimentsPageSource.includes("heading: 'Sensitivity analyses'") &&
-    experimentsPageSource.includes("action: 'Create policy scenario'") &&
-    experimentsPageSource.includes("action: 'Create sensitivity analysis'") &&
-    experimentsPageSource.includes("resultsAction: 'View completed scenario results'") &&
-    experimentsPageSource.includes("resultsAction: 'View sensitivity results'"),
-  'Scenario and sensitivity workspaces should have distinct headings, creation actions, and result-browsing actions'
+    experimentsPageSource.includes("heading: 'Sensitivity analysis'") &&
+    experimentsPageSource.includes("createAction: 'Create policy scenario'") &&
+    experimentsPageSource.includes("createAction: 'New sensitivity analysis'") &&
+    experimentsPageSource.includes("modalHeading: 'Create policy scenario'") &&
+    experimentsPageSource.includes("modalHeading: 'Create sensitivity analysis'"),
+  'Scenario and sensitivity workspaces should have distinct headings and creation actions'
 );
 assert.ok(
   !experimentsPageSource.includes('Manual Parameters') &&
@@ -8322,6 +8611,8 @@ const serviceSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/l
 const apiSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/lib/api.ts'), 'utf-8');
 const validationVersionSelectorIndex = validationPageSource.indexOf('<span>Version</span>');
 const validationYearSelectorIndex = validationPageSource.indexOf('<span>Validation Year</span>');
+// Retained temporarily as a readable record of the superseded table-first contract.
+if (false) {
 assert.ok(
   !validationPageSource.includes('three_lines'),
   'Validation page should no longer support the three-line mode'
@@ -8566,6 +8857,70 @@ assert.ok(
     validationPageSource.includes('onClick={handleChartClick}'),
   'Validation page should wire chart point clicks to 2024 and 2011 version-year selection'
 );
+}
+assert.ok(
+  validationPageSource.includes('Comparative validation loss — lower is better') &&
+    validationPageSource.includes('Composite loss has no standalone statistical interpretation') &&
+    validationPageSource.includes('Average seeds inside target bands') &&
+    validationPageSource.includes('Largest validation gaps'),
+  'Validation page should lead with the selected-model diagnostic scorecard'
+);
+assert.ok(
+  validationPageSource.includes('Models tested against 2024 UK evidence') &&
+    validationPageSource.includes('2011-calibrated models tested against 2011 UK evidence') &&
+    validationPageSource.includes('This is not a continuation of the 2024 timeline') &&
+    validationPageSource.includes("handleChartClick(2024)") &&
+    validationPageSource.includes("handleChartClick(2011)"),
+  'Validation page should render separate clickable evidence-year trends'
+);
+assert.ok(
+  validationPageSource.includes('VALIDATION_POLICY_THEMES') &&
+    validationPageSource.includes('Market activity and lending') &&
+    validationPageSource.includes('Credit and affordability') &&
+    validationPageSource.includes('Prices and cycles') &&
+    validationPageSource.includes('Tenure and rental market') &&
+    validationPageSource.includes('Distributional realism'),
+  'Validation page should group all outcomes into fixed policy themes'
+);
+assert.ok(
+  validationPageSource.includes('validation-target-band') &&
+    validationPageSource.includes('validation-iqr') &&
+    validationPageSource.includes('validation-mean-marker') &&
+    validationPageSource.includes('validation-source-marker') &&
+    validationPageSource.includes('calculateValidationRangePositions'),
+  'Validation metric rows should distinguish target, IQR, mean, and optional source markers'
+);
+assert.ok(
+  validationPageSource.includes('<details className={`validation-metric-row') &&
+    validationPageSource.includes('Secondary cross-year comparison') &&
+    validationPageSource.includes('Technical results table') &&
+    validationPageSource.includes('Validation methodology') &&
+    validationPageSource.includes('How validation loss is calculated'),
+  'Validation page should use semantic progressive disclosure and keep cross-year deltas secondary'
+);
+assert.ok(
+  validationPageSource.includes('<th>Metric</th><th>Empirical target</th><th>Simulation</th><th>Seeds in band</th><th>Loss</th><th>Details</th>') &&
+    validationPageSource.includes('validation-table-detail-disclosure') &&
+    validationPageSource.includes('Loss change vs original 2011 benchmark') &&
+    validationPageSource.includes('Sources and provenance') &&
+    !validationPageSource.includes('±25% context range') &&
+    !validationPageSource.includes('<th>Loss delta % vs v0 2011</th>'),
+  'Validation technical table should use six compact columns and disclose secondary audit fields on demand'
+);
+assert.ok(
+  validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
+    validationPageSource.includes('first 500 steps are discarded') &&
+    validationPageSource.includes('Experiments page do not update'),
+  'Validation page should state the fixed validation protocol and experiment isolation'
+);
+assert.ok(
+  validationPageSource.includes('buildDeduplicatedSourceReferences') &&
+    validationPageSource.includes('reference.sourceDocumentPath') &&
+    validationPageSource.includes('reference.sourcePage') &&
+    validationPageSource.includes('reference.sourceTable') &&
+    validationPageSource.includes('reference.label'),
+  'Validation page should deduplicate provenance by document, page, table, and label'
+);
 assert.ok(
   eChartSource.includes('onClick?: (params: unknown) => void;') &&
     eChartSource.includes("instance.on('click', clickHandler)") &&
@@ -8656,8 +9011,9 @@ assert.ok(
   'Home page should clearly disclaim forecast, official projection, and recommendation interpretations'
 );
 assert.ok(
-  homePageSource.includes('to="/compare"') && homePageSource.includes('to="/calibration"'),
-  'Home page should provide lower-emphasis links to comparison and the preserved Calibration page'
+  homePageSource.includes('to="/scenarios">or compare existing results') &&
+    homePageSource.includes("to: '/calibration'"),
+  'Home page should provide lower-emphasis links to the scenarios workspace and the preserved Calibration page'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&

@@ -11,17 +11,22 @@ import { getParameterHelp, type ExperimentControlMode } from './settingHelp';
 
 type FormValue = string | boolean;
 
-const AFFORDABILITY_KEY = 'CENTRAL_BANK_AFFORDABILITY_HARD_MAX';
-const ICR_KEY = 'CENTRAL_BANK_ICR_HARD_MIN';
-const BASE_RATE_KEY = 'CENTRAL_BANK_INITIAL_BASE_RATE';
-
-// The Central Bank fields that get the "Use base policy value" checkbox, with the unit each is shown
-// and edited in: base rate & affordability cap as a percentage (scale 100, "%"), ICR floor as a ratio
-// (scale 1, "×"). Every other Central Bank field falls back to the standard numeric input.
+// Every Central Bank policy field gets the "Use base policy value" checkbox, with the unit it is shown
+// and edited in. Rates, LTV caps, permitted lending shares and the affordability cap are stored as
+// fractions and shown as percentages (scale 100); LTI thresholds, the enforcement window and the ICR
+// floor are already in their display unit (scale 1).
 const POLICY_FIELD_UNITS: Record<string, { scale: number; suffix: string }> = {
-  [BASE_RATE_KEY]: { scale: 100, suffix: '%' },
-  [AFFORDABILITY_KEY]: { scale: 100, suffix: '%' },
-  [ICR_KEY]: { scale: 1, suffix: '×' }
+  CENTRAL_BANK_INITIAL_BASE_RATE: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTV_HARD_MAX_FTB: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTV_HARD_MAX_HM: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTV_HARD_MAX_BTL: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTI_SOFT_MAX_FTB: { scale: 1, suffix: '× income' },
+  CENTRAL_BANK_LTI_SOFT_MAX_HM: { scale: 1, suffix: '× income' },
+  CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_FTB: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_HM: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_LTI_MONTHS_TO_CHECK: { scale: 1, suffix: 'months' },
+  CENTRAL_BANK_AFFORDABILITY_HARD_MAX: { scale: 100, suffix: '%' },
+  CENTRAL_BANK_ICR_HARD_MIN: { scale: 1, suffix: '×' }
 };
 
 /** True for the Central Bank fields that get the "Use base policy value" checkbox treatment. */
@@ -31,6 +36,7 @@ export function isCentralBankSpecialField(key: string): boolean {
 
 interface PolicyValueFieldProps {
   parameter: ModelRunParameterDefinition;
+  label: string;
   value: FormValue | undefined;
   basePolicyValue: number | undefined;
   scale: number;
@@ -56,7 +62,7 @@ interface PolicyValueFieldProps {
  * returns to the checked state (the run controller already overwrites the stored value on a
  * base-policy switch, so any override is discarded there regardless).
  */
-function PolicyValueField({ parameter, value, basePolicyValue, scale, suffix, disabled, mode, onChange }: PolicyValueFieldProps) {
+function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suffix, disabled, mode, onChange }: PolicyValueFieldProps) {
   // Fall back to the current stored value if the base policy has no value for this key (not expected
   // for these fields, but keeps the control usable rather than blank).
   const baseFraction =
@@ -98,7 +104,7 @@ function PolicyValueField({ parameter, value, basePolicyValue, scale, suffix, di
 
   return (
     <div className="run-param-item cap-field">
-      <InfoLabel label={parameter.title} info={info} />
+      <InfoLabel label={label} info={info} />
       <label className="policy-value-toggle">
         <input
           type="checkbox"
@@ -115,7 +121,7 @@ function PolicyValueField({ parameter, value, basePolicyValue, scale, suffix, di
           className={useBasePolicy ? 'cap-value-input--locked' : undefined}
           value={useBasePolicy ? baseDisplay : editText}
           disabled={disabled || useBasePolicy}
-          aria-label={`${parameter.title} value`}
+          aria-label={`${label} value`}
           onChange={(event) => handleEdit(event.target.value)}
         />
         {suffix ? (
@@ -130,6 +136,8 @@ function PolicyValueField({ parameter, value, basePolicyValue, scale, suffix, di
 
 interface CentralBankPolicyInputProps {
   parameter: ModelRunParameterDefinition;
+  /** Display name for the field. Defaults to the parameter's own title. */
+  label?: string;
   value: FormValue | undefined;
   // The selected base policy's value for this parameter, carried through byte-exact when "Use base
   // policy value" is ticked.
@@ -147,6 +155,7 @@ interface CentralBankPolicyInputProps {
  */
 export function CentralBankPolicyInput({
   parameter,
+  label,
   value,
   basePolicyValue,
   executionDisabled,
@@ -158,6 +167,7 @@ export function CentralBankPolicyInput({
     return (
       <PolicyValueField
         parameter={parameter}
+        label={label ?? parameter.title}
         value={value}
         basePolicyValue={basePolicyValue}
         scale={units.scale}
