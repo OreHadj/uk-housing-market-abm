@@ -91,7 +91,7 @@ export function SensitivitySetupCard({
   onCancelActive
 }: SensitivitySetupCardProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const orderedSnapshots = orderExperimentModelOptions(snapshots);
+  const orderedSnapshots = orderExperimentModelOptions(snapshots, selectedBaseline);
   const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.version === selectedBaseline) ?? null;
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy) ?? null;
   const sampleValues = buildSensitivitySampleValues(selectedPackage, selectedBasePolicy, minValue, maxValue, sampleCount);
@@ -242,7 +242,7 @@ export function SensitivitySetupCard({
                   <div className="scenario-advanced-content">
                     <div className="scenario-fields-grid">
                       <label className="scenario-field">
-                        <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
+                        <InfoLabel label="Model" info={SETTING_HELP.calibrationParameterVersion} />
                         <select
                           value={selectedBaseline}
                           disabled={executionDisabled}
@@ -250,14 +250,12 @@ export function SensitivitySetupCard({
                         >
                           {orderedSnapshots.map((snapshot) => (
                             <option key={snapshot.version} value={snapshot.version}>
-                              {formatExperimentModelOption(snapshot, orderedSnapshots)}
+                              {formatExperimentModelOption(snapshot)}
                             </option>
                           ))}
                         </select>
                         {selectedSnapshot && (
-                          <p className="scenario-evidence-note">
-                            <strong>{selectedSnapshot.version}</strong> · {formatEvidenceNote(selectedSnapshot)}
-                          </p>
+                          <p className="scenario-evidence-note">{formatEvidenceNote(selectedSnapshot)}</p>
                         )}
                         <p className="scenario-field-links">
                           <Link
@@ -364,7 +362,7 @@ export function SensitivitySetupCard({
                 </div>
                 <div>
                   <dt>Model version</dt>
-                  <dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot, orderedSnapshots) : selectedBaseline}</dd>
+                  <dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline}</dd>
                 </div>
                 <div>
                   <dt>Simulation duration</dt>

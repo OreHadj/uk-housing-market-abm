@@ -16,11 +16,13 @@ import {
   isRetryableApiError
 } from '../lib/api';
 import {
-  buildVersionLabelState,
-  formatVersionOptionLabel,
-  getLatestStableVersion
-} from '../lib/versionLabels';
+  buildModelOptions,
+  formatModelName,
+  formatModelOptionLabel,
+  formatModelSubtitle
+} from '../lib/modelAnchors';
 import { BASELINE_COLOR, COMPARISON_COLOR } from '../lib/manualOverlayChartOption';
+import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 
 const DEFAULT_VALIDATION_TARGET_YEAR = 2024;
 
@@ -558,7 +560,13 @@ export function ValidationPage() {
   const requestedEvidenceYear = Number(searchParams.get('evidenceYear'));
   // Only offered when the analyst arrived from a setup form, so this reads as a return trip
   // rather than an unexplained call to action for someone browsing validation on its own.
-  const returnDestination = RETURN_DESTINATIONS[searchParams.get('from')?.trim() ?? ''] ?? null;
+  const returnSource = searchParams.get('from')?.trim() ?? '';
+  const draftId = returnSource === 'scenario' ? searchParams.get('draft')?.trim() ?? '' : '';
+  const isScenarioContext = Boolean(draftId && readScenarioDraft(draftId));
+  const scenarioReturnStep = searchParams.get('scenarioStep') === 'model-version' ? '&step=model-version' : '';
+  const returnDestination = returnSource === 'scenario'
+    ? (isScenarioContext ? RETURN_DESTINATIONS.scenario : null)
+    : RETURN_DESTINATIONS[returnSource] ?? null;
   const [overview, setOverview] = useState<ValidationOverviewPayload | null>(null);
   const [selectedVersion, setSelectedVersion] = useState(requestedVersion);
   const [selectedValidationTargetYear, setSelectedValidationTargetYear] = useState(
@@ -638,15 +646,13 @@ export function ValidationPage() {
   }, [comparisonVersion, overview, searchParams, selectedValidationTargetYear, selectedVersion, setSearchParams]);
 
   const summary = overview?.selectedSummary ?? null;
-  const latestStableVersion = useMemo(
-    () => getLatestStableVersion(overview?.availableVersions ?? [], inProgressVersions),
-    [overview, inProgressVersions]
-  );
   const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
-  const versionLabel = (version: string) =>
-    formatVersionOptionLabel(version, buildVersionLabelState(version, latestStableVersion, inProgressSet));
-  const orderedVersions = [...(overview?.availableVersions ?? [])].sort((left, right) =>
-    versionLabel(left).localeCompare(versionLabel(right))
+  const versionLabel = (version: string) => formatModelName(version);
+  // Selection is limited to the four named models; the trend charts below still plot every
+  // version, because that series is the recalibration trajectory rather than a set of choices.
+  const orderedVersions = useMemo(
+    () => buildModelOptions(overview?.availableVersions ?? [], selectedVersion, inProgressSet).map((option) => option.version),
+    [overview, selectedVersion, inProgressSet]
   );
   const scorecard = useMemo(() => buildValidationScorecard(summary?.metrics ?? []), [summary]);
   const decomposition = useMemo(() => buildValidationLossDecomposition(summary?.metrics ?? []), [summary]);
@@ -664,14 +670,8 @@ export function ValidationPage() {
     () => new Map((comparisonSummary?.metrics ?? []).map((metric) => [metric.metricId, metric])),
     [comparisonSummary]
   );
-  const chart2024 = useMemo(
-    () => (overview ? buildTrendOption(overview, 2024, versionLabel) : null),
-    [overview, latestStableVersion, inProgressVersions]
-  );
-  const chart2011 = useMemo(
-    () => (overview ? buildTrendOption(overview, 2011, versionLabel) : null),
-    [overview, latestStableVersion, inProgressVersions]
-  );
+  const chart2024 = useMemo(() => (overview ? buildTrendOption(overview, 2024, versionLabel) : null), [overview]);
+  const chart2011 = useMemo(() => (overview ? buildTrendOption(overview, 2011, versionLabel) : null), [overview]);
   const availableYears =
     overview?.availableValidationTargetYearsByVersion[selectedVersion] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
 
@@ -698,10 +698,11 @@ export function ValidationPage() {
   const pickerVersions = rankedVersions ? rankedVersions.map((entry) => entry.version) : orderedVersions;
   const pickerOptionLabel = (version: string) => {
     const ranked = rankedVersions?.find((entry) => entry.version === version);
-    if (!ranked) return versionLabel(version);
+    if (!ranked) return formatModelOptionLabel(version, { isInProgress: inProgressSet.has(version) });
     const deviation = ranked.deviationPercent === null ? 'no target' : `${formatDeviation(ranked.deviationPercent)} off`;
-    return `${version} — ${deviation}${ranked.status ? `, ${ranked.status}` : ''}`;
+    return `${formatModelName(version)} — ${deviation}${ranked.status ? `, ${ranked.status}` : ''}`;
   };
+  const evidenceContext = isScenarioContext ? `&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version` : '';
 
   const selectVersionAndValidationYear = (version: string, year: number) => {
     setSelectedVersion(version);
@@ -718,6 +719,21 @@ export function ValidationPage() {
 
   return (
     <section className="validation-layout">
+      {selectedVersion && returnDestination && (
+        <div className="validation-return-bar">
+          {isScenarioContext ? <>
+            <p>You are checking validation evidence for an unfinished policy scenario. Choose whether to keep its current model or use the model selected here.</p>
+            <div>
+              <Link className="secondary-button" to={`/calibration?mode=single&version=${encodeURIComponent(selectedVersion)}${evidenceContext}`}>View calibration assumptions</Link>
+              <Link className="secondary-button" to={`${returnDestination.path}?draft=${encodeURIComponent(draftId)}${scenarioReturnStep}`}>Return without changing model</Link>
+              <Link className="primary-button" onClick={() => updateScenarioDraftModel(draftId, selectedVersion)} to={`${returnDestination.path}?draft=${encodeURIComponent(draftId)}${scenarioReturnStep}`}>Use {formatModelName(selectedVersion)} and return to scenario</Link>
+            </div>
+          </> : <>
+            <p>Comparing models for your {returnDestination.noun}. Pick the one whose scores you trust, then take it back to the setup form.</p>
+            <Link className="primary-button" to={`${returnDestination.path}?baseline=${encodeURIComponent(selectedVersion)}`}>Use {selectedVersion} and return to setup</Link>
+          </>}
+        </div>
+      )}
       <article className="results-card validation-introduction">
         <h2>Validation</h2>
         <p>Compare the selected model with independent UK evidence, see which outcomes are credible or problematic, and check whether results hold across random seeds.</p>
@@ -726,10 +742,11 @@ export function ValidationPage() {
         </p>
         <div className="validation-page-selectors">
           <label className="validation-selector">
-            <span>Model version</span>
+            <span>Model</span>
             <select value={selectedVersion} onChange={(event) => handleVersionChange(event.target.value)}>
               {pickerVersions.map((version) => <option key={version} value={version}>{pickerOptionLabel(version)}</option>)}
             </select>
+            {selectedVersion && <small className="validation-selector-note">{formatModelSubtitle(selectedVersion)}</small>}
           </label>
           <label className="validation-selector">
             <span>Evidence year</span>
@@ -785,24 +802,10 @@ export function ValidationPage() {
         {comparisonSummary && (
           <Link
             className="secondary-button validation-calibration-link"
-            to={`/calibration?mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonSummary.version)}`}
+            to={`/calibration?mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonSummary.version)}${evidenceContext}`}
           >
             What differs between {selectedVersion} and {comparisonSummary.version}?
           </Link>
-        )}
-        {selectedVersion && returnDestination && (
-          <div className="validation-return-bar">
-            <p>
-              Comparing models for your {returnDestination.noun}. Pick the one whose scores you trust for the
-              indicators you care about, then take it back to the setup form.
-            </p>
-            <Link
-              className="primary-button"
-              to={`${returnDestination.path}?baseline=${encodeURIComponent(selectedVersion)}`}
-            >
-              Use {selectedVersion} and return to setup
-            </Link>
-          </div>
         )}
       </article>
 

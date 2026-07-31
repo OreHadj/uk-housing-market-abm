@@ -40,7 +40,8 @@ import {
   sortKpis
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
-import { buildResultsRunVersionLabelState } from '../../../lib/versionLabels';
+import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
+import { formatModelName } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
@@ -198,6 +199,13 @@ export function ManualResultsView({
     () => buildResultsRunVersionLabelState(comparisonRunId, versions, inProgressVersions),
     [comparisonRunId, inProgressVersions, versions]
   );
+  // Reference runs are named after the snapshot that produced them (`v5o3-output`), so they read
+  // as the model rather than as a raw id. User-titled runs keep their own title.
+  const formatRunOptionLabel = (run: { runId: string; title?: string | null }) => {
+    if (run.title) return `${run.title} — ${run.runId}`;
+    const version = extractVersionFromResultsRunId(run.runId);
+    return version ? `${formatModelName(version)} — ${run.runId}` : run.runId;
+  };
 
   useEffect(() => {
     // Don't canonicalise the URL selection until the runs list has loaded. While it is still
@@ -1066,7 +1074,7 @@ export function ManualResultsView({
                 >
                   {historyRuns.map((run) => (
                     <option key={run.runId} value={run.runId}>
-                      {run.title ? `${run.title} — ${run.runId}` : run.runId}
+                      {formatRunOptionLabel(run)}
                     </option>
                   ))}
                 </select>
@@ -1090,7 +1098,7 @@ export function ManualResultsView({
                       .filter((run) => run.runId !== baselineRunId)
                       .map((run) => (
                         <option key={run.runId} value={run.runId}>
-                          {run.title ? `${run.title} — ${run.runId}` : run.runId}
+                          {formatRunOptionLabel(run)}
                         </option>
                       ))}
                   </select>

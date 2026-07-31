@@ -9,6 +9,7 @@ import { SensitivityResultsView } from './view/SensitivityResultsView';
 export interface ExperimentRunRendererProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
+  initialScenarioStep?: number;
 }
 
 export interface ExperimentViewRendererProps {

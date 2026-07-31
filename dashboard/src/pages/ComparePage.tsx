@@ -6,13 +6,8 @@ import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
 import { GroupedCheckboxSections } from '../components/GroupedCheckboxSections';
 import { LoadingSkeleton, LoadingSkeletonGroup } from '../components/LoadingSkeleton';
-import {
-  buildVersionLabelState,
-  formatCalibrationVersionTitleLabel,
-  formatVersionOptionLabel,
-  getLatestStableVersion,
-  type VersionLabelKind
-} from '../lib/versionLabels';
+import { buildModelOptions, formatModelName, getDefaultModelVersion } from '../lib/modelAnchors';
+import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 
 const GROUP_ORDER: ParameterGroup[] = [
   'Bank & Credit Policy',
@@ -41,33 +36,11 @@ type ChangeFilter = 'all' | 'updated' | 'unchanged';
 type ViewMode = 'single' | 'compare';
 
 function getDefaultDisplayVersion(versions: string[], inProgressVersions: string[]): string {
-  return getLatestStableVersion(versions, inProgressVersions) || (versions[versions.length - 1] ?? '');
+  return getDefaultModelVersion(versions, inProgressVersions) || (versions[versions.length - 1] ?? '');
 }
 
 function getOriginalDisplayVersion(versions: string[]): string {
   return versions.includes('v0') ? 'v0' : (versions[0] ?? '');
-}
-
-function getVersionTagClassName(kind: VersionLabelKind): string {
-  switch (kind) {
-    case 'in_progress':
-      return 'status-pill-in-progress';
-    case 'latest':
-      return 'status-pill status-pill-latest';
-    case 'original':
-      return 'status-pill status-pill-original';
-  }
-}
-
-function getVersionTagText(prefix: string, version: string, kind: VersionLabelKind): string {
-  switch (kind) {
-    case 'in_progress':
-      return `${prefix} ${version} in progress`;
-    case 'latest':
-      return `${prefix} ${version} latest`;
-    case 'original':
-      return `${prefix} ${version} original`;
-  }
 }
 
 function groupCatalog(catalog: ParameterCardMeta[]) {
@@ -127,6 +100,9 @@ export function ComparePage() {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [changeFilter, setChangeFilter] = useState<ChangeFilter>('all');
   const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({});
+  const scenarioDraftId = searchParams.get('from') === 'scenario' ? searchParams.get('draft')?.trim() ?? '' : '';
+  const hasScenarioContext = Boolean(scenarioDraftId && readScenarioDraft(scenarioDraftId));
+  const scenarioReturnStep = searchParams.get('scenarioStep') === 'model-version' ? '&step=model-version' : '';
 
   useEffect(() => {
     let cancelled = false;
@@ -207,13 +183,16 @@ export function ComparePage() {
 
   useEffect(() => {
     if (!isBootstrapReady) return;
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
     next.set('mode', mode);
     if (mode === 'single') {
       if (selectedVersion) next.set('version', selectedVersion);
+      next.delete('left');
+      next.delete('right');
     } else {
       if (left) next.set('left', left);
       if (right) next.set('right', right);
+      next.delete('version');
     }
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
   }, [isBootstrapReady, left, mode, right, searchParams, selectedVersion, setSearchParams]);
@@ -427,25 +406,31 @@ export function ComparePage() {
   const isLoadingWithoutData = isBootstrapping || (isLoading && !hasComparedItems);
   const isRefreshingComparedItems = isLoading && hasComparedItems;
   const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
-  const latestStableVersion = useMemo(() => getLatestStableVersion(versions, inProgressVersions), [versions, inProgressVersions]);
-  const getVersionLabelState = (version: string) => buildVersionLabelState(version, latestStableVersion, inProgressSet);
-  const formatTitleLabel = (version: string) => formatCalibrationVersionTitleLabel(version, getVersionLabelState(version));
   const titleText =
     mode === 'single'
       ? selectedVersion
-        ? `Model parameters at ${formatTitleLabel(selectedVersion)}`
+        ? `Model parameters at ${formatModelName(selectedVersion)}`
         : ''
       : left && right
-        ? `${formatTitleLabel(left)} vs ${formatTitleLabel(right)}`
+        ? `${formatModelName(left)} vs ${formatModelName(right)}`
         : '';
   const isTitleLoading = isBootstrapping || titleText.length === 0;
-  const formatSelectLabel = (version: string) => formatVersionOptionLabel(version, getVersionLabelState(version));
+  // Only the four named models are offered; the selected version is passed so a deep link to an
+  // intermediate calibration step still renders as an option instead of silently resetting.
+  const singleVersionOptions = useMemo(
+    () => buildModelOptions(versions, selectedVersion, inProgressSet),
+    [versions, selectedVersion, inProgressSet]
+  );
+  const leftVersionOptions = useMemo(() => buildModelOptions(versions, left, inProgressSet), [versions, left, inProgressSet]);
+  const rightVersionOptions = useMemo(() => buildModelOptions(versions, right, inProgressSet), [versions, right, inProgressSet]);
   const renderVersionTags = (prefix: string, version: string) =>
-    getVersionLabelState(version).kinds.map((kind) => (
-      <span key={`${prefix}-${version}-${kind}`} className={getVersionTagClassName(kind)}>
-        {getVersionTagText(prefix, version, kind)}
-      </span>
-    ));
+    inProgressSet.has(version)
+      ? [
+          <span key={`${prefix}-${version}-in-progress`} className="status-pill-in-progress">
+            {`${prefix} ${version} in progress`}
+          </span>
+        ]
+      : [];
   const selectedVersionTags =
     mode === 'single'
       ? renderVersionTags('Version', selectedVersion)
@@ -470,9 +455,21 @@ export function ComparePage() {
   }, [documentedDatasets]);
   const validationVersion = mode === 'single' ? selectedVersion : right;
   const validationEvidenceYear = HISTORICAL_EVIDENCE_VERSIONS.has(validationVersion) ? 2011 : 2024;
+  const evidenceContext = hasScenarioContext ? `&from=scenario&draft=${encodeURIComponent(scenarioDraftId)}&scenarioStep=model-version` : '';
 
   return (
     <section className="calibration-layout">
+      {hasScenarioContext && validationVersion && (
+        <aside className="evidence-context-banner">
+          <p>You are checking calibration evidence for an unfinished policy scenario.{mode === 'compare' ? ' The To model is the candidate used by the return action.' : ''}</p>
+          <div>
+            <Link className="secondary-button" to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}${scenarioReturnStep}`}>Return without changing model</Link>
+            <Link className="primary-button" onClick={() => updateScenarioDraftModel(scenarioDraftId, validationVersion)} to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}${scenarioReturnStep}`}>
+              Use {formatModelName(validationVersion)} and return to scenario
+            </Link>
+          </div>
+        </aside>
+      )}
       <div className="calibration-controls results-card" aria-label="Calibration view controls">
         <div>
           <span className="control-label">View</span>
@@ -495,32 +492,32 @@ export function ComparePage() {
         </div>
 
         {mode === 'single' ? (
-            <label htmlFor="single-version"><span className="control-label">Model version</span>
+            <label htmlFor="single-version"><span className="control-label">Model</span>
               <select id="single-version" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)}>
-                {versions.map((version) => (
-                  <option key={version} value={version}>
-                    {formatSelectLabel(version)}
+                {singleVersionOptions.map((option) => (
+                  <option key={option.version} value={option.version}>
+                    {option.label}
                   </option>
                 ))}
               </select>
             </label>
           ) : (
             <>
-              <label htmlFor="left-version"><span className="control-label">From version</span>
+              <label htmlFor="left-version"><span className="control-label">From model</span>
               <select id="left-version" value={left} onChange={(event) => setLeft(event.target.value)}>
-                {versions.map((version) => (
-                  <option key={version} value={version}>
-                    {formatSelectLabel(version)}
+                {leftVersionOptions.map((option) => (
+                  <option key={option.version} value={option.version}>
+                    {option.label}
                   </option>
                 ))}
               </select>
               </label>
 
-              <label htmlFor="right-version"><span className="control-label">To version</span>
+              <label htmlFor="right-version"><span className="control-label">To model</span>
               <select id="right-version" value={right} onChange={(event) => setRight(event.target.value)}>
-                {versions.map((version) => (
-                  <option key={version} value={version}>
-                    {formatSelectLabel(version)}
+                {rightVersionOptions.map((option) => (
+                  <option key={option.version} value={option.version}>
+                    {option.label}
                   </option>
                 ))}
               </select>
@@ -533,10 +530,16 @@ export function ComparePage() {
         <section className="summary-panel calibration-introduction">
           <div>
             <h2>Calibration assumptions</h2>
-            <p>Understand the selected model’s economic assumptions, the evidence used to set them, and why they matter for policy analysis.</p>
+            <p>
+              The model combines inputs measured directly from UK data with behavioural parameters that cannot be
+              observed directly. Household demographics and incomes, for example, can be set using published
+              statistics, whereas parameters influencing decisions such as whether to rent or buy must be estimated
+              through calibration. This page documents the values used in the selected model version and the evidence
+              supporting them.
+            </p>
           </div>
           {validationVersion && (
-            <Link className="secondary-button calibration-validation-link" to={`/validation?version=${encodeURIComponent(validationVersion)}&evidenceYear=${validationEvidenceYear}`}>
+            <Link className="secondary-button calibration-validation-link" to={`/validation?version=${encodeURIComponent(validationVersion)}&evidenceYear=${validationEvidenceYear}${evidenceContext}`}>
               View validation evidence
             </Link>
           )}

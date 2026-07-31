@@ -33,6 +33,14 @@ import {
   type FormValue
 } from '../../../lib/experimentRunDefaults';
 import { useExperimentLogs } from '../../run-experiments/useExperimentLogs';
+import { POLICY_INSTRUMENTS, type PolicyInstrumentId } from '../../../lib/manualScenarioPolicy';
+import {
+  clearScenarioDraft,
+  readScenarioDraft,
+  restoreScenarioDraft,
+  writeScenarioDraft,
+  type ScenarioDraftV1
+} from '../../../lib/scenarioDraft';
 
 export interface ExperimentRunController {
   options: ModelRunOptionsPayload | null;
@@ -46,6 +54,10 @@ export interface ExperimentRunController {
   setManualMaxWorkers: (value: string) => void;
   maxWorkersCap?: number;
   warnings: ModelRunWarning[];
+  draftId: string;
+  draftNotice: string;
+  activeInstruments: ReadonlySet<PolicyInstrumentId>;
+  setActiveInstruments: (value: ReadonlySet<PolicyInstrumentId>) => void;
   sensitivityTitle: string;
   setSensitivityTitle: (value: string) => void;
   sensitivityBasePolicy: BasePolicyId;
@@ -104,6 +116,7 @@ interface UseExperimentRunControllerOptions {
   onOpenSensitivityResults: (experimentId: string) => void;
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
+  draftId?: string;
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -201,7 +214,8 @@ export function useExperimentRunController({
   onSelectedJobRefChange,
   onOpenManualResults,
   onOpenSensitivityResults,
-  followJobRef
+  followJobRef,
+  draftId = ''
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -212,6 +226,9 @@ export function useExperimentRunController({
   const [manualMaxWorkers, setManualMaxWorkers] = useState<string>('1');
   const [manualMaxWorkersTouched, setManualMaxWorkersTouched] = useState<boolean>(false);
   const [warnings, setWarnings] = useState<ModelRunWarning[]>([]);
+  const [activeInstruments, setActiveInstruments] = useState<ReadonlySet<PolicyInstrumentId>>(new Set());
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftNotice, setDraftNotice] = useState('');
 
   const [sensitivityTitle, setSensitivityTitle] = useState<string>('');
   const [sensitivityBasePolicy, setSensitivityBasePolicyState] = useState<BasePolicyId>(DEFAULT_EXPERIMENT_BASE_POLICY_ID);
@@ -277,7 +294,7 @@ export function useExperimentRunController({
     Boolean(options?.executionEnabled && selectedJobRef)
   );
 
-  const refreshOptions = async (requestedBaseline?: string): Promise<ModelRunOptionsPayload | null> => {
+  const refreshOptions = async (requestedBaseline?: string, hydrateDraft = false): Promise<ModelRunOptionsPayload | null> => {
     setPageError('');
     setIsLoadingOptions(true);
 
@@ -296,6 +313,30 @@ export function useExperimentRunController({
       setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap));
       setManualMaxWorkersTouched(false);
       setWarnings([]);
+      if (draftId && hydrateDraft) {
+        const stored = readScenarioDraft(draftId);
+        if (stored) {
+          const storedBasePolicyOption = payload.basePolicies.find((item) => item.id === stored.basePolicy) ?? defaultBasePolicyOption;
+          const draftInitialValues = toInitialFormValues(payload.parameters, storedBasePolicyOption);
+          const fallback: ScenarioDraftV1 = {
+            version: 1, title: '', calibratedModel: payload.requestedBaseline, basePolicy: defaultBasePolicy,
+            formValues: draftInitialValues, selectedInstruments: [],
+            maxWorkers: defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap),
+          };
+          const restored = restoreScenarioDraft(
+            stored, payload, fallback, new Set(POLICY_INSTRUMENTS.map((instrument) => instrument.id))
+          );
+          setSelectedBaseline(restored.draft.calibratedModel);
+          setBasePolicyState(restored.draft.basePolicy);
+          setTitle(restored.draft.title);
+          setFormValues(restored.draft.formValues);
+          setActiveInstruments(new Set(restored.draft.selectedInstruments));
+          setManualMaxWorkers(restored.draft.maxWorkers);
+          setManualMaxWorkersTouched(true);
+          setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
+        }
+      }
+      setDraftHydrated(true);
       return payload;
     } catch (error) {
       setPageError((error as Error).message);
@@ -304,6 +345,19 @@ export function useExperimentRunController({
       setIsLoadingOptions(false);
     }
   };
+
+  useEffect(() => {
+    if (!draftId || !draftHydrated || !options) return;
+    writeScenarioDraft(draftId, {
+      version: 1,
+      title,
+      calibratedModel: selectedBaseline,
+      basePolicy,
+      formValues,
+      selectedInstruments: [...activeInstruments],
+      maxWorkers: manualMaxWorkers
+    });
+  }, [activeInstruments, basePolicy, draftHydrated, draftId, formValues, manualMaxWorkers, options, selectedBaseline, title]);
 
   const refreshJobs = async () => {
     try {
@@ -339,7 +393,8 @@ export function useExperimentRunController({
       // A "Use this model" hand-off from Validation arrives as ?baseline=<version>. Honour it once
       // on mount so the analyst returns to the form with the model they chose already selected.
       const handedOffBaseline = new URLSearchParams(window.location.search).get('baseline')?.trim();
-      const loadedOptions = await refreshOptions(handedOffBaseline || undefined);
+      const savedDraftBaseline = draftId ? readScenarioDraft(draftId)?.calibratedModel : '';
+      const loadedOptions = await refreshOptions(handedOffBaseline || savedDraftBaseline || undefined, true);
       if (cancelled) {
         return;
       }
@@ -550,6 +605,7 @@ export function useExperimentRunController({
     }
     setBasePolicyState(nextBasePolicy);
     setFormValues((current) => applyBasePolicyToFormValues(options.parameters, option, current));
+    setActiveInstruments(new Set());
     setWarnings([]);
   };
 
@@ -638,6 +694,8 @@ export function useExperimentRunController({
         return;
       }
 
+      setDraftHydrated(false);
+      clearScenarioDraft(draftId);
       setWarnings([]);
       setTitle('');
       if (response.job) {
@@ -778,6 +836,10 @@ export function useExperimentRunController({
     setManualMaxWorkers: onManualMaxWorkersChange,
     maxWorkersCap: options?.sensitivityMaxWorkersCap,
     warnings,
+    draftId,
+    draftNotice,
+    activeInstruments,
+    setActiveInstruments,
     sensitivityTitle,
     setSensitivityTitle,
     sensitivityBasePolicy,

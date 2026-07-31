@@ -4,9 +4,10 @@ import type { ExperimentRunController } from './useExperimentRunController';
 interface ManualRunSetupPanelProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
+  initialScenarioStep?: number;
 }
 
-export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRunSetupPanelProps) {
+export function ManualRunSetupPanel({ controller, runActionsDisabled, initialScenarioStep = 0 }: ManualRunSetupPanelProps) {
   return (
     <ManualRunSetupCard
       formDisabled={controller.isSubmitting}
@@ -17,6 +18,11 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRu
           : 'Run submission requires write access in this runtime.'
       }
       isLoadingOptions={!controller.options}
+      draftId={controller.draftId}
+      draftNotice={controller.draftNotice}
+      initialStep={initialScenarioStep}
+      activeInstruments={controller.activeInstruments}
+      onActiveInstrumentsChange={controller.setActiveInstruments}
       selectedBaseline={controller.selectedBaseline}
       onBaselineChange={controller.onBaselineChange}
       basePolicies={controller.options?.basePolicies ?? []}

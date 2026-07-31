@@ -9,9 +9,7 @@ import {
   curveOption,
   curveSingleOption,
   formatChartNumber,
-  jointLayoutOverrides,
-  scalarOption,
-  scalarSingleOption
+  jointLayoutOverrides
 } from '../lib/compareChartOptions';
 
 interface CompareCardProps {
@@ -269,8 +267,17 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
 
       {isExpanded && (
         <>
-          {(item.visualPayload.type === 'scalar' ||
-            item.visualPayload.type === 'binned_distribution' ||
+          {/*
+            Scalar cards hold one to three numbers. A bar chart of three scalars encodes nothing the
+            table does not, with fewer significant figures — and it forced mixed units onto a single
+            linear axis (e.g. 0.0565, 704.94 and 5.47e-7 under "Value (mixed units)"). The values are
+            now the content, shown directly rather than behind a toggle.
+          */}
+          {item.visualPayload.type === 'scalar' && (
+            <div className="card-section">{renderScalarTable(tableRows, mode)}</div>
+          )}
+
+          {(item.visualPayload.type === 'binned_distribution' ||
             item.visualPayload.type === 'lognormal_pair' ||
             item.visualPayload.type === 'power_law_pair' ||
             item.visualPayload.type === 'gaussian_pair' ||
@@ -281,30 +288,6 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
                 {isTableOpen ? 'Hide exact parameter values' : 'Exact parameter values'}
               </button>
               {isTableOpen && renderScalarTable(tableRows, mode)}
-            </div>
-          )}
-
-          {item.visualPayload.type === 'scalar' && (
-            <div className="card-section">
-              <EChart
-                option={
-                  mode === 'single'
-                    ? scalarSingleOption(
-                        item.visualPayload.values,
-                        rightVersionLabel,
-                        axisSpec.scalar.xTitle,
-                        axisSpec.scalar.yTitle
-                      )
-                    : scalarOption(
-                        item.visualPayload.values,
-                        leftVersionLabel,
-                        rightVersionLabel,
-                        axisSpec.scalar.xTitle,
-                        axisSpec.scalar.yTitle
-                      )
-                }
-                className="chart"
-              />
             </div>
           )}
 

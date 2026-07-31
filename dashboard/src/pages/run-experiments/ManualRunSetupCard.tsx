@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   BasePolicyId,
@@ -19,11 +19,8 @@ import {
   findPolicyInstrument,
   type PolicyInstrumentId
 } from '../../lib/manualScenarioPolicy';
-import {
-  formatEvidenceNote,
-  formatExperimentModelOption,
-  orderExperimentModelOptions
-} from '../../lib/experimentVersionOptions';
+import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
+import { getModelAnchor } from '../../lib/modelAnchors';
 import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { GeneralModelControl } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
@@ -32,6 +29,11 @@ import { SETTING_HELP } from './settingHelp';
 type FormValue = string | boolean;
 
 interface ManualRunSetupCardProps {
+  draftId?: string;
+  draftNotice?: string;
+  initialStep?: number;
+  activeInstruments?: ReadonlySet<PolicyInstrumentId>;
+  onActiveInstrumentsChange?: (value: ReadonlySet<PolicyInstrumentId>) => void;
   formDisabled: boolean;
   submissionDisabled: boolean;
   submissionDisabledReason: string;
@@ -78,6 +80,11 @@ function formatPolicyFieldValue(key: string, value: FormValue | undefined): stri
 }
 
 export function ManualRunSetupCard({
+  draftId = '',
+  draftNotice = '',
+  initialStep = 0,
+  activeInstruments = new Set(),
+  onActiveInstrumentsChange = () => {},
   formDisabled,
   submissionDisabled,
   submissionDisabledReason,
@@ -103,27 +110,23 @@ export function ManualRunSetupCard({
   lockMessage,
   onSubmit
 }: ManualRunSetupCardProps) {
-  const [activeInstruments, setActiveInstruments] = useState<ReadonlySet<PolicyInstrumentId>>(new Set());
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const orderedSnapshots = orderExperimentModelOptions(snapshots);
+  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4, initialStep)));
+  const steps = [
+    { id: 'scenario-details', label: 'Scenario name' },
+    { id: 'model-evidence', label: 'Model version' },
+    { id: 'baseline-policy', label: 'Baseline policy' },
+    { id: 'policy-change', label: 'Policy change' },
+    { id: 'technical-details', label: 'Technical details' }
+  ] as const;
+  const orderedSnapshots = orderExperimentModelOptions(snapshots, selectedBaseline);
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy);
   const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.version === selectedBaseline);
-  // A 2011-evidence model run against a 2024 policy rulebook is a silent era mismatch, and it is
-  // the current default (v0o7 is 2011 evidence), so it is stated rather than left to be inferred.
-  const evidenceEraMismatch =
-    selectedSnapshot?.evidenceYear != null && String(selectedSnapshot.evidenceYear) !== basePolicy;
+  const selectedModelAnchor = getModelAnchor(selectedBaseline);
   const parametersByKey = useMemo(
     () => new Map(policyParameters.map((parameter) => [parameter.key, parameter])),
     [policyParameters]
   );
   const knownPolicyKeys = useMemo(() => new Set(parametersByKey.keys()), [parametersByKey]);
-
-  // Switching the baseline policy rewrites every policy value to the new regime (the run controller
-  // does this), so no override survives the switch. Clear the instrument selection to match, rather
-  // than leaving sections open that no longer describe a change.
-  useEffect(() => {
-    setActiveInstruments(new Set());
-  }, [basePolicy]);
 
   // Benchmark status is derived from the values themselves, not from which instruments are selected:
   // editing any policy field makes this a policy-change scenario immediately.
@@ -158,7 +161,7 @@ export function ManualRunSetupCard({
   };
 
   const selectBenchmark = () => {
-    setActiveInstruments(new Set());
+    onActiveInstrumentsChange(new Set());
     resetKeysToBaseline(INSTRUMENT_POLICY_KEYS);
   };
 
@@ -169,14 +172,12 @@ export function ManualRunSetupCard({
     // can never leave a stale override in the submitted scenario.
     if (visibleInstruments.has(id)) {
       resetKeysToBaseline(instrument.keys);
-      setActiveInstruments((current) => {
-        const next = new Set(current);
+      const next = new Set(activeInstruments);
         next.delete(id);
-        return next;
-      });
+      onActiveInstrumentsChange(next);
       return;
     }
-    setActiveInstruments((current) => new Set(current).add(id));
+    onActiveInstrumentsChange(new Set(activeInstruments).add(id));
   };
 
   const scenarioSentence =
@@ -204,13 +205,21 @@ export function ManualRunSetupCard({
       ) : (
         <>
           <div className="scenario-builder-heading">
-            <h2>Create a scenario</h2>
-            <p>Choose the model baseline and the policy change, then create and queue the simulation.</p>
+            <h2>Create a new policy scenario</h2>
+            <p>Define the evidence, baseline and policy change, then review and run the matched comparison.</p>
           </div>
+          {draftNotice && <p className="info-banner">{draftNotice}</p>}
+          <nav className="scenario-stepper" aria-label="Scenario sections">
+            {steps.map((step, index) => (
+              <button key={step.id} type="button" onClick={() => setActiveStep(index)} aria-current={activeStep === index ? 'step' : undefined}>
+                <span>{index + 1}</span>{step.label}
+              </button>
+            ))}
+          </nav>
           <div className="scenario-builder-grid">
             <div className="scenario-builder-form">
-              <section className="scenario-section" aria-labelledby="scenario-details-heading">
-                <h3 id="scenario-details-heading">Scenario details</h3>
+              <section hidden={activeStep !== 0} id="scenario-details" className="scenario-section scenario-step-page" aria-labelledby="scenario-details-heading">
+                <h3 id="scenario-details-heading">Scenario name</h3>
                 <label className="scenario-field">
                   <span>Scenario name</span>
                   <input
@@ -224,17 +233,14 @@ export function ManualRunSetupCard({
                 </label>
               </section>
 
-              <section className="scenario-section" aria-labelledby="model-baseline-heading">
-                <h3 id="model-baseline-heading">Model baseline</h3>
+              <section hidden={activeStep !== 1} id="model-evidence" className="scenario-section scenario-step-page" aria-labelledby="model-evidence-heading">
+                <h3 id="model-evidence-heading">Model version</h3>
                 <p className="scenario-section-intro">
-                  What this scenario is run on. The calibration version is the model build itself — the calibrated
-                  behavioural inputs — and normally stays at the recommended default. The baseline policy regime is the
-                  real-world rulebook the change departs from, and sets the starting value of every policy setting
-                  below.
+                  Choose the calibrated model used to run this scenario. Each version combines UK housing and household
+                  inputs with behavioural parameters adjusted using observed UK housing statistics and survey data.
                 </p>
-                <div className="scenario-fields-grid">
                   <label className="scenario-field">
-                    <InfoLabel label="Calibration version" info={SETTING_HELP.calibrationParameterVersion} />
+                    <InfoLabel label="Model version" info={SETTING_HELP.calibrationParameterVersion} />
                     <select
                       value={selectedBaseline}
                       disabled={formDisabled}
@@ -242,43 +248,37 @@ export function ManualRunSetupCard({
                     >
                       {orderedSnapshots.map((snapshot) => (
                         <option key={snapshot.version} value={snapshot.version}>
-                          {formatExperimentModelOption(snapshot, orderedSnapshots)}
+                          {formatExperimentModelOption(snapshot)}
                         </option>
                       ))}
                     </select>
                     {selectedSnapshot && (
                       <p className="scenario-evidence-note">
-                        <strong>{selectedSnapshot.version}</strong> · {formatEvidenceNote(selectedSnapshot)}
-                      </p>
-                    )}
-                    {evidenceEraMismatch && selectedSnapshot && (
-                      <p className="scenario-evidence-warning">
-                        This model was scored against <strong>{selectedSnapshot.evidenceYear}</strong> evidence, but the
-                        baseline policy regime below is <strong>{basePolicy}</strong>. Results mix two eras.
+                        {selectedModelAnchor
+                          ? `${selectedModelAnchor.dataYear} UK housing and household inputs · Behavioural parameters calibrated using ${selectedModelAnchor.fitYear} UK observations`
+                          : `Saved model configuration ${selectedSnapshot.version}`}
                       </p>
                     )}
                     <p className="scenario-field-links">
                       <Link
                         className="summary-link-inline"
-                        to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
-                          selectedSnapshot?.evidenceYear ?? 2024
-                        }&from=scenario`}
+                        to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`}
                       >
-                        Compare how models fit the evidence
+                        Check the model&rsquo;s assumptions
                       </Link>
                       <Link
                         className="summary-link-inline"
-                        to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}
+                        to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${selectedSnapshot?.evidenceYear ?? 2024}&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`}
                       >
-                        View this model&rsquo;s assumptions
+                        Check how well the model matches UK data
                       </Link>
                     </p>
-                    <p className="scenario-field-hint">
-                      Deciding which model to use? Validation scores each one against real-world evidence,
-                      indicator by indicator.
-                    </p>
                   </label>
+              </section>
 
+              <section hidden={activeStep !== 2} id="baseline-policy" className="scenario-section scenario-step-page" aria-labelledby="baseline-policy-heading">
+                <h3 id="baseline-policy-heading">Baseline policy regime</h3>
+                <p className="scenario-section-intro">The real-world rulebook the intervention departs from. It supplies the starting value for every policy setting.</p>
                   <label className="scenario-field">
                     <InfoLabel label="Baseline policy regime" info={SETTING_HELP.basePolicy} />
                     <select
@@ -293,7 +293,6 @@ export function ManualRunSetupCard({
                       ))}
                     </select>
                   </label>
-                </div>
                 {selectedBasePolicy ? (
                   <div className="scenario-reference-note">
                     <p>
@@ -304,7 +303,7 @@ export function ManualRunSetupCard({
                 ) : null}
               </section>
 
-              <section className="scenario-section" aria-labelledby="policy-change-heading">
+              <section hidden={activeStep !== 3} id="policy-change" className="scenario-section scenario-step-page" aria-labelledby="policy-change-heading">
                 <h3 id="policy-change-heading">Policy change</h3>
                 <p className="scenario-section-intro">
                   Changes applied on top of the baseline policy. Select an instrument to reveal its settings; combine
@@ -394,47 +393,32 @@ export function ManualRunSetupCard({
                 ))}
               </section>
 
-              <button
-                type="button"
-                className={`scenario-advanced-toggle ${advancedOpen ? 'active' : ''}`}
-                aria-expanded={advancedOpen}
-                aria-controls="scenario-advanced-panel"
-                onClick={() => setAdvancedOpen((open) => !open)}
-              >
-                <span>Advanced simulation settings</span>
-                <span aria-hidden="true">{advancedOpen ? '−' : '+'}</span>
-              </button>
-
-              {advancedOpen && (
-                <aside
-                  id="scenario-advanced-panel"
-                  className="scenario-advanced-panel scenario-advanced-panel--inline"
-                  aria-labelledby="scenario-advanced-heading"
-                >
+              <section hidden={activeStep !== 4} id="technical-details" className="scenario-section scenario-step-page" aria-labelledby="technical-details-heading">
                   <div className="scenario-advanced-panel-heading">
-                    <p className="eyebrow">Advanced</p>
-                    <h3 id="scenario-advanced-heading">Simulation settings</h3>
+                    <h3 id="technical-details-heading">Technical details</h3>
                     <p>
-                      Execution and output settings only. The model baseline and every policy setting are chosen above.
+                      Advanced run settings control execution and output only. Your model and policy choices remain unchanged.
                     </p>
                   </div>
-                  <div className="scenario-advanced-content">
-                    <GeneralModelControl
-                      mode="manual"
-                      parameters={parameters}
-                      formValues={formValues}
-                      executionDisabled={formDisabled}
-                      onFormValueChange={onFormValueChange}
-                      maxWorkers={maxWorkers}
-                      maxWorkersCap={maxWorkersCap}
-                      onMaxWorkersChange={onMaxWorkersChange}
-                      maxWorkersHint={SETTING_HELP.maxWorkers}
-                      includeFixedControls
-                      embedded
-                    />
+                  <div id="scenario-advanced-panel" className="scenario-advanced-panel scenario-advanced-panel--inline">
+                    <div className="scenario-advanced-content">
+                      <GeneralModelControl
+                        mode="manual"
+                        parameters={parameters}
+                        formValues={formValues}
+                        executionDisabled={formDisabled}
+                        onFormValueChange={onFormValueChange}
+                        maxWorkers={maxWorkers}
+                        maxWorkersCap={maxWorkersCap}
+                        onMaxWorkersChange={onMaxWorkersChange}
+                        maxWorkersHint={SETTING_HELP.maxWorkers}
+                        includeFixedControls
+                        embedded
+                      />
+                    </div>
                   </div>
-                </aside>
-              )}
+
+              </section>
 
               {warnings.length > 0 && (
                 <div className="run-warning-card">
@@ -448,28 +432,23 @@ export function ManualRunSetupCard({
                 </div>
               )}
 
-              <div className="scenario-submit-row">
-                <button
-                  type="button"
-                  className="primary-button scenario-create-button"
-                  disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
-                  onClick={() => onSubmit(false)}
-                >
-                  {isSubmitting ? 'Creating scenario...' : 'Create scenario'}
-                </button>
-                {warnings.length > 0 && (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
-                    onClick={() => onSubmit(true)}
-                  >
-                    Confirm and Queue
+              <div className="scenario-page-navigation" aria-label="Scenario page navigation">
+                <div className="scenario-page-movement">
+                  <button type="button" className="secondary-button" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))}>Back</button>
+                  {activeStep < steps.length - 1 && <button type="button" className="secondary-button" onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}>Continue</button>}
+                </div>
+                <div className="scenario-persistent-run-action">
+                  {warnings.length > 0 && (
+                    <button type="button" className="secondary-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(true)}>Confirm and Queue</button>
+                  )}
+                  <button type="button" className="primary-button scenario-create-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(false)}>
+                    {isSubmitting ? 'Running policy scenario...' : 'Run policy scenario'}
                   </button>
-                )}
+                </div>
               </div>
+              <p className="scenario-matched-baseline-note">Results compare the intervention with a matched baseline using the same calibrated model and run settings.</p>
               {submissionDisabled && !manualSubmissionLockedBySensitivity && (
-                <p className="scenario-submission-note">Create scenario is unavailable: {submissionDisabledReason}</p>
+                <p className="scenario-submission-note">Run policy scenario is unavailable: {submissionDisabledReason}</p>
               )}
             </div>
 
@@ -479,8 +458,8 @@ export function ManualRunSetupCard({
               <p>{scenarioSentence}</p>
               <dl>
                 <div>
-                  <dt>Calibration version</dt>
-                  <dd>{selectedBaseline || 'Not selected'}</dd>
+                  <dt>Calibrated model</dt>
+                  <dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline || 'Not selected'}</dd>
                 </div>
                 <div>
                   <dt>Baseline policy regime</dt>
@@ -492,22 +471,22 @@ export function ManualRunSetupCard({
                 </div>
                 {shownInstruments.flatMap((instrument) =>
                   instrument.keys
-                    .filter((key) => parametersByKey.has(key))
+                    .filter((key) => parametersByKey.has(key) && changedPolicyKeys.has(key))
                     .map((key) => (
                       <div key={key}>
-                        <dt>{policyLabel(key)}</dt>
+                        <dt>{policyLabel(key)} intervention delta</dt>
                         <dd>
-                          {formatPolicyFieldValue(key, formValues[key])}
-                          {changedPolicyKeys.has(key) && <span className="scenario-summary-changed"> changed</span>}
+                          {formatPolicyFieldValue(key, selectedBasePolicy?.values[key] === undefined ? undefined : String(selectedBasePolicy.values[key]))}
+                          {' → '}{formatPolicyFieldValue(key, formValues[key])}
                         </dd>
                       </div>
                     ))
                 )}
               </dl>
               <div className="scenario-summary-advanced">
-                <h4>Simulation</h4>
+                <h4>Run specification</h4>
                 <p>{advancedSummary.join(' · ')}</p>
-                <p>Seeds are managed by the existing repeated-run process.</p>
+                <p>Matched-baseline comparison uses the same model, duration, repetitions and seed process.</p>
               </div>
             </aside>
           </div>

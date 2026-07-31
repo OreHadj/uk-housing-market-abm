@@ -147,17 +147,23 @@ import { buildManualOverlayOption } from '../src/lib/manualOverlayChartOption.js
 import {
   buildResultsRunVersionLabelState,
   buildVersionLabelState,
-  extractVersionFromResultsRunId,
-  formatCalibrationVersionTitleLabel,
-  formatVersionOptionLabel,
-  getLatestStableVersion
+  extractVersionFromResultsRunId
 } from '../src/lib/versionLabels.js';
 import {
+  buildModelOptions,
+  formatModelName,
+  formatModelOptionLabel,
+  formatModelSubtitle,
+  getDefaultModelVersion
+} from '../src/lib/modelAnchors.js';
+import {
+  formatEvidenceNote,
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../src/lib/experimentVersionOptions.js';
 import { buildResultsCompareSearchParams } from '../src/lib/api.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
+import { restoreScenarioDraft, type ScenarioDraftV1 } from '../src/lib/scenarioDraft.js';
 import { SensitivitySetupCard } from '../src/pages/run-experiments/SensitivitySetupCard.js';
 import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.js';
 import {
@@ -687,18 +693,8 @@ const originalRunLabelState = buildResultsRunVersionLabelState(
   manualRunVersions,
   manualRunInProgressVersions
 );
-assert.equal(originalRunLabelState?.isOriginal, true, 'Expected v0-output to resolve to the Original label state');
-
-const latestRunLabelState = buildResultsRunVersionLabelState(
-  'v4.0-output',
-  manualRunVersions,
-  manualRunInProgressVersions
-);
-assert.equal(
-  latestRunLabelState?.isLatest,
-  true,
-  'Expected v4.0-output to resolve to Latest when the newer v4.1 snapshot is still in progress'
-);
+assert.equal(originalRunLabelState?.version, 'v0', 'Expected v0-output to resolve to the v0 snapshot');
+assert.equal(originalRunLabelState?.isInProgress, false, 'Expected a completed snapshot not to be flagged in progress');
 
 const inProgressRunLabelState = buildResultsRunVersionLabelState(
   'v4.1-output',
@@ -706,15 +702,15 @@ const inProgressRunLabelState = buildResultsRunVersionLabelState(
   manualRunInProgressVersions
 );
 assert.equal(
-  inProgressRunLabelState?.isLatest,
-  false,
-  'Expected in-progress v4.1-output not to resolve to the Latest label state'
+  inProgressRunLabelState?.isInProgress,
+  true,
+  'Expected v4.1-output to inherit the in-progress state of its snapshot'
 );
 
 assert.equal(
   buildResultsRunVersionLabelState('fixture-complete-output', manualRunVersions, manualRunInProgressVersions),
   null,
-  'Expected custom run ids not to render Original/Latest labels'
+  'Expected custom run ids not to resolve to a snapshot label state'
 );
 
 const singleOverlayOption = buildManualOverlayOption(
@@ -849,21 +845,21 @@ assert.ok(
   'Expected delta trend y axis to span positive data without forcing zero'
 );
 
-const latestManualStatusMarkup = renderToStaticMarkup(
+const inProgressManualStatusMarkup = renderToStaticMarkup(
   createElement(ManualSelectionStatusPills, {
     status: 'complete',
-    versionLabelState: latestRunLabelState
+    versionLabelState: inProgressRunLabelState
   })
 );
 
 assert.ok(
-  latestManualStatusMarkup.includes('manual-selection-status-pills'),
+  inProgressManualStatusMarkup.includes('manual-selection-status-pills'),
   'Expected manual results summary status pills to render in a grouped container'
 );
 
 assert.ok(
-  latestManualStatusMarkup.includes('>complete<') && latestManualStatusMarkup.includes('>Latest<'),
-  'Expected the manual results summary status pills to render the Latest tag alongside the completion status'
+  inProgressManualStatusMarkup.includes('>complete<') && inProgressManualStatusMarkup.includes('>In progress<'),
+  'Expected the status pills to render the in-progress tag alongside the completion status'
 );
 
 const originalManualStatusMarkup = renderToStaticMarkup(
@@ -873,9 +869,13 @@ const originalManualStatusMarkup = renderToStaticMarkup(
   })
 );
 
+// "Latest" and "Original" pills were removed: both were derived from position in the version list
+// rather than from anything true about the model.
 assert.ok(
-  originalManualStatusMarkup.includes('>complete<') && originalManualStatusMarkup.includes('>Original<'),
-  'Expected the manual results summary status pills to render the Original tag alongside the completion status'
+  originalManualStatusMarkup.includes('>complete<') &&
+    !originalManualStatusMarkup.includes('>Latest<') &&
+    !originalManualStatusMarkup.includes('>Original<'),
+  'Expected a completed snapshot run to render only its completion status'
 );
 
 assert.equal(
@@ -1912,7 +1912,7 @@ DATA_INCOME_GIVEN_AGE = "src/main/resources/Income.csv"
 
 function writeModelRunFixtureInputData(inputDataRoot: string): void {
   fs.mkdirSync(inputDataRoot, { recursive: true });
-  const baselines = ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v5o3'];
+  const baselines = ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v4.26', 'v5o3'];
   baselines.forEach((baseline, index) => {
     const baselinePath = path.join(inputDataRoot, baseline);
     fs.mkdirSync(baselinePath, { recursive: true });
@@ -3184,107 +3184,79 @@ assert.ok(
 );
 assert.ok(!inProgressVersions.includes('v4.0'), 'Expected v4.0 to be reported as a stable snapshot');
 assert.ok(!inProgressVersions.includes('v4.1'), 'Expected v4.1 to be reported as a stable snapshot after validation refresh');
-const latestStableVersion = getLatestStableVersion(versions, inProgressVersions);
-const expectedLatestStableVersion = [...versions].reverse().find((version) => !inProgressVersions.includes(version)) ?? '';
-assert.equal(latestStableVersion, expectedLatestStableVersion, 'Expected latest stable version helper to return newest non-progress snapshot');
-assert.notEqual(latestStableVersion, '', 'Expected at least one stable version to exist');
-const originalVersionState = buildVersionLabelState('v0', latestStableVersion, new Set(inProgressVersions));
-assert.ok(originalVersionState.isOriginal, 'Expected v0 to be labelled as original');
-assert.equal(
-  formatVersionOptionLabel('v0', originalVersionState),
-  'Original 2011 model (Original)',
-  'Expected v0 select label to use the standard original model name'
+const defaultModelVersion = getDefaultModelVersion(versions, inProgressVersions);
+assert.equal(defaultModelVersion, 'v5o3', 'Expected the newest anchor present to be the default model');
+
+// Only the four named models are offered for selection; the other ~54 snapshot folders remain on
+// disk as provenance and stay reachable by URL, not through a dropdown.
+const anchorOptions = buildModelOptions(versions, '');
+assert.deepEqual(
+  anchorOptions.map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3'],
+  'Expected the model selector to offer only the four anchors, in analytical order'
 );
-const combinedLabelState = buildVersionLabelState('v0', 'v0', new Set<string>());
-assert.equal(
-  formatVersionOptionLabel('v0', combinedLabelState),
-  'Original 2011 model (Latest, Original)',
-  'Expected combined labels to preserve Latest then Original ordering'
+assert.ok(
+  anchorOptions.every((option) => option.isAnchor),
+  'Expected every default option to be an anchor'
 );
-assert.equal(
-  formatVersionOptionLabel('v0o', buildVersionLabelState('v0o', latestStableVersion, new Set(inProgressVersions))),
-  'v0o',
-  'Expected v0o select labels to remain a raw legacy version label'
-);
-assert.equal(
-  formatVersionOptionLabel('v0o2', buildVersionLabelState('v0o2', latestStableVersion, new Set(inProgressVersions))),
-  'v0o2',
-  'Expected v0o2 select labels to remain a raw historical 2011 branch'
+assert.deepEqual(
+  anchorOptions.map((option) => option.label),
+  [
+    'Original 2011 model (v0)',
+    'Refitted 2011 model (v0o7)',
+    '2024 data model (v4.26)',
+    'Refitted 2024 model (v5o3)'
+  ],
+  'Expected anchor labels to lead with the name and keep the version id for reproducibility'
 );
 assert.equal(
-  formatVersionOptionLabel('v0o7', buildVersionLabelState('v0o7', latestStableVersion, new Set(inProgressVersions))),
-  'Optimised 2011 model',
-  'Expected v0o7 select labels to use the standard optimised model name'
+  formatModelSubtitle('v5o3'),
+  '2024 data \u00b7 behaviour refitted to 2024 evidence (TuRBO)',
+  'Expected the subtitle to state both the data era and the era the behaviour was fitted to'
 );
 assert.equal(
-  formatVersionOptionLabel('v0oo', buildVersionLabelState('v0oo', latestStableVersion, new Set(inProgressVersions))),
-  'v0oo',
-  'Expected v0oo select labels to remain a raw historical 2011 branch'
+  formatModelSubtitle('v4.26'),
+  '2024 data \u00b7 behaviour still fitted to 2011 evidence',
+  'Expected the 2024 data model to disclose that its behavioural fit is still the 2011 one'
+);
+
+// A deep link to an intermediate calibration step must keep working, so the selected version is
+// appended as an extra option rather than silently resetting to an anchor.
+const deepLinkOptions = buildModelOptions(versions, 'v4.19');
+assert.deepEqual(
+  deepLinkOptions.map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3', 'v4.19'],
+  'Expected an off-anchor selection to be appended to the anchor list'
 );
 assert.equal(
-  formatVersionOptionLabel('v0o6', buildVersionLabelState('v0o6', latestStableVersion, new Set(inProgressVersions))),
-  'v0o6',
-  'Expected v0o6 select labels to remain a raw historical 2011 branch'
+  deepLinkOptions[4]?.label,
+  'v4.19 \u2014 historical calibration step',
+  'Expected off-anchor options to stay a bare version id marked as provenance'
 );
+assert.equal(deepLinkOptions[4]?.isAnchor, false, 'Expected the deep-linked step not to be treated as an anchor');
 assert.equal(
-  formatVersionOptionLabel('v1.0', buildVersionLabelState('v1.0', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v1.0',
-  'Expected v1.0 select labels to identify the 2024 model family'
+  formatModelName('v4.19'),
+  'v4.19',
+  'Expected versions without an anchor name to fall back to the bare id on charts and titles'
 );
-assert.equal(
-  formatVersionOptionLabel('v4.4', buildVersionLabelState('v4.4', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v4.4',
-  'Expected v4.4 select labels to remain a standard 2024 model'
+assert.deepEqual(
+  buildModelOptions(versions, 'v0o7').map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3'],
+  'Expected selecting an anchor not to duplicate it'
 );
-assert.equal(
-  formatVersionOptionLabel('v5o3', buildVersionLabelState('v5o3', latestStableVersion, new Set(inProgressVersions))),
-  latestStableVersion === 'v5o3' ? 'Optimised 2024 model v5o3 (Latest)' : 'Optimised 2024 model v5o3',
-  'Expected v5o3 select labels to identify the optimised 2024 model'
-);
-const latestVersionState = buildVersionLabelState(latestStableVersion, latestStableVersion, new Set(inProgressVersions));
-assert.ok(latestVersionState.isLatest, 'Expected latest stable version to be labelled as latest');
-assert.ok(!latestVersionState.isInProgress, 'Expected latest stable version to exclude the in-progress label');
-assert.equal(
-  formatVersionOptionLabel(latestStableVersion, latestVersionState),
-  latestStableVersion === 'v5o3'
-    ? 'Optimised 2024 model v5o3 (Latest)'
-    : `Latest 2024 model ${latestStableVersion} (Latest)`,
-  'Expected latest stable select label to include Latest'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v0', originalVersionState),
-  'Original 2011 model',
-  'Expected v0 calibration titles to use the name without the raw version id'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v0oo', buildVersionLabelState('v0oo', latestStableVersion, new Set(inProgressVersions))),
-  'v0oo',
-  'Expected v0oo calibration titles to remain a raw historical 2011 branch'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v4.4', buildVersionLabelState('v4.4', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v4.4',
-  'Expected v4.4 calibration titles to remain a standard 2024 model'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v5o3', buildVersionLabelState('v5o3', latestStableVersion, new Set(inProgressVersions))),
-  'Optimised 2024 model',
-  'Expected v5o3 calibration titles to identify the optimised 2024 model'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel(latestStableVersion, latestVersionState),
-  latestStableVersion === 'v5o3' ? 'Optimised 2024 model' : 'Latest 2024 model',
-  'Expected latest calibration titles to use the name without the raw version id'
+assert.deepEqual(
+  buildModelOptions(['v3.1', 'v3.2'], '').map((option) => option.version),
+  ['v3.1', 'v3.2'],
+  'Expected a data root with no anchors to fall back to offering everything it has'
 );
 const inProgressVersion = inProgressVersions.find((version) => version !== 'v0');
 if (inProgressVersion) {
-  const inProgressState = buildVersionLabelState(inProgressVersion, latestStableVersion, new Set(inProgressVersions));
+  const inProgressState = buildVersionLabelState(inProgressVersion, new Set(inProgressVersions));
   assert.ok(inProgressState.isInProgress, 'Expected in-progress snapshot to be labelled in progress');
-  assert.ok(!inProgressState.isLatest, 'Expected in-progress snapshot not to be labelled latest');
   assert.equal(
-    formatVersionOptionLabel(inProgressVersion, inProgressState),
-    `2024 model ${inProgressVersion} (In progress)`,
-    'Expected in-progress select label to exclude Latest'
+    formatModelOptionLabel(inProgressVersion, { isInProgress: true }),
+    `${formatModelOptionLabel(inProgressVersion)} (In progress)`,
+    'Expected the in-progress note to be appended to the standard option label'
   );
 }
 const latestVersion = versions[versions.length - 1];
@@ -3304,7 +3276,7 @@ const desktopDataFixture = createDesktopRuntimeFixture('dashboard-data-runtime-s
 try {
   assert.deepEqual(
     getVersions(desktopDataFixture.paths),
-    ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v5o3'],
+    ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v4.26', 'v5o3'],
     'Expected version discovery to read from the configured runtime data root'
   );
   assert.deepEqual(
@@ -5388,42 +5360,45 @@ try {
     runOptions.snapshots.some((snapshot) => snapshot.version === 'v1.1' && snapshot.status === 'in_progress'),
     'Expected in-progress snapshot status in options payload'
   );
-  const orderedExperimentSnapshots = orderExperimentModelOptions(runOptions.snapshots);
- const promotedExperimentSnapshots = orderExperimentModelOptions([
+  const promotedExperimentSnapshots = orderExperimentModelOptions([
     { version: 'v1.0', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
     { version: 'v5o3', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
     { version: 'v0o7', status: 'stable', evidenceYear: 2011, outputCalibrated: true },
-    { version: 'v0o2', status: 'stable', evidenceYear: 2011, outputCalibrated: true },
+    { version: 'v4.26', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
     { version: 'v0oo', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
     { version: 'v0', status: 'stable', evidenceYear: null, outputCalibrated: false }
   ]);
   assert.deepEqual(
-    promotedExperimentSnapshots.slice(0, 3).map((snapshot) => snapshot.version),
-    ['v0o7', 'v0', 'v5o3'],
-    'Expected experiment model options to prefer v0o7 and v5o3 as the optimised era snapshots'
+    promotedExperimentSnapshots.map((snapshot) => snapshot.version),
+    ['v0', 'v0o7', 'v4.26', 'v5o3'],
+    'Expected the scenario builder to offer only the four anchors, in analytical order'
   );
   assert.deepEqual(
-    orderedExperimentSnapshots.slice(0, 3).map((snapshot) => snapshot.version),
-    ['v0o7', 'v0', 'v5o3'],
-    'Expected experiment model options to prioritise optimised 2011, 2011, then optimised 2024 model'
-  );
-  assert.deepEqual(
-    orderedExperimentSnapshots.slice(0, 4).map((snapshot) => formatExperimentModelOption(snapshot, orderedExperimentSnapshots)),
+    promotedExperimentSnapshots.map((snapshot) => formatExperimentModelOption(snapshot)),
     [
-      'v0o7 — Optimised for 2011 evidence (Stable)',
-      'v0 — Original 2011 model (Stable)',
-      'v5o3 — Optimised for 2024 evidence (Beta)',
-      'v1.1 — 2024 data version, inherits an earlier calibration (Beta, In progress)'
+      'Original 2011 model (v0)',
+      'Refitted 2011 model (v0o7)',
+      '2024 data model (v4.26)',
+      'Refitted 2024 model (v5o3)'
     ],
-    'Expected every experiment model option to lead with its version id and state its evidence era'
+    'Expected scenario and validation surfaces to share one set of model names'
   );
   assert.equal(
-    formatExperimentModelOption(
-      { version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
-      [{ version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false }]
-    ),
-    'v4.4 — 2024 data version, inherits an earlier calibration (Beta)',
-    'Expected input-data snapshots to be labelled as data versions rather than as calibrations'
+    formatEvidenceNote({ version: 'v0o7' }),
+    '2011 data · behaviour refitted to 2011 evidence (TuRBO)',
+    'Expected the note under the selector to state what the model was built from and fitted to'
+  );
+  // A saved run pointing at an intermediate step keeps that step selectable rather than silently
+  // switching the run to a different model.
+  assert.deepEqual(
+    orderExperimentModelOptions(runOptions.snapshots, 'v1.0').map((snapshot) => snapshot.version),
+    ['v0', 'v0o7', 'v4.26', 'v5o3', 'v1.0'],
+    'Expected an off-anchor baseline to remain selectable alongside the anchors'
+  );
+  assert.equal(
+    formatExperimentModelOption({ version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false }),
+    'v4.4 — historical calibration step',
+    'Expected intermediate snapshots to read as provenance rather than as a recommended model'
   );
 
   assertSettingHelpCopy();
@@ -5505,12 +5480,35 @@ try {
   });
   assert.equal(sensitivitySeedOneOverrides.N_SIMS, 1, 'Expected sensitivity submit overrides to include N_SIMS=1');
   const noop = () => {};
+  const staleDraft: ScenarioDraftV1 = {
+    version: 1,
+    title: 'Saved policy test',
+    calibratedModel: 'removed-model',
+    basePolicy: 'removed-policy' as never,
+    formValues: { ...defaultExperimentFormValues, REMOVED_PARAMETER: '42' },
+    selectedInstruments: ['ltv', 'removed-instrument' as never],
+    maxWorkers: '3',
+  };
+  const restoredDraft = restoreScenarioDraft(staleDraft, runOptions, {
+    ...staleDraft,
+    calibratedModel: runOptions.requestedBaseline,
+    basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+    formValues: defaultExperimentFormValues,
+    selectedInstruments: [],
+    maxWorkers: '1'
+  }, new Set(POLICY_INSTRUMENTS.map((instrument) => instrument.id)));
+  assert.equal(restoredDraft.choicesChanged, true, 'Expected stale draft choices to produce a restoration notice');
+  assert.equal(restoredDraft.draft.calibratedModel, runOptions.requestedBaseline, 'Expected a stale model to fall back safely');
+  assert.equal(restoredDraft.draft.basePolicy, DEFAULT_EXPERIMENT_BASE_POLICY_ID, 'Expected a stale policy to fall back safely');
+  assert.ok(!('REMOVED_PARAMETER' in restoredDraft.draft.formValues), 'Expected stale parameter keys to be discarded');
+  assert.deepEqual(restoredDraft.draft.selectedInstruments, ['ltv'], 'Expected valid instrument choices alone to survive');
   markSmokeStep('rendering experiment setup controls');
   const manualSetupMarkup = renderToStaticMarkup(
     createElement(
       MemoryRouter,
       null,
       createElement(ManualRunSetupCard, {
+        draftId: 'smoke-draft',
         formDisabled: false,
         submissionDisabled: false,
         submissionDisabledReason: '',
@@ -5579,34 +5577,44 @@ try {
     'Expected manual and sensitivity setup controls to render shared info indicators'
   );
   const manualSetupText = visibleText(manualSetupMarkup);
-  // --- Four-section structure ---------------------------------------------------------------
+  // --- Five-stage structure ----------------------------------------------------------------
   assert.ok(
-    manualSetupText.includes('Scenario details') &&
-      manualSetupText.includes('Model baseline') &&
+    manualSetupText.includes('Scenario name') &&
+      manualSetupText.includes('Model version') &&
+      manualSetupText.includes('Baseline policy regime') &&
       manualSetupText.includes('Policy change') &&
-      manualSetupText.includes('Advanced simulation settings'),
-    'Expected the manual scenario form to present Scenario details, Model baseline, Policy change and Advanced simulation settings'
+      manualSetupText.includes('Technical details'),
+    'Expected the manual scenario form to present all five policy-scenario stages'
   );
   assert.ok(
-    manualSetupMarkup.indexOf('model-baseline-heading') < manualSetupMarkup.indexOf('policy-change-heading') &&
-      manualSetupMarkup.indexOf('policy-change-heading') < manualSetupMarkup.indexOf('scenario-advanced-toggle'),
-    'Expected the four sections to appear in order: details, baseline, policy change, advanced'
+    manualSetupMarkup.indexOf('scenario-details-heading') < manualSetupMarkup.indexOf('model-evidence-heading') &&
+      manualSetupMarkup.indexOf('model-evidence-heading') < manualSetupMarkup.indexOf('baseline-policy-heading') &&
+      manualSetupMarkup.indexOf('baseline-policy-heading') < manualSetupMarkup.indexOf('policy-change-heading') &&
+      manualSetupMarkup.indexOf('policy-change-heading') < manualSetupMarkup.indexOf('technical-details-heading'),
+    'Expected the five sections to appear in the agreed order'
   );
+  for (const label of ['Scenario name', 'Model version', 'Baseline policy', 'Policy change', 'Technical details']) {
+    assert.ok(manualSetupText.includes(label), `Expected the section stepper to offer ${label}`);
+  }
 
-  // --- Model baseline owns calibration and the baseline policy regime -----------------------
+  // --- Model evidence and baseline policy are distinct stages -------------------------------
   const modelBaselineBlock = manualSetupMarkup.slice(
-    manualSetupMarkup.indexOf('model-baseline-heading'),
-    manualSetupMarkup.indexOf('policy-change-heading')
+    manualSetupMarkup.indexOf('model-evidence-heading'),
+    manualSetupMarkup.indexOf('baseline-policy-heading')
   );
   assert.ok(
-    visibleText(modelBaselineBlock).includes('Calibration version') &&
-      visibleText(modelBaselineBlock).includes('Baseline policy regime'),
-    'Expected calibration version and baseline policy regime to sit together under Model baseline'
+    visibleText(modelBaselineBlock).includes('Model version') && !visibleText(modelBaselineBlock).includes('Baseline policy regime'),
+    'Expected calibrated model selection to have its own evidence stage'
   );
   assert.ok(
-    visibleText(modelBaselineBlock).includes('calibration version is the model build itself') &&
-      visibleText(modelBaselineBlock).includes('sets the starting value of every policy setting'),
-    'Expected Model baseline to explain the difference between calibration inputs and starting policy values'
+    manualSetupText.includes('Check the model’s assumptions') && manualSetupText.includes('Check how well the model matches UK data') &&
+      manualSetupMarkup.includes('from=scenario&amp;draft=smoke-draft&amp;scenarioStep=model-version'),
+    'Expected both evidence links to retain model and scenario draft context'
+  );
+  assert.ok(
+    visibleText(modelBaselineBlock).includes('Refitted 2011 model (v0o7)') &&
+      visibleText(modelBaselineBlock).includes('Behavioural parameters calibrated using 2011 UK observations'),
+    'Expected the selected model to be named and to state what it was built from and fitted to'
   );
 
   // --- Policy change exposes all six instrument choices ------------------------------------
@@ -5746,8 +5754,8 @@ try {
     'Expected a base-policy switch to leave no stale policy override behind'
   );
   assert.ok(
-    manualCardSource.includes('}, [basePolicy]);'),
-    'Expected the card to reconcile its instrument selection when the baseline policy changes'
+    fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/useExperimentRunController.ts'), 'utf-8').includes('setActiveInstruments(new Set());'),
+    'Expected the controller to reconcile instrument selection when the baseline policy changes'
   );
 
   // Combined instruments are all described, not just LTV and LTI.
@@ -5778,10 +5786,9 @@ try {
 
   // --- Keyboard and narrow-viewport behaviour ---------------------------------------------
   assert.ok(
-    !manualSetupMarkup.includes('tabindex="-1"') &&
-      manualSetupMarkup.includes('aria-controls="scenario-advanced-panel"') &&
-      manualSetupMarkup.includes('aria-expanded='),
-    'Expected the advanced disclosure to be a keyboard-operable button wired to its panel'
+    manualSetupMarkup.includes('aria-label="Scenario page navigation"') &&
+      manualSetupText.includes('Back') && manualSetupText.includes('Continue'),
+    'Expected keyboard-operable navigation between the separate scenario pages'
   );
   assert.ok(
     (manualSetupMarkup.match(/aria-labelledby="/g) ?? []).length >= 4,
@@ -5813,14 +5820,13 @@ try {
     'utf-8'
   );
   assert.ok(
-    manualRunSetupCardSource.includes('const [advancedOpen, setAdvancedOpen] = useState(false);') &&
-      manualRunSetupCardSource.includes('aria-expanded={advancedOpen}') &&
-      manualRunSetupCardSource.includes('setAdvancedOpen((open) => !open)') &&
-      manualRunSetupCardSource.includes('{advancedOpen && ('),
-    'Expected advanced simulation settings to hold their disclosure state in component state, so it survives option refreshes'
+    manualRunSetupCardSource.includes('id="technical-details"') &&
+      manualRunSetupCardSource.includes('id="scenario-advanced-panel"') &&
+      !manualRunSetupCardSource.includes('scenario-advanced-toggle'),
+    'Expected advanced run settings to be displayed directly on the Technical details page'
   );
   assert.ok(
-    manualSetupText.includes('Calibration version') &&
+    manualSetupText.includes('Calibrated model') &&
       manualSetupText.includes('Baseline policy regime') &&
       visibleText(sensitivitySetupMarkup).includes('Policy instrument to vary') &&
       visibleText(sensitivitySetupMarkup).includes('Baseline policy'),
@@ -8572,9 +8578,9 @@ const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/
 assert.ok(
   experimentsPageSource.includes("heading: 'Policy scenarios'") &&
     experimentsPageSource.includes("heading: 'Sensitivity analysis'") &&
-    experimentsPageSource.includes("createAction: 'Create policy scenario'") &&
+    experimentsPageSource.includes("createAction: 'Create new policy scenario'") &&
     experimentsPageSource.includes("createAction: 'New sensitivity analysis'") &&
-    experimentsPageSource.includes("modalHeading: 'Create policy scenario'") &&
+    experimentsPageSource.includes("modalHeading: 'Create new policy scenario'") &&
     experimentsPageSource.includes("modalHeading: 'Create sensitivity analysis'"),
   'Scenario and sensitivity workspaces should have distinct headings and creation actions'
 );
@@ -8808,10 +8814,10 @@ assert.ok(
 );
 assert.ok(
   validationPageSource.includes('fetchVersions') &&
-    validationPageSource.includes('buildVersionLabelState') &&
-    validationPageSource.includes('formatVersionOptionLabel') &&
-    validationPageSource.includes('getLatestStableVersion'),
-  'Validation page should reuse shared calibration version label helpers for the metric-card version selector'
+    validationPageSource.includes('buildModelOptions') &&
+    validationPageSource.includes('formatModelOptionLabel') &&
+    validationPageSource.includes('formatModelSubtitle'),
+  'Validation page should name and offer models through the shared modelAnchors helpers'
 );
 assert.ok(
   validationPageSource.includes('{formatValidationVersionOptionLabel(version)}'),

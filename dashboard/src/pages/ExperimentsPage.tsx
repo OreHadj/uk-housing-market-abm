@@ -4,6 +4,7 @@ import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
 import { ManualResultsView } from './experiments/view/ManualResultsView';
 import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
 import type { ExperimentType } from './experiments/types';
+import { clearScenarioDraft, createScenarioDraftId } from '../lib/scenarioDraft';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -31,6 +32,14 @@ export function ExperimentsPage({
   const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
+  const draftId = workspace === 'manual' ? searchParams.get('draft')?.trim() ?? '' : '';
+
+  useEffect(() => {
+    if (workspace !== 'manual' || !isSetupOpen || draftId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('draft', createScenarioDraftId());
+    setSearchParams(next, { replace: true });
+  }, [draftId, isSetupOpen, searchParams, setSearchParams, workspace]);
 
   const updateSearch = useCallback((updates: Record<string, string>) => {
     const next = new URLSearchParams(searchParams);
@@ -64,9 +73,9 @@ export function ExperimentsPage({
   const copy = useMemo(() => workspace === 'manual' ? {
     heading: 'Policy scenarios',
     description: 'Create, monitor and inspect policy scenarios in one workspace.',
-    createAction: 'Create policy scenario',
+    createAction: 'Create new policy scenario',
     modalEyebrow: 'Policy experiment',
-    modalHeading: 'Create policy scenario',
+    modalHeading: 'Create new policy scenario',
     modalDescription: 'Choose the policy features to test, review the setup, then start the model run.'
   } : {
     heading: 'Sensitivity analysis',
@@ -119,14 +128,23 @@ export function ExperimentsPage({
               <h2 id="experiment-create-modal-title">{copy.modalHeading}</h2>
               <p>{copy.modalDescription}</p>
             </div>
-            <button
-              type="button"
-              className="trend-modal-close"
-              aria-label={`Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
-              onClick={() => setIsSetupOpen(false)}
-            >
-              ×
-            </button>
+            <div className="scenario-modal-head-actions">
+              {workspace === 'manual' && draftId && (
+                <button type="button" className="text-button" onClick={() => {
+                  clearScenarioDraft(draftId);
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('draft');
+                  setSearchParams(next, { replace: true });
+                  setIsSetupOpen(false);
+                }}>Discard draft</button>
+              )}
+              <button
+                type="button"
+                className="trend-modal-close"
+                aria-label={`Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
+                onClick={() => setIsSetupOpen(false)}
+              >×</button>
+            </div>
           </div>
           <div className="scenario-create-modal-body">
             <ExperimentRunMode
@@ -139,6 +157,8 @@ export function ExperimentsPage({
               selectedJobRef={selectedJobRef}
               followJobRef={searchParams.get('follow') === '1' ? selectedJobRef : ''}
               showRunManagement={false}
+              draftId={draftId}
+              initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
               onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
               onOpenManualResults={(runId) => {
                 setIsSetupOpen(false);
