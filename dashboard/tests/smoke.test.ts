@@ -8470,6 +8470,10 @@ const manualResultsViewSource = fs.readFileSync(
   path.resolve(repoRoot, 'dashboard/src/pages/experiments/view/ManualResultsView.tsx'),
   'utf-8'
 );
+const manualResultsStylesSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/styles.css'),
+  'utf-8'
+);
 assert.ok(
   !manualResultsViewSource.includes('`${run.title} — ${run.runId}`') &&
     manualResultsViewSource.includes('function formatRunOptionLabel') &&
@@ -8479,12 +8483,45 @@ assert.ok(
     manualResultsViewSource.includes('<dt>Policy settings</dt>') &&
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
     manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
+    manualResultsViewSource.includes('setSummaryRunId(run.runId)') &&
+    manualResultsViewSource.includes('Show ${getRunPrimaryLabel(run)} in the run summary') &&
+    manualResultsViewSource.includes("event.key !== 'Enter' && event.key !== ' '") &&
     manualResultsViewSource.includes('Run ID:'),
   'Manual result labels should show the experiment name alone and keep provenance in labelled summary fields'
 );
 assert.ok(
-  manualResultsViewSource.includes("dotted lines show each selected run&apos;s mean over the"),
+  manualResultsViewSource.includes("Dotted lines show each selected run&apos;s mean."),
   'Manual results overlay help copy should explain the dotted mean reference lines'
+);
+assert.ok(
+  manualResultsViewSource.includes('className={`policy-results-table') &&
+    manualResultsViewSource.includes('<h3>Policy results</h3>') &&
+    !manualResultsViewSource.includes('<h3>All policy results</h3>') &&
+    manualResultsViewSource.includes('<colgroup>') &&
+    manualResultsViewSource.includes('policy-results-indicator-column') &&
+    manualResultsViewSource.includes('policy-results-value-column') &&
+    manualResultsViewSource.includes('<tbody') &&
+    manualResultsViewSource.includes('scope="rowgroup"') &&
+    manualResultsViewSource.includes('Mean for a single run') &&
+    manualResultsViewSource.includes('aria-controls={`policy-results-${section.id}`}') &&
+    manualResultsViewSource.includes('setExpandedPolicyGroupIds(policyGroupIds)') &&
+    manualResultsViewSource.includes('setExpandedPolicyGroupIds([])') &&
+    manualResultsViewSource.includes('policy-results-change-direction'),
+  'Manual policy results should use one sectioned, accessible table with bulk controls and directional changes'
+);
+assert.equal(
+  (manualResultsViewSource.match(/<table className=\{`policy-results-table/g) ?? []).length,
+  1,
+  'Manual policy groups should share one consistently aligned results table'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-indicator-column') &&
+    manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-value-column') &&
+    manualResultsStylesSource.includes('width: 32%;') &&
+    manualResultsStylesSource.includes('width: 17%;') &&
+    manualResultsStylesSource.includes('table-layout: fixed;') &&
+    manualResultsStylesSource.includes('text-align: center;'),
+  'Manual comparison results should use one wide indicator column and four equal aligned columns'
 );
 assert.ok(
   manualResultsViewSource.includes('window.confirm') &&

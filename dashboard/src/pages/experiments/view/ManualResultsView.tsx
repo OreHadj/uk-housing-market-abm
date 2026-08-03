@@ -92,6 +92,15 @@ function deltaClassName(value: number | null): string {
   return value > 0 ? 'positive' : 'negative';
 }
 
+function deltaDirection(value: number | null): { symbol: string; label: string } {
+  if (value === null || !Number.isFinite(value) || Math.abs(value) < 1e-12) {
+    return { symbol: '\u2014', label: 'No change' };
+  }
+  return value > 0
+    ? { symbol: '\u2191', label: 'Increase' }
+    : { symbol: '\u2193', label: 'Decrease' };
+}
+
 const QUEUE_STATUS_META: Record<ModelRunJobStatus, { label: string; className: string }> = {
   queued: { label: 'Queued', className: 'status-pill partial' },
   running: { label: 'In progress', className: 'status-pill partial' },
@@ -144,9 +153,10 @@ export function ManualResultsView({
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
-  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
-  // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
+  // A transient hover/focus preview takes precedence over the summary selection made by clicking
+  // a row. Neither state changes the baseline or comparison driving the results page.
   const [previewRunId, setPreviewRunId] = useState<string>('');
+  const [summaryRunId, setSummaryRunId] = useState<string>('');
   const [renamingRunId, setRenamingRunId] = useState<string>('');
   const [renameDraft, setRenameDraft] = useState<string>('');
   const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
@@ -587,6 +597,12 @@ export function ManualResultsView({
       }))
       .filter((section) => section.items.length > 0);
   }, [availableIndicators, sortedKpis]);
+  const policyGroupIds = useMemo(() => groupedKpis.map((section) => section.id), [groupedKpis]);
+  const allPolicyGroupsExpanded =
+    policyGroupIds.length > 0 && policyGroupIds.every((groupId) => expandedPolicyGroupIds.includes(groupId));
+  const allPolicyGroupsCollapsed = policyGroupIds.every(
+    (groupId) => !expandedPolicyGroupIds.includes(groupId)
+  );
   const overlayIndicators = comparePayload?.indicators ?? [];
   const activeIndicatorPayload = useMemo(
     () => resolveActiveIndicatorPayload(overlayIndicators, selectedIndicatorIds, activeIndicatorId),
@@ -825,12 +841,27 @@ export function ManualResultsView({
                           'run-item',
                           isBaselineSelected ? 'selected-baseline' : '',
                           isComparisonSelected ? 'selected-comparison' : '',
-                          previewRunId === run.runId ? 'is-previewed' : ''
+                          previewRunId === run.runId || summaryRunId === run.runId ? 'is-previewed' : ''
                         ]
                           .filter(Boolean)
                           .join(' ')}
                         onMouseEnter={() => setPreviewRunId(run.runId)}
                         onFocus={() => setPreviewRunId(run.runId)}
+                        onClick={(event) => {
+                          if ((event.target as HTMLElement).closest('button, input, form')) {
+                            return;
+                          }
+                          setSummaryRunId(run.runId);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) {
+                            return;
+                          }
+                          event.preventDefault();
+                          setSummaryRunId(run.runId);
+                        }}
+                        tabIndex={0}
+                        aria-label={`Show ${getRunPrimaryLabel(run)} in the run summary`}
                       >
                         <div className="run-item-head">
                           <div className="run-item-name">
@@ -930,7 +961,12 @@ export function ManualResultsView({
                   })}
                 </ul>
                 {(() => {
-                  const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
+                  const detailRun =
+                    runById.get(previewRunId) ??
+                    runById.get(summaryRunId) ??
+                    runById.get(baselineRunId) ??
+                    historyRuns[0] ??
+                    null;
                   if (!detailRun) {
                     return null;
                   }
@@ -938,7 +974,11 @@ export function ManualResultsView({
                   return (
                     <div className="run-history-preview" aria-live="polite">
                       <p className="run-history-preview-eyebrow">
-                        {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
+                        {previewRunId === detailRun.runId
+                          ? 'Previewed run'
+                          : summaryRunId === detailRun.runId
+                            ? 'Summary selection'
+                            : 'Selected run'}
                       </p>
                       <h4>{getRunPrimaryLabel(detailRun)}</h4>
                       <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
@@ -1264,78 +1304,118 @@ export function ManualResultsView({
             ) : (
               <div className="policy-results-sections">
                 <div className="policy-results-sections-head">
-                  <h3>All policy results</h3>
-                  <p>Monthly means over the selected analysis window. Open any series to inspect its path through time.</p>
-                </div>
-                {groupedKpis.map((section) => (
-                  <section key={section.id} className="policy-results-group">
+                  <div>
+                    <h3>Policy results</h3>
+                    <p>Monthly means over the selected analysis window. Open any series to inspect its path through time.</p>
+                  </div>
+                  <div className="policy-results-expansion-controls" aria-label="Policy result section controls">
                     <button
                       type="button"
-                      className="policy-results-group-toggle"
-                      aria-expanded={expandedPolicyGroupIds.includes(section.id)}
-                      aria-controls={`policy-results-${section.id}`}
-                      onClick={() =>
-                        setExpandedPolicyGroupIds((current) =>
-                          current.includes(section.id)
-                            ? current.filter((groupId) => groupId !== section.id)
-                            : [...current, section.id]
-                        )
-                      }
+                      onClick={() => setExpandedPolicyGroupIds(policyGroupIds)}
+                      disabled={allPolicyGroupsExpanded}
                     >
-                      <span>
-                        <strong>{section.title}</strong>
-                        <small>{section.items.length} indicators</small>
-                      </span>
-                      <span aria-hidden="true" className="policy-results-chevron">
-                        {expandedPolicyGroupIds.includes(section.id) ? '−' : '+'}
-                      </span>
+                      Expand all
                     </button>
-                    {expandedPolicyGroupIds.includes(section.id) && (
-                      <div id={`policy-results-${section.id}`} className="policy-results-table-wrap">
-                        <table className="policy-results-table">
-                          <thead>
-                            <tr>
-                              <th>Indicator</th>
-                              <th>{mode === 'compare' ? 'Baseline' : 'Mean'}</th>
-                              {mode === 'compare' && <th>Comparison</th>}
-                              {mode === 'compare' && <th>Change</th>}
-                              <th><span className="visually-hidden">Action</span></th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {section.items.map((kpi) => {
-                              const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
-                              const delta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
-                              return (
-                                <tr key={kpi.indicatorId}>
-                                  <th scope="row">{kpi.title}</th>
-                                  <td>{formatKpiValue(kpi.mean, kpi.units)}</td>
-                                  {mode === 'compare' && (
-                                    <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}</td>
-                                  )}
-                                  {mode === 'compare' && (
-                                    <td className={deltaClassName(delta)}>
-                                      {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPolicyGroupIds([])}
+                      disabled={allPolicyGroupsCollapsed}
+                    >
+                      Collapse all
+                    </button>
+                  </div>
+                </div>
+                <div className="policy-results-table-wrap">
+                  <table className={`policy-results-table ${mode === 'compare' ? 'is-comparison' : ''}`}>
+                    <colgroup>
+                      <col className="policy-results-indicator-column" />
+                      <col className="policy-results-value-column" />
+                      {mode === 'compare' && <col className="policy-results-value-column" />}
+                      {mode === 'compare' && <col className="policy-results-value-column" />}
+                      <col className="policy-results-value-column" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th scope="col">Indicator</th>
+                        <th scope="col">{mode === 'compare' ? 'Baseline' : 'Mean for a single run'}</th>
+                        {mode === 'compare' && <th scope="col">Comparison</th>}
+                        {mode === 'compare' && <th scope="col">Change</th>}
+                        <th scope="col">Trend</th>
+                      </tr>
+                    </thead>
+                    {groupedKpis.map((section) => {
+                      const isExpanded = expandedPolicyGroupIds.includes(section.id);
+                      return (
+                        <tbody
+                          key={section.id}
+                          id={`policy-results-${section.id}`}
+                          className="policy-results-group"
+                        >
+                          <tr className="policy-results-group-row">
+                            <th colSpan={mode === 'compare' ? 5 : 3} scope="rowgroup">
+                              <button
+                                type="button"
+                                className="policy-results-group-toggle"
+                                aria-expanded={isExpanded}
+                                aria-controls={`policy-results-${section.id}`}
+                                onClick={() =>
+                                  setExpandedPolicyGroupIds((current) =>
+                                    current.includes(section.id)
+                                      ? current.filter((groupId) => groupId !== section.id)
+                                      : [...current, section.id]
+                                  )
+                                }
+                              >
+                                <span aria-hidden="true" className="policy-results-chevron" />
+                                <strong>{section.title}</strong>
+                                <small>{section.items.length} indicators</small>
+                              </button>
+                            </th>
+                          </tr>
+                          {isExpanded && (
+                            <>
+                              {section.items.map((kpi) => {
+                                const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
+                                const delta = computeKpiDeltaValue(
+                                  kpi.mean,
+                                  comparisonKpi?.mean ?? null,
+                                  kpi.units
+                                );
+                                const direction = deltaDirection(delta);
+                                return (
+                                  <tr key={kpi.indicatorId}>
+                                    <th scope="row">{kpi.title}</th>
+                                    <td>{formatKpiValue(kpi.mean, kpi.units)}</td>
+                                    {mode === 'compare' && (
+                                      <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}</td>
+                                    )}
+                                    {mode === 'compare' && (
+                                      <td className={deltaClassName(delta)}>
+                                        <span className="policy-results-change-direction" aria-label={direction.label}>
+                                          {direction.symbol}
+                                        </span>{' '}
+                                        {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
+                                      </td>
+                                    )}
+                                    <td>
+                                      <button
+                                        type="button"
+                                        className="policy-trend-link"
+                                        onClick={() => viewIndicatorTrend(kpi.indicatorId)}
+                                      >
+                                        View trend
+                                      </button>
                                     </td>
-                                  )}
-                                  <td>
-                                    <button
-                                      type="button"
-                                      className="policy-trend-link"
-                                      onClick={() => viewIndicatorTrend(kpi.indicatorId)}
-                                    >
-                                      View trend
-                                    </button>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </section>
-                ))}
+                                  </tr>
+                                );
+                              })}
+                            </>
+                          )}
+                        </tbody>
+                      );
+                    })}
+                  </table>
+                </div>
               </div>
             )}
           </article>
