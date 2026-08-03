@@ -1783,8 +1783,10 @@ section.block:first-of-type { border-top: none; }
 
 .scenario-stepper {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.35rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  box-sizing: border-box;
+  gap: 0.45rem;
   margin: 0 0 1.25rem;
   padding: 0.55rem;
   border: 1px solid var(--rule);
@@ -1796,12 +1798,13 @@ section.block:first-of-type { border-top: none; }
   display: flex;
   gap: 0.4rem;
   align-items: center;
-  padding: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.65rem;
   border-radius: 0.45rem;
   color: var(--muted);
   border: 0;
   background: transparent;
-  font-size: 0.76rem;
+  font-size: 0.86rem;
   font-weight: 700;
   text-align: left;
   cursor: pointer;
@@ -2007,6 +2010,27 @@ section.block:first-of-type { border-top: none; }
   align-content: start;
 }
 
+.scenario-policy-field .cap-value-field {
+  display: grid;
+  grid-template-columns: 12rem max-content;
+  justify-content: start;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.scenario-builder-surface .scenario-policy-field .cap-value-field input[type='number'] {
+  width: 12rem;
+  min-width: 12rem;
+  max-width: 12rem;
+  min-height: 2.35rem;
+  height: 2.35rem;
+  padding-block: 0.3rem;
+}
+
+.scenario-policy-field .cap-value-suffix {
+  white-space: nowrap;
+}
+
 /* Baseline value vs user override: the note reads out the baseline while a field carries it, and
    flips to an Override chip once the value diverges. */
 .scenario-policy-baseline-note {
@@ -2031,6 +2055,67 @@ section.block:first-of-type { border-top: none; }
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.02em;
+}
+
+.scenario-reference-policy-field {
+  max-width: 24rem;
+}
+
+.scenario-policy-status {
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.55rem;
+  background: var(--panel-muted);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.scenario-policy-status.has-changes {
+  background: rgba(11, 114, 133, 0.08);
+  color: #0b7285;
+  font-weight: 700;
+}
+
+.scenario-policy-accordions {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.scenario-policy-accordion {
+  border: 1px solid rgba(17, 32, 24, 0.12);
+  border-radius: 0.7rem;
+  background: #fff;
+}
+
+.scenario-policy-accordion > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.scenario-policy-accordion > summary:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.scenario-accordion-change-count {
+  color: #0b7285;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.scenario-policy-accordion-content {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+  border-top: 1px solid rgba(17, 32, 24, 0.08);
+}
+
+.scenario-policy-accordion-content > .scenario-section-intro {
+  padding-top: 0.8rem;
 }
 
 .scenario-summary-changed {
@@ -4717,7 +4802,7 @@ section.block:first-of-type { border-top: none; }
 
 @media (max-width: 820px) {
   .scenario-stepper {
-    grid-template-columns: repeat(5, minmax(2.5rem, 1fr));
+    grid-template-columns: repeat(4, minmax(2.5rem, 1fr));
   }
 
   .scenario-stepper button {

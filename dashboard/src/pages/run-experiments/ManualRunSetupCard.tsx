@@ -9,15 +9,11 @@ import type {
 } from '../../../shared/types';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
 import {
-  BENCHMARK_OPTION,
-  INSTRUMENT_POLICY_KEYS,
   POLICY_INSTRUMENTS,
+  POLICY_SETTING_GROUPS,
   changedInstrumentLabels,
   deriveChangedPolicyKeys,
-  deriveVisibleInstruments,
-  describeScenarioPolicy,
-  findPolicyInstrument,
-  type PolicyInstrumentId
+  describeScenarioPolicy
 } from '../../lib/manualScenarioPolicy';
 import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
 import { getModelAnchor } from '../../lib/modelAnchors';
@@ -32,8 +28,6 @@ interface ManualRunSetupCardProps {
   draftId?: string;
   draftNotice?: string;
   initialStep?: number;
-  activeInstruments?: ReadonlySet<PolicyInstrumentId>;
-  onActiveInstrumentsChange?: (value: ReadonlySet<PolicyInstrumentId>) => void;
   formDisabled: boolean;
   submissionDisabled: boolean;
   submissionDisabledReason: string;
@@ -83,8 +77,6 @@ export function ManualRunSetupCard({
   draftId = '',
   draftNotice = '',
   initialStep = 0,
-  activeInstruments = new Set(),
-  onActiveInstrumentsChange = () => {},
   formDisabled,
   submissionDisabled,
   submissionDisabledReason,
@@ -110,12 +102,14 @@ export function ManualRunSetupCard({
   lockMessage,
   onSubmit
 }: ManualRunSetupCardProps) {
-  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4, initialStep)));
+  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(3, initialStep)));
+  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(
+    () => new Set(POLICY_SETTING_GROUPS.filter((group) => group.defaultOpen).map((group) => group.id))
+  );
   const steps = [
     { id: 'scenario-details', label: 'Scenario name' },
     { id: 'model-evidence', label: 'Model version' },
-    { id: 'baseline-policy', label: 'Baseline policy' },
-    { id: 'policy-change', label: 'Policy change' },
+    { id: 'policy-settings', label: 'Policy settings' },
     { id: 'technical-details', label: 'Technical details' }
   ] as const;
   const orderedSnapshots = orderExperimentModelOptions(snapshots, selectedBaseline);
@@ -135,57 +129,9 @@ export function ManualRunSetupCard({
     [formValues, knownPolicyKeys, selectedBasePolicy]
   );
 
-  const isBenchmark = changedPolicyKeys.size === 0;
-
-  // An instrument holding a changed value is always shown, even if it was never ticked, so a policy
-  // override can never sit hidden behind a collapsed section.
-  const visibleInstruments = useMemo(
-    () => deriveVisibleInstruments(activeInstruments, changedPolicyKeys),
-    [activeInstruments, changedPolicyKeys]
-  );
-
-  // The benchmark choice reflects both conditions: nothing changed *and* no instrument opened.
-  // Selecting an instrument unticks it straight away, so the two choices never read as
-  // simultaneously active while the user is part-way through setting a value.
-  const benchmarkSelected = isBenchmark && visibleInstruments.size === 0;
-
-  const resetKeysToBaseline = (keys: readonly string[]) => {
-    if (!selectedBasePolicy) return;
-    for (const key of keys) {
-      const parameter = parametersByKey.get(key);
-      const baseValue = selectedBasePolicy.values[key];
-      if (parameter && baseValue !== undefined) {
-        onFormValueChange(parameter, String(baseValue));
-      }
-    }
-  };
-
-  const selectBenchmark = () => {
-    onActiveInstrumentsChange(new Set());
-    resetKeysToBaseline(INSTRUMENT_POLICY_KEYS);
-  };
-
-  const toggleInstrument = (id: PolicyInstrumentId) => {
-    const instrument = findPolicyInstrument(id);
-    if (!instrument) return;
-    // Turning an instrument off returns its own fields to the baseline policy, so a collapsed section
-    // can never leave a stale override in the submitted scenario.
-    if (visibleInstruments.has(id)) {
-      resetKeysToBaseline(instrument.keys);
-      const next = new Set(activeInstruments);
-        next.delete(id);
-      onActiveInstrumentsChange(next);
-      return;
-    }
-    onActiveInstrumentsChange(new Set(activeInstruments).add(id));
-  };
-
-  const scenarioSentence =
-    isBenchmark && !benchmarkSelected
-      ? 'Set a value on the selected instrument, or this scenario will run as the unchanged baseline policy.'
-      : describeScenarioPolicy(changedPolicyKeys);
-  const policyTypeSummary = isBenchmark
-    ? BENCHMARK_OPTION.label
+  const scenarioSentence = describeScenarioPolicy(changedPolicyKeys);
+  const policyTypeSummary = changedPolicyKeys.size === 0
+    ? 'No settings changed'
     : changedInstrumentLabels(changedPolicyKeys).join(' + ');
 
   const advancedSummary = [
@@ -194,7 +140,14 @@ export function ManualRunSetupCard({
     `up to ${maxWorkers || '—'} parallel workers`
   ].filter(Boolean);
 
-  const shownInstruments = POLICY_INSTRUMENTS.filter((instrument) => visibleInstruments.has(instrument.id));
+  const handleReferencePolicyChange = (nextBasePolicy: BasePolicyId) => {
+    if (nextBasePolicy === basePolicy) return;
+    if (
+      changedPolicyKeys.size > 0 &&
+      !window.confirm(`Change reference policy to ${nextBasePolicy}? This will reset the policy settings shown below.`)
+    ) return;
+    onBasePolicyChange(nextBasePolicy);
+  };
 
   return (
     <article className="scenario-builder-surface">
@@ -206,7 +159,7 @@ export function ManualRunSetupCard({
         <>
           <div className="scenario-builder-heading">
             <h2>Create a new policy scenario</h2>
-            <p>Define the evidence, baseline and policy change, then review and run the matched comparison.</p>
+            <p>Name the scenario, choose a model, set the policy and review the technical details.</p>
           </div>
           {draftNotice && <p className="info-banner">{draftNotice}</p>}
           <nav className="scenario-stepper" aria-label="Scenario sections">
@@ -276,93 +229,53 @@ export function ManualRunSetupCard({
                   </label>
               </section>
 
-              <section hidden={activeStep !== 2} id="baseline-policy" className="scenario-section scenario-step-page" aria-labelledby="baseline-policy-heading">
-                <h3 id="baseline-policy-heading">Baseline policy regime</h3>
-                <p className="scenario-section-intro">The real-world rulebook the intervention departs from. It supplies the starting value for every policy setting.</p>
-                  <label className="scenario-field">
-                    <InfoLabel label="Baseline policy regime" info={SETTING_HELP.basePolicy} />
-                    <select
-                      value={basePolicy}
-                      disabled={formDisabled}
-                      onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}
-                    >
-                      {basePolicies.map((policy) => (
-                        <option key={policy.id} value={policy.id}>
-                          {policy.title}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                {selectedBasePolicy ? (
-                  <div className="scenario-reference-note">
-                    <p>
-                      <strong>{selectedBasePolicy.title}</strong>
-                    </p>
-                    <p>{selectedBasePolicy.summary}</p>
-                  </div>
-                ) : null}
-              </section>
-
-              <section hidden={activeStep !== 3} id="policy-change" className="scenario-section scenario-step-page" aria-labelledby="policy-change-heading">
-                <h3 id="policy-change-heading">Policy change</h3>
+              <section hidden={activeStep !== 2} id="policy-settings" className="scenario-section scenario-step-page scenario-policy-settings-page" aria-labelledby="policy-settings-heading">
+                <h3 id="policy-settings-heading">Set the policy</h3>
                 <p className="scenario-section-intro">
-                  Changes applied on top of the baseline policy. Select an instrument to reveal its settings; combine
-                  instruments to test how they interact.
+                  Choose a reference policy year, then edit any settings you want to test. Settings left unchanged will retain that year&rsquo;s values.
                 </p>
-                <div className="policy-choice-grid" role="group" aria-label="Policy change">
-                  <label className={`policy-choice ${benchmarkSelected ? 'selected' : ''}`}>
-                    <input
-                      type="checkbox"
-                      name="policy-benchmark"
-                      checked={benchmarkSelected}
-                      disabled={formDisabled}
-                      onChange={selectBenchmark}
-                    />
-                    <span>
-                      <strong>{BENCHMARK_OPTION.label}</strong>
-                      <small>{BENCHMARK_OPTION.description}</small>
-                    </span>
-                  </label>
-                  {POLICY_INSTRUMENTS.map((instrument) => (
-                    <label
-                      className={`policy-choice ${visibleInstruments.has(instrument.id) ? 'selected' : ''}`}
-                      key={instrument.id}
-                    >
-                      <input
-                        type="checkbox"
-                        name={`policy-${instrument.id}`}
-                        value={instrument.id}
-                        checked={visibleInstruments.has(instrument.id)}
-                        disabled={formDisabled}
-                        onChange={() => toggleInstrument(instrument.id)}
-                      />
-                      <span>
-                        <strong>{instrument.label}</strong>
-                        <small>{instrument.description}</small>
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                <label className="scenario-field scenario-reference-policy-field">
+                  <InfoLabel label="Reference policy year" info={SETTING_HELP.basePolicy} />
+                  <select value={basePolicy} disabled={formDisabled} onChange={(event) => handleReferencePolicyChange(event.target.value as BasePolicyId)}>
+                    {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.id} policy</option>)}
+                  </select>
+                </label>
 
-                {shownInstruments.map((instrument) => (
-                  <div
-                    key={instrument.id}
-                    className="scenario-instrument-panel"
-                    aria-labelledby={`instrument-${instrument.id}-heading`}
-                  >
-                    <h4 id={`instrument-${instrument.id}-heading`}>{instrument.heading}</h4>
-                    <p className="scenario-section-intro">{instrument.intro}</p>
-                    <div className="scenario-fields-grid">
-                      {instrument.keys.map((key) => {
+                <p className={`scenario-policy-status ${changedPolicyKeys.size > 0 ? 'has-changes' : ''}`} aria-live="polite">
+                  {changedPolicyKeys.size === 0
+                    ? `No changes yet — this scenario will use the ${basePolicy} reference policy.`
+                    : `${changedPolicyKeys.size} ${changedPolicyKeys.size === 1 ? 'setting' : 'settings'} changed from the ${basePolicy} reference policy.`}
+                </p>
+
+                <div className="scenario-policy-accordions">
+                  {POLICY_SETTING_GROUPS.map((group) => {
+                    const groupChangedCount = group.keys.filter((key) => changedPolicyKeys.has(key)).length;
+                    return <details
+                      key={group.id}
+                      open={openPolicyGroups.has(group.id)}
+                      onToggle={(event) => {
+                        const isOpen = event.currentTarget.open;
+                        setOpenPolicyGroups((current) => {
+                          const next = new Set(current);
+                          if (isOpen) next.add(group.id);
+                          else next.delete(group.id);
+                          return next;
+                        });
+                      }}
+                      className="scenario-policy-accordion"
+                    >
+                      <summary>
+                        <span>{group.heading}</span>
+                        {groupChangedCount > 0 && <span className="scenario-accordion-change-count">{groupChangedCount} changed</span>}
+                      </summary>
+                      <div className="scenario-policy-accordion-content">
+                        <p className="scenario-section-intro">{group.intro}</p>
+                        <div className="scenario-fields-grid">
+                      {group.keys.map((key) => {
                         const parameter = parametersByKey.get(key);
-                        if (!parameter) {
-                          return null;
-                        }
+                        if (!parameter) return null;
                         const baseValue = selectedBasePolicy?.values[key];
-                        const baseText = formatPolicyFieldValue(
-                          key,
-                          baseValue === undefined ? undefined : String(baseValue)
-                        );
+                        const baseText = formatPolicyFieldValue(key, baseValue === undefined ? undefined : String(baseValue));
                         const isChanged = changedPolicyKeys.has(key);
                         return (
                           <div key={key} className={`scenario-policy-field ${isChanged ? 'is-overridden' : ''}`}>
@@ -378,22 +291,24 @@ export function ManualRunSetupCard({
                             <p className="scenario-policy-baseline-note">
                               {isChanged ? (
                                 <>
-                                  <span className="scenario-policy-changed-chip">Override</span>
-                                  {`baseline ${baseText}`}
+                                  <span className="scenario-policy-changed-chip">Changed</span>
+                                  {`Reference: ${baseText}`}
                                 </>
                               ) : (
-                                `Baseline value: ${baseText}`
+                                `Reference: ${baseText}`
                               )}
                             </p>
                           </div>
                         );
                       })}
-                    </div>
-                  </div>
-                ))}
+                        </div>
+                      </div>
+                    </details>;
+                  })}
+                </div>
               </section>
 
-              <section hidden={activeStep !== 4} id="technical-details" className="scenario-section scenario-step-page" aria-labelledby="technical-details-heading">
+              <section hidden={activeStep !== 3} id="technical-details" className="scenario-section scenario-step-page" aria-labelledby="technical-details-heading">
                   <div className="scenario-advanced-panel-heading">
                     <h3 id="technical-details-heading">Technical details</h3>
                     <p>
@@ -446,7 +361,7 @@ export function ManualRunSetupCard({
                   </button>
                 </div>
               </div>
-              <p className="scenario-matched-baseline-note">Results compare the intervention with a matched baseline using the same calibrated model and run settings.</p>
+              <p className="scenario-matched-baseline-note">Results compare the edited policy settings with the unchanged reference policy using the same calibrated model and run settings.</p>
               {submissionDisabled && !manualSubmissionLockedBySensitivity && (
                 <p className="scenario-submission-note">Run policy scenario is unavailable: {submissionDisabledReason}</p>
               )}
@@ -462,14 +377,14 @@ export function ManualRunSetupCard({
                   <dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline || 'Not selected'}</dd>
                 </div>
                 <div>
-                  <dt>Baseline policy regime</dt>
-                  <dd>{selectedBasePolicy?.title ?? 'Not selected'}</dd>
+                  <dt>Reference policy</dt>
+                  <dd>{selectedBasePolicy ? `${selectedBasePolicy.id} policy` : 'Not selected'}</dd>
                 </div>
                 <div>
-                  <dt>Policy change</dt>
+                  <dt>Policy settings</dt>
                   <dd>{policyTypeSummary}</dd>
                 </div>
-                {shownInstruments.flatMap((instrument) =>
+                {POLICY_INSTRUMENTS.flatMap((instrument) =>
                   instrument.keys
                     .filter((key) => parametersByKey.has(key) && changedPolicyKeys.has(key))
                     .map((key) => (
@@ -486,7 +401,7 @@ export function ManualRunSetupCard({
               <div className="scenario-summary-advanced">
                 <h4>Run specification</h4>
                 <p>{advancedSummary.join(' · ')}</p>
-                <p>Matched-baseline comparison uses the same model, duration, repetitions and seed process.</p>
+                <p>The reference comparison uses the same model, duration, repetitions and seed process.</p>
               </div>
             </aside>
           </div>

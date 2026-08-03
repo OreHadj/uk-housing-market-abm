@@ -1,6 +1,5 @@
 import type { BasePolicyId, ModelRunOptionsPayload } from '../../shared/types';
 import type { FormValue } from './experimentRunDefaults';
-import type { PolicyInstrumentId } from './manualScenarioPolicy';
 
 const STORAGE_PREFIX = 'scenario-draft:v1:';
 
@@ -10,7 +9,6 @@ export interface ScenarioDraftV1 {
   calibratedModel: string;
   basePolicy: BasePolicyId;
   formValues: Record<string, FormValue>;
-  selectedInstruments: PolicyInstrumentId[];
   maxWorkers: string;
 }
 
@@ -40,7 +38,6 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
       calibratedModel: parsed.calibratedModel,
       basePolicy: typeof parsed.basePolicy === 'string' ? parsed.basePolicy : '2024',
       formValues: parsed.formValues && typeof parsed.formValues === 'object' ? parsed.formValues : {},
-      selectedInstruments: Array.isArray(parsed.selectedInstruments) ? parsed.selectedInstruments : [],
       maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1',
     };
   } catch {
@@ -66,8 +63,7 @@ export function updateScenarioDraftModel(draftId: string, calibratedModel: strin
 export function restoreScenarioDraft(
   stored: ScenarioDraftV1,
   options: ModelRunOptionsPayload,
-  fallback: ScenarioDraftV1,
-  validInstrumentIds: ReadonlySet<string>
+  fallback: ScenarioDraftV1
 ): RestoredScenarioDraft {
   let choicesChanged = false;
   const snapshotVersions = new Set(options.snapshots.map((item) => item.version));
@@ -84,14 +80,12 @@ export function restoreScenarioDraft(
     if (parameterKeys.has(key) && (typeof value === 'string' || typeof value === 'boolean')) formValues[key] = value;
     else choicesChanged = true;
   }
-  const selectedInstruments = stored.selectedInstruments.filter((id) => validInstrumentIds.has(id));
-  if (selectedInstruments.length !== stored.selectedInstruments.length) choicesChanged = true;
   const parsedMaxWorkers = Number(stored.maxWorkers);
   const maxWorkers = Number.isInteger(parsedMaxWorkers) && parsedMaxWorkers > 0 ? stored.maxWorkers : fallback.maxWorkers;
   if (maxWorkers !== stored.maxWorkers) choicesChanged = true;
 
   return {
     choicesChanged,
-    draft: { ...stored, calibratedModel, basePolicy, formValues, selectedInstruments, maxWorkers }
+    draft: { ...stored, calibratedModel, basePolicy, formValues, maxWorkers }
   };
 }

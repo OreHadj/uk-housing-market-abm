@@ -40,7 +40,7 @@ export const POLICY_INSTRUMENTS: readonly PolicyInstrumentDefinition[] = [
     description: 'Cap the share of new lending at or above an income multiple.',
     heading: 'Loan-to-income (LTI) flow limits',
     intro:
-      "The income multiple defining a high-LTI loan, the maximum share of a lender's new lending allowed at or above it, and the rolling window the share is enforced over. The 2024 baseline is 4.5× income with a 15% flow limit over 12 months.",
+      "The income multiple defining a high-LTI loan, the maximum share of a lender's new lending allowed at or above it, and the rolling window the share is enforced over. The 2024 reference policy uses 4.5× income with a 15% flow limit over 12 months.",
     keys: [
       'CENTRAL_BANK_LTI_SOFT_MAX_FTB',
       'CENTRAL_BANK_LTI_SOFT_MAX_HM',
@@ -55,7 +55,7 @@ export const POLICY_INSTRUMENTS: readonly PolicyInstrumentDefinition[] = [
     description: 'Cap mortgage costs as a share of borrower income.',
     heading: 'Mortgage affordability cap',
     intro:
-      'The maximum share of income a mortgage may consume. The 2024 baseline sets this close to 100%, leaving it non-binding.',
+      'The maximum share of income a mortgage may consume. The 2024 reference policy sets this close to 100%, leaving it non-binding.',
     keys: ['CENTRAL_BANK_AFFORDABILITY_HARD_MAX']
   },
   {
@@ -66,6 +66,40 @@ export const POLICY_INSTRUMENTS: readonly PolicyInstrumentDefinition[] = [
     intro:
       'The minimum ratio of expected rent to mortgage interest on new buy-to-let lending. A floor of 0 leaves it non-binding.',
     keys: ['CENTRAL_BANK_ICR_HARD_MIN']
+  }
+];
+
+export interface PolicySettingGroupDefinition {
+  id: string;
+  heading: string;
+  intro: string;
+  keys: readonly string[];
+  defaultOpen: boolean;
+}
+
+function requiredInstrument(id: PolicyInstrumentId): PolicyInstrumentDefinition {
+  const instrument = POLICY_INSTRUMENTS.find((item) => item.id === id);
+  if (!instrument) throw new Error(`Missing policy instrument definition: ${id}`);
+  return instrument;
+}
+
+const BANK_RATE = requiredInstrument('bankRate');
+const LTV = requiredInstrument('ltv');
+const LTI = requiredInstrument('lti');
+const AFFORDABILITY = requiredInstrument('affordability');
+const ICR = requiredInstrument('icr');
+
+/** Display groups for the always-visible policy editor, derived from the existing instrument metadata. */
+export const POLICY_SETTING_GROUPS: readonly PolicySettingGroupDefinition[] = [
+  { ...BANK_RATE, defaultOpen: true },
+  { ...LTV, defaultOpen: true },
+  { ...LTI, defaultOpen: true },
+  {
+    id: 'affordability-and-btl',
+    heading: 'Affordability and buy-to-let requirements',
+    intro: `${AFFORDABILITY.intro} ${ICR.intro}`,
+    keys: [...AFFORDABILITY.keys, ...ICR.keys],
+    defaultOpen: false
   }
 ];
 
@@ -170,13 +204,13 @@ export function changedInstrumentLabels(changedPolicyKeys: ReadonlySet<string>):
  */
 export function describeScenarioPolicy(changedPolicyKeys: ReadonlySet<string>): string {
   if (changedPolicyKeys.size === 0) {
-    return 'This scenario runs the selected baseline policy without an additional policy change.';
+    return 'This scenario uses the selected reference policy without any setting changes.';
   }
   const labels = changedInstrumentLabels(changedPolicyKeys);
   if (labels.length === 0) {
-    return 'Change one or more policy settings relative to the baseline policy.';
+    return 'Change one or more settings relative to the reference policy.';
   }
   const last = labels[labels.length - 1];
   const joined = labels.length === 1 ? last : `${labels.slice(0, -1).join(', ')} and ${last}`;
-  return `This scenario changes ${joined} relative to the baseline policy.`;
+  return `This scenario changes ${joined} relative to the reference policy.`;
 }

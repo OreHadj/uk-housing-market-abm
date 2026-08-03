@@ -6,7 +6,7 @@ export type ExperimentControlMode = 'manual' | 'sensitivity';
 export const SETTING_HELP = {
   sensitivityPolicyParameter: 'Policy instrument varied across the analysis. Choose the one to test against the selected baseline policy.',
   sensitivityPolicyPackage: 'One or more related central-bank policy settings varied together across the analysis.',
-  basePolicy: 'The real-world policy regime every untouched setting is held at, and that results are compared against.',
+  basePolicy: 'The reference year supplies the starting value for every policy setting. Any setting you leave unchanged keeps that year’s value.',
   optionalExperimentTitle: 'Short label used to identify this experiment in results and logs.',
   optionalRunTitle: 'Short label used to identify this run in results and logs.',
   calibrationParameterVersion: 'A saved configuration of model inputs and behavioural assumptions. Its behavioural parameters were adjusted until the model reflected patterns in observed UK housing statistics and survey data.',

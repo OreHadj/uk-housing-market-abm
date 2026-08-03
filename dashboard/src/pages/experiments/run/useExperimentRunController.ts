@@ -33,7 +33,6 @@ import {
   type FormValue
 } from '../../../lib/experimentRunDefaults';
 import { useExperimentLogs } from '../../run-experiments/useExperimentLogs';
-import { POLICY_INSTRUMENTS, type PolicyInstrumentId } from '../../../lib/manualScenarioPolicy';
 import {
   clearScenarioDraft,
   readScenarioDraft,
@@ -56,8 +55,6 @@ export interface ExperimentRunController {
   warnings: ModelRunWarning[];
   draftId: string;
   draftNotice: string;
-  activeInstruments: ReadonlySet<PolicyInstrumentId>;
-  setActiveInstruments: (value: ReadonlySet<PolicyInstrumentId>) => void;
   sensitivityTitle: string;
   setSensitivityTitle: (value: string) => void;
   sensitivityBasePolicy: BasePolicyId;
@@ -226,7 +223,6 @@ export function useExperimentRunController({
   const [manualMaxWorkers, setManualMaxWorkers] = useState<string>('1');
   const [manualMaxWorkersTouched, setManualMaxWorkersTouched] = useState<boolean>(false);
   const [warnings, setWarnings] = useState<ModelRunWarning[]>([]);
-  const [activeInstruments, setActiveInstruments] = useState<ReadonlySet<PolicyInstrumentId>>(new Set());
   const [draftHydrated, setDraftHydrated] = useState(false);
   const [draftNotice, setDraftNotice] = useState('');
 
@@ -320,17 +316,14 @@ export function useExperimentRunController({
           const draftInitialValues = toInitialFormValues(payload.parameters, storedBasePolicyOption);
           const fallback: ScenarioDraftV1 = {
             version: 1, title: '', calibratedModel: payload.requestedBaseline, basePolicy: defaultBasePolicy,
-            formValues: draftInitialValues, selectedInstruments: [],
+            formValues: draftInitialValues,
             maxWorkers: defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap),
           };
-          const restored = restoreScenarioDraft(
-            stored, payload, fallback, new Set(POLICY_INSTRUMENTS.map((instrument) => instrument.id))
-          );
+          const restored = restoreScenarioDraft(stored, payload, fallback);
           setSelectedBaseline(restored.draft.calibratedModel);
           setBasePolicyState(restored.draft.basePolicy);
           setTitle(restored.draft.title);
           setFormValues(restored.draft.formValues);
-          setActiveInstruments(new Set(restored.draft.selectedInstruments));
           setManualMaxWorkers(restored.draft.maxWorkers);
           setManualMaxWorkersTouched(true);
           setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
@@ -354,10 +347,9 @@ export function useExperimentRunController({
       calibratedModel: selectedBaseline,
       basePolicy,
       formValues,
-      selectedInstruments: [...activeInstruments],
       maxWorkers: manualMaxWorkers
     });
-  }, [activeInstruments, basePolicy, draftHydrated, draftId, formValues, manualMaxWorkers, options, selectedBaseline, title]);
+  }, [basePolicy, draftHydrated, draftId, formValues, manualMaxWorkers, options, selectedBaseline, title]);
 
   const refreshJobs = async () => {
     try {
@@ -605,7 +597,6 @@ export function useExperimentRunController({
     }
     setBasePolicyState(nextBasePolicy);
     setFormValues((current) => applyBasePolicyToFormValues(options.parameters, option, current));
-    setActiveInstruments(new Set());
     setWarnings([]);
   };
 
@@ -838,8 +829,6 @@ export function useExperimentRunController({
     warnings,
     draftId,
     draftNotice,
-    activeInstruments,
-    setActiveInstruments,
     sensitivityTitle,
     setSensitivityTitle,
     sensitivityBasePolicy,

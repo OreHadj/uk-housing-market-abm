@@ -21,8 +21,6 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled, initialSce
       draftId={controller.draftId}
       draftNotice={controller.draftNotice}
       initialStep={initialScenarioStep}
-      activeInstruments={controller.activeInstruments}
-      onActiveInstrumentsChange={controller.setActiveInstruments}
       selectedBaseline={controller.selectedBaseline}
       onBaselineChange={controller.onBaselineChange}
       basePolicies={controller.options?.basePolicies ?? []}

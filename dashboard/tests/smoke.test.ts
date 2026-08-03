@@ -123,7 +123,6 @@ import {
   deriveChangedPolicyKeys,
   deriveVisibleInstruments,
   describeScenarioPolicy,
-  findPolicyInstrument,
   instrumentForPolicyKey
 } from '../src/lib/manualScenarioPolicy.js';
 import {
@@ -5486,7 +5485,6 @@ try {
     calibratedModel: 'removed-model',
     basePolicy: 'removed-policy' as never,
     formValues: { ...defaultExperimentFormValues, REMOVED_PARAMETER: '42' },
-    selectedInstruments: ['ltv', 'removed-instrument' as never],
     maxWorkers: '3',
   };
   const restoredDraft = restoreScenarioDraft(staleDraft, runOptions, {
@@ -5494,14 +5492,12 @@ try {
     calibratedModel: runOptions.requestedBaseline,
     basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
     formValues: defaultExperimentFormValues,
-    selectedInstruments: [],
     maxWorkers: '1'
-  }, new Set(POLICY_INSTRUMENTS.map((instrument) => instrument.id)));
+  });
   assert.equal(restoredDraft.choicesChanged, true, 'Expected stale draft choices to produce a restoration notice');
   assert.equal(restoredDraft.draft.calibratedModel, runOptions.requestedBaseline, 'Expected a stale model to fall back safely');
   assert.equal(restoredDraft.draft.basePolicy, DEFAULT_EXPERIMENT_BASE_POLICY_ID, 'Expected a stale policy to fall back safely');
   assert.ok(!('REMOVED_PARAMETER' in restoredDraft.draft.formValues), 'Expected stale parameter keys to be discarded');
-  assert.deepEqual(restoredDraft.draft.selectedInstruments, ['ltv'], 'Expected valid instrument choices alone to survive');
   markSmokeStep('rendering experiment setup controls');
   const manualSetupMarkup = renderToStaticMarkup(
     createElement(
@@ -5577,33 +5573,31 @@ try {
     'Expected manual and sensitivity setup controls to render shared info indicators'
   );
   const manualSetupText = visibleText(manualSetupMarkup);
-  // --- Five-stage structure ----------------------------------------------------------------
+  // --- Four-stage structure ----------------------------------------------------------------
   assert.ok(
     manualSetupText.includes('Scenario name') &&
       manualSetupText.includes('Model version') &&
-      manualSetupText.includes('Baseline policy regime') &&
-      manualSetupText.includes('Policy change') &&
+      manualSetupText.includes('Policy settings') &&
       manualSetupText.includes('Technical details'),
-    'Expected the manual scenario form to present all five policy-scenario stages'
+    'Expected the manual scenario form to present all four policy-scenario stages'
   );
   assert.ok(
     manualSetupMarkup.indexOf('scenario-details-heading') < manualSetupMarkup.indexOf('model-evidence-heading') &&
-      manualSetupMarkup.indexOf('model-evidence-heading') < manualSetupMarkup.indexOf('baseline-policy-heading') &&
-      manualSetupMarkup.indexOf('baseline-policy-heading') < manualSetupMarkup.indexOf('policy-change-heading') &&
-      manualSetupMarkup.indexOf('policy-change-heading') < manualSetupMarkup.indexOf('technical-details-heading'),
-    'Expected the five sections to appear in the agreed order'
+      manualSetupMarkup.indexOf('model-evidence-heading') < manualSetupMarkup.indexOf('policy-settings-heading') &&
+      manualSetupMarkup.indexOf('policy-settings-heading') < manualSetupMarkup.indexOf('technical-details-heading'),
+    'Expected the four sections to appear in the agreed order'
   );
-  for (const label of ['Scenario name', 'Model version', 'Baseline policy', 'Policy change', 'Technical details']) {
+  for (const label of ['Scenario name', 'Model version', 'Policy settings', 'Technical details']) {
     assert.ok(manualSetupText.includes(label), `Expected the section stepper to offer ${label}`);
   }
 
   // --- Model evidence and baseline policy are distinct stages -------------------------------
   const modelBaselineBlock = manualSetupMarkup.slice(
     manualSetupMarkup.indexOf('model-evidence-heading'),
-    manualSetupMarkup.indexOf('baseline-policy-heading')
+    manualSetupMarkup.indexOf('policy-settings-heading')
   );
   assert.ok(
-    visibleText(modelBaselineBlock).includes('Model version') && !visibleText(modelBaselineBlock).includes('Baseline policy regime'),
+    visibleText(modelBaselineBlock).includes('Model version') && !visibleText(modelBaselineBlock).includes('Reference policy year'),
     'Expected calibrated model selection to have its own evidence stage'
   );
   assert.ok(
@@ -5617,24 +5611,29 @@ try {
     'Expected the selected model to be named and to state what it was built from and fitted to'
   );
 
-  // --- Policy change exposes all six instrument choices ------------------------------------
+  // --- Policy settings are directly editable in accessible groups --------------------------
   assert.ok(
-    manualSetupMarkup.includes('role="group"') && manualSetupMarkup.includes('name="policy-benchmark"'),
-    'Expected policy choices to be a semantic multi-select group with a benchmark option'
+    manualSetupText.includes('Set the policy') &&
+      manualSetupText.includes('Choose a reference policy year, then edit any settings you want to test.') &&
+      manualSetupText.includes('Reference policy year'),
+    'Expected Step 3 to combine reference-year selection with direct policy editing'
   );
-  for (const instrument of POLICY_INSTRUMENTS) {
-    assert.ok(
-      manualSetupMarkup.includes(`name="policy-${instrument.id}"`),
-      `Expected a Policy change choice for the ${instrument.label} instrument`
-    );
-    assert.ok(
-      manualSetupText.includes(instrument.label),
-      `Expected the ${instrument.label} instrument to be labelled in Policy change`
-    );
-  }
   assert.ok(
-    manualSetupText.includes('No additional policy change'),
-    'Expected the benchmark choice to be offered as "No additional policy change"'
+    !manualSetupMarkup.includes('name="policy-benchmark"') &&
+      !manualSetupMarkup.includes('name="policy-ltv"') &&
+      !manualSetupText.includes('No additional policy change'),
+    'Expected no benchmark or instrument-selection controls'
+  );
+  for (const heading of ['Bank Rate', 'Loan-to-value (LTV) limits', 'Loan-to-income (LTI) flow limits', 'Affordability and buy-to-let requirements']) {
+    assert.ok(manualSetupText.includes(heading), `Expected a policy accordion for ${heading}`);
+  }
+  assert.ok((manualSetupMarkup.match(/<details/g) ?? []).length >= 4, 'Expected native details elements for policy groups');
+  assert.ok(manualSetupText.includes('No changes yet — this scenario will use the 2024 reference policy.'), 'Expected the unchanged-policy status');
+  assert.ok(manualSetupText.includes('2011 policy') && manualSetupText.includes('2024 policy'), 'Expected concise reference-policy options');
+  assert.ok(
+    fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'), 'utf-8')
+      .includes('Change reference policy to ${nextBasePolicy}? This will reset the policy settings shown below.'),
+    'Expected confirmation before resetting edited policy values'
   );
 
   // --- All 11 policy parameters are reachable from Policy change ---------------------------
@@ -5714,25 +5713,12 @@ try {
     'Expected an emptied policy field to keep its instrument on screen'
   );
 
-  // Turning an instrument off resets its own parameters and nothing else.
-  const ltiInstrument = findPolicyInstrument('lti');
-  assert.ok(ltiInstrument, 'Expected an LTI flow limits instrument');
   const mixedOverrides: Record<string, string> = {
     ...baselineFormValues,
     CENTRAL_BANK_LTI_SOFT_MAX_FTB: '4',
     CENTRAL_BANK_LTV_HARD_MAX_HM: '0.8'
   };
-  const afterLtiReset = { ...mixedOverrides };
-  for (const key of ltiInstrument.keys) {
-    afterLtiReset[key] = String(basePolicy2024.values[key]);
-  }
-  assert.deepEqual(
-    [...deriveChangedPolicyKeys(afterLtiReset, basePolicy2024.values, allPolicyKeys)],
-    ['CENTRAL_BANK_LTV_HARD_MAX_HM'],
-    'Expected turning off an instrument to reset only its own parameters'
-  );
-
-  // Selecting the benchmark resets all 11 policy parameters.
+  // Restoring exact reference values clears every derived changed state.
   const afterBenchmarkReset = { ...mixedOverrides };
   for (const key of CENTRAL_BANK_POLICY_KEYS) {
     afterBenchmarkReset[key] = String(basePolicy2024.values[key]);
@@ -5740,7 +5726,7 @@ try {
   assert.equal(
     deriveChangedPolicyKeys(afterBenchmarkReset, basePolicy2024.values, allPolicyKeys).size,
     0,
-    'Expected selecting the benchmark to reset every policy parameter to the baseline'
+    'Expected restoring the reference values to clear every changed parameter'
   );
 
   // Switching the baseline policy cannot retain a hidden stale override: the run controller rewrites
@@ -5752,10 +5738,6 @@ try {
     deriveChangedPolicyKeys(switched, basePolicy2011.values, allPolicyKeys).size,
     0,
     'Expected a base-policy switch to leave no stale policy override behind'
-  );
-  assert.ok(
-    fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/useExperimentRunController.ts'), 'utf-8').includes('setActiveInstruments(new Set());'),
-    'Expected the controller to reconcile instrument selection when the baseline policy changes'
   );
 
   // Combined instruments are all described, not just LTV and LTI.
@@ -5796,14 +5778,14 @@ try {
   );
   const dashboardStyles = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
   assert.ok(
-    dashboardStyles.includes('.scenario-instrument-panel .scenario-fields-grid'),
-    'Expected the instrument field grid to collapse to a single column on narrow viewports'
+    dashboardStyles.includes('.scenario-policy-accordion') && dashboardStyles.includes('.scenario-fields-grid'),
+    'Expected styled policy accordions with responsive field grids'
   );
 
   assert.ok(
     manualSetupMarkup.includes('class="scenario-summary"') &&
-      manualSetupText.includes('This scenario runs the selected baseline policy without an additional policy change.'),
-    'Expected manual setup to render a live plain-English benchmark summary by default'
+      manualSetupText.includes('This scenario uses the selected reference policy without any setting changes.'),
+    'Expected manual setup to render a live plain-English reference-policy summary by default'
   );
   const manualRunSetupPanelSource = fs.readFileSync(
     path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/ManualRunSetupPanel.tsx'),
@@ -5827,7 +5809,7 @@ try {
   );
   assert.ok(
     manualSetupText.includes('Calibrated model') &&
-      manualSetupText.includes('Baseline policy regime') &&
+      manualSetupText.includes('Reference policy') &&
       visibleText(sensitivitySetupMarkup).includes('Policy instrument to vary') &&
       visibleText(sensitivitySetupMarkup).includes('Baseline policy'),
     'Expected experiment setup controls to keep user-facing labels visible'
@@ -5876,22 +5858,18 @@ try {
     assert.ok(label, `Expected a display label for policy key ${key}`);
     assert.ok(
       allInstrumentsText.includes(label),
-      `Expected policy field "${label}" to be rendered under Policy change`
-    );
-  }
-  for (const instrument of POLICY_INSTRUMENTS) {
-    assert.ok(
-      manualSetupAllInstrumentsMarkup.includes(`instrument-${instrument.id}-heading`),
-      `Expected the ${instrument.label} instrument panel to be revealed by a changed value`
+      `Expected policy field "${label}" to be rendered under Policy settings`
     );
   }
   assert.ok(
-    (allInstrumentsText.match(/Override/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length,
-    'Expected every overridden policy field to be marked as an override against its baseline value'
+    (allInstrumentsText.match(/Changed/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length &&
+      (allInstrumentsText.match(/Reference:/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected every changed policy field to show a restrained marker and its reference value'
   );
   assert.ok(
-    !allInstrumentsText.includes('This scenario runs the selected baseline policy without an additional policy change.'),
-    'Expected a scenario with overrides not to describe itself as the unchanged baseline'
+    !allInstrumentsText.includes('This scenario uses the selected reference policy without any setting changes.') &&
+      allInstrumentsText.includes('11 settings changed from the 2024 reference policy.'),
+    'Expected a scenario with changes to report its derived changed-setting count'
   );
   assert.equal(
     /CENTRAL_BANK_|<small>SEED<\/small>|<small>N_STEPS<\/small>/.test(
