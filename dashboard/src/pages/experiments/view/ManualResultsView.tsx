@@ -153,10 +153,9 @@ export function ManualResultsView({
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
-  // A transient hover/focus preview takes precedence over the summary selection made by clicking
-  // a row. Neither state changes the baseline or comparison driving the results page.
+  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
+  // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
   const [previewRunId, setPreviewRunId] = useState<string>('');
-  const [summaryRunId, setSummaryRunId] = useState<string>('');
   const [renamingRunId, setRenamingRunId] = useState<string>('');
   const [renameDraft, setRenameDraft] = useState<string>('');
   const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
@@ -841,27 +840,12 @@ export function ManualResultsView({
                           'run-item',
                           isBaselineSelected ? 'selected-baseline' : '',
                           isComparisonSelected ? 'selected-comparison' : '',
-                          previewRunId === run.runId || summaryRunId === run.runId ? 'is-previewed' : ''
+                          previewRunId === run.runId ? 'is-previewed' : ''
                         ]
                           .filter(Boolean)
                           .join(' ')}
                         onMouseEnter={() => setPreviewRunId(run.runId)}
                         onFocus={() => setPreviewRunId(run.runId)}
-                        onClick={(event) => {
-                          if ((event.target as HTMLElement).closest('button, input, form')) {
-                            return;
-                          }
-                          setSummaryRunId(run.runId);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) {
-                            return;
-                          }
-                          event.preventDefault();
-                          setSummaryRunId(run.runId);
-                        }}
-                        tabIndex={0}
-                        aria-label={`Show ${getRunPrimaryLabel(run)} in the run summary`}
                       >
                         <div className="run-item-head">
                           <div className="run-item-name">
@@ -961,12 +945,7 @@ export function ManualResultsView({
                   })}
                 </ul>
                 {(() => {
-                  const detailRun =
-                    runById.get(previewRunId) ??
-                    runById.get(summaryRunId) ??
-                    runById.get(baselineRunId) ??
-                    historyRuns[0] ??
-                    null;
+                  const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
                   if (!detailRun) {
                     return null;
                   }
@@ -974,11 +953,7 @@ export function ManualResultsView({
                   return (
                     <div className="run-history-preview" aria-live="polite">
                       <p className="run-history-preview-eyebrow">
-                        {previewRunId === detailRun.runId
-                          ? 'Previewed run'
-                          : summaryRunId === detailRun.runId
-                            ? 'Summary selection'
-                            : 'Selected run'}
+                        {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
                       </p>
                       <h4>{getRunPrimaryLabel(detailRun)}</h4>
                       <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>

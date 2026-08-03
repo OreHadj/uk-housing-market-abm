@@ -8483,9 +8483,6 @@ assert.ok(
     manualResultsViewSource.includes('<dt>Policy settings</dt>') &&
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
     manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
-    manualResultsViewSource.includes('setSummaryRunId(run.runId)') &&
-    manualResultsViewSource.includes('Show ${getRunPrimaryLabel(run)} in the run summary') &&
-    manualResultsViewSource.includes("event.key !== 'Enter' && event.key !== ' '") &&
     manualResultsViewSource.includes('Run ID:'),
   'Manual result labels should show the experiment name alone and keep provenance in labelled summary fields'
 );
