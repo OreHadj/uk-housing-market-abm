@@ -11,6 +11,11 @@ import { DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../../shared/policyCatalo
 export type FormValue = string | boolean;
 export const DEFAULT_EXPERIMENT_BASE_POLICY_ID: BasePolicyId = '2024';
 
+/** Policy-scenario result pages require core indicators, including when a saved draft disabled them. */
+export function normalizeManualScenarioFormValues(values: Record<string, FormValue>): Record<string, FormValue> {
+  return { ...values, recordCoreIndicators: true };
+}
+
 function applyMinimalRecordDefaults(
   parameters: ModelRunParameterDefinition[],
   values: Record<string, FormValue>

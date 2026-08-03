@@ -1035,11 +1035,7 @@ function alignSeriesByModelTime(seriesByRun: Array<{ runId: string; points: Resu
  * result, so it is read back from the run itself rather than reconstructed from the request that
  * created it. Returns an empty list when the file is missing or unreadable (older or external runs).
  */
-/**
- * Reads the scenario name a run was created with from its manifest. The name is the only record of
- * intent behind a run — the policy table says what was set, the title says why — so it is surfaced
- * wherever runs are listed. Returns null for runs with no manifest (older or externally produced).
- */
+/** Reads the scenario name recorded in a run manifest. Legacy/external runs may have none. */
 const MAX_RUN_TITLE_LENGTH = 120;
 
 function readRunTitle(runPath: string): string | null {
@@ -1048,11 +1044,9 @@ function readRunTitle(runPath: string): string | null {
       run?: { title?: unknown };
     };
     const title = manifest.run?.title;
-    if (typeof title !== 'string') {
-      return null;
-    }
-    const trimmed = title.trim();
-    return trimmed === '' ? null : trimmed;
+    if (typeof title !== 'string') return null;
+    const trimmedTitle = title.trim();
+    return trimmedTitle === '' ? null : trimmedTitle;
   } catch {
     return null;
   }

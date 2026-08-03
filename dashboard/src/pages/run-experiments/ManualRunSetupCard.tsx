@@ -374,7 +374,7 @@ export function ManualRunSetupCard({
               <dl>
                 <div>
                   <dt>Calibrated model</dt>
-                  <dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline || 'Not selected'}</dd>
+                  <dd>{selectedBaseline || 'Not selected'}</dd>
                 </div>
                 <div>
                   <dt>Reference policy</dt>

@@ -54,6 +54,21 @@ type SmoothWindow = 0 | 3 | 12;
 type ManifestTarget = 'baseline' | 'comparison';
 type ManualResultsMode = 'single' | 'compare';
 
+function getRunModelVersion(run: Pick<ResultsRunSummary, 'runId'>): string | null {
+  return extractVersionFromResultsRunId(run.runId);
+}
+
+function getRunPrimaryLabel(run: Pick<ResultsRunSummary, 'runId' | 'title'>): string {
+  const title = run.title?.trim();
+  if (title) return title;
+  const version = getRunModelVersion(run);
+  return version ? formatModelName(version) : run.runId;
+}
+
+function formatRunOptionLabel(run: ResultsRunSummary): string {
+  return getRunPrimaryLabel(run);
+}
+
 interface ManualResultsViewProps {
   canWrite: boolean;
   canDownloadResults: boolean;
@@ -199,14 +214,6 @@ export function ManualResultsView({
     () => buildResultsRunVersionLabelState(comparisonRunId, versions, inProgressVersions),
     [comparisonRunId, inProgressVersions, versions]
   );
-  // Reference runs are named after the snapshot that produced them (`v5o3-output`), so they read
-  // as the model rather than as a raw id. User-titled runs keep their own title.
-  const formatRunOptionLabel = (run: { runId: string; title?: string | null }) => {
-    if (run.title) return `${run.title} — ${run.runId}`;
-    const version = extractVersionFromResultsRunId(run.runId);
-    return version ? `${formatModelName(version)} — ${run.runId}` : run.runId;
-  };
-
   useEffect(() => {
     // Don't canonicalise the URL selection until the runs list has loaded. While it is still
     // loading, `runs` is empty and resolveManualRunSelection() returns an empty selection, which
@@ -498,7 +505,10 @@ export function ManualResultsView({
   const runById = useMemo(() => new Map(historyRuns.map((run) => [run.runId, run])), [historyRuns]);
   // Runs are identified by an opaque timestamped id; the scenario name is what a reader recognises.
   // Fall back to the id whenever a run carries no title so nothing is ever unlabelled.
-  const runLabel = (runId: string) => runById.get(runId)?.title ?? runId;
+  const runLabel = (runId: string) => {
+    const run = runById.get(runId);
+    return run ? getRunPrimaryLabel(run) : runId;
+  };
 
   const submitRename = async (runId: string) => {
     setIsSavingRename(true);
@@ -773,10 +783,9 @@ export function ManualResultsView({
               className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
               onClick={() => setBaselineSelection(historyPreviewRun.runId)}
             >
-              <span className="run-preview-title">{historyPreviewRun.runId}</span>
+              <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
               <span className="run-preview-meta">
                 <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
-                <span>{(historyPreviewRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
                 <span className="run-preview-action">
                   {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
                 </span>
@@ -859,10 +868,7 @@ export function ManualResultsView({
                                 </button>
                               </form>
                             ) : (
-                              <>
-                                <strong>{run.title ?? run.runId}</strong>
-                                {run.title && <span className="run-item-id">{run.runId}</span>}
-                              </>
+                              <strong>{getRunPrimaryLabel(run)}</strong>
                             )}
                           </div>
                           <div className="run-role-chips">
@@ -934,8 +940,8 @@ export function ManualResultsView({
                       <p className="run-history-preview-eyebrow">
                         {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
                       </p>
-                      <h4>{detailRun.title ?? detailRun.runId}</h4>
-                      {detailRun.title && <p className="run-item-id">{detailRun.runId}</p>}
+                      <h4>{getRunPrimaryLabel(detailRun)}</h4>
+                      <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
                       <div className="run-meta">
                         <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
                         <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
@@ -1044,7 +1050,7 @@ export function ManualResultsView({
                   <p>
                     <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
                   </p>
-                  {job.baseline && <p>Model version: {job.baseline}</p>}
+                  {job.baseline && <p>Model {job.baseline}</p>}
                   <p>{formatQueueTimestamp(job.createdAt)}</p>
                 </li>
               ))}
@@ -1057,12 +1063,38 @@ export function ManualResultsView({
       <div className="results-main results-main-full">
           <article className="results-card manual-results-summary-card">
             <div className="results-card-head">
-              <h2>Policy run</h2>
+              <h2>{baselineSummary ? getRunPrimaryLabel(baselineSummary) : 'Policy run'}</h2>
               <span className="manual-results-mode-pill">{mode === 'compare' ? 'Comparing runs' : 'Single run'}</span>
             </div>
-            <p>
-              Choose the completed policy run whose results you want to inspect.
-            </p>
+            {baselineSummary ? (
+              <dl className="manual-results-provenance">
+                <div>
+                  <dt>Calibrated model</dt>
+                  <dd>{getRunModelVersion(baselineSummary) ?? 'Not recorded'}</dd>
+                </div>
+                <div>
+                  <dt>Reference policy</dt>
+                  <dd>
+                    {summariseRunPolicy(baselineSummary.policySettings).basePolicyId
+                      ? `${summariseRunPolicy(baselineSummary.policySettings).basePolicyId} policy`
+                      : 'Not recorded'}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Policy settings</dt>
+                  <dd>
+                    {(() => {
+                      const policy = summariseRunPolicy(baselineSummary.policySettings);
+                      if (!policy.basePolicyId) return 'Not recorded';
+                      if (policy.deviations.length === 0) return 'No changes';
+                      return `${policy.deviations.length} ${policy.deviations.length === 1 ? 'setting' : 'settings'} changed`;
+                    })()}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <p>Choose the completed policy run whose results you want to inspect.</p>
+            )}
 
             <div className="comparison-run-pickers">
               <label>
@@ -1136,14 +1168,35 @@ export function ManualResultsView({
                   <small>{policySettingsSummary}</small>
                 </div>
 
+                <div className="run-policy-provenance" aria-label="Policy run provenance">
+                  {[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])].map((run) => {
+                    const referencePolicy = summariseRunPolicy(run.policySettings).basePolicyId;
+                    return (
+                      <section key={run.runId} className="run-policy-provenance-item">
+                        <h3>{runLabel(run.runId)}</h3>
+                        <dl>
+                          <div>
+                            <dt>Calibrated model</dt>
+                            <dd>{getRunModelVersion(run) ?? 'Not recorded'}</dd>
+                          </div>
+                          <div>
+                            <dt>Reference policy</dt>
+                            <dd>{referencePolicy ? `${referencePolicy} policy` : 'Not recorded'}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                    );
+                  })}
+                </div>
+
                 <div className="policy-settings-table-wrap">
                     <table className="policy-settings-table">
                       <thead>
                         <tr>
                           <th>Setting</th>
-                          <th title={baselineDetail.runId}>{runLabel(baselineDetail.runId)}</th>
+                          <th>{runLabel(baselineDetail.runId)}</th>
                           {comparisonDetail && (
-                            <th title={comparisonDetail.runId}>{runLabel(comparisonDetail.runId)}</th>
+                            <th>{runLabel(comparisonDetail.runId)}</th>
                           )}
                         </tr>
                       </thead>
@@ -1390,7 +1443,7 @@ export function ManualResultsView({
             <CollapsibleSection
               title="File Manifest"
               defaultOpen={false}
-              summary={`${manifestTargetLabel}${manifestRunId ? ` · ${manifestRunId}` : ''}`}
+              summary={`${manifestTargetLabel}${manifestRunId ? ` · Run ID: ${manifestRunId}` : ''}`}
               className="manual-results-disclosure"
               bodyClassName="manual-results-disclosure-body"
             >
@@ -1413,7 +1466,8 @@ export function ManualResultsView({
                 </div>
               )}
               <p>
-                Showing {manifestTargetLabel.toLowerCase()} manifest for <strong>{manifestRunId || 'no run selected'}</strong>.
+                Showing {manifestTargetLabel.toLowerCase()} manifest.{' '}
+                <strong>Run ID: {manifestRunId || 'no run selected'}</strong>
               </p>
               {showManifestRefreshing && (
                 <LoadingSkeleton

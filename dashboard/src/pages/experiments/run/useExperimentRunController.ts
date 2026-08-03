@@ -28,6 +28,7 @@ import {
   getDefaultExperimentBasePolicy,
   getPackageBaselineValues,
   isSameValue,
+  normalizeManualScenarioFormValues,
   parseFormValue,
   toInitialFormValues,
   type FormValue
@@ -111,6 +112,7 @@ interface UseExperimentRunControllerOptions {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
+  onManualRunAccepted?: () => void;
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
   draftId?: string;
@@ -211,6 +213,7 @@ export function useExperimentRunController({
   onSelectedJobRefChange,
   onOpenManualResults,
   onOpenSensitivityResults,
+  onManualRunAccepted,
   followJobRef,
   draftId = ''
 }: UseExperimentRunControllerOptions): ExperimentRunController {
@@ -323,7 +326,7 @@ export function useExperimentRunController({
           setSelectedBaseline(restored.draft.calibratedModel);
           setBasePolicyState(restored.draft.basePolicy);
           setTitle(restored.draft.title);
-          setFormValues(restored.draft.formValues);
+          setFormValues(normalizeManualScenarioFormValues(restored.draft.formValues));
           setManualMaxWorkers(restored.draft.maxWorkers);
           setManualMaxWorkersTouched(true);
           setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
@@ -641,7 +644,11 @@ export function useExperimentRunController({
         continue;
       }
       const rawValue = formValues[parameter.key];
-      const parsedValue = parseFormValue(parameter, rawValue);
+      const parsedValue = parameter.key === 'recordCoreIndicators' ? true : parseFormValue(parameter, rawValue);
+      if (parameter.key === 'recordCoreIndicators') {
+        overrides.recordCoreIndicators = true;
+        continue;
+      }
       if (parameter.group === 'Central Bank policy') {
         overrides[parameter.key] = parsedValue;
         continue;
@@ -689,6 +696,7 @@ export function useExperimentRunController({
       clearScenarioDraft(draftId);
       setWarnings([]);
       setTitle('');
+      onManualRunAccepted?.();
       if (response.job) {
         const jobRef = `manual:${response.job.jobId}`;
         setPendingManualJobRef(jobRef);

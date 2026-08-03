@@ -130,7 +130,7 @@ export function ExperimentsPage({
             </div>
             <div className="scenario-modal-head-actions">
               {workspace === 'manual' && draftId && (
-                <button type="button" className="text-button" onClick={() => {
+                <button type="button" className="danger-button scenario-discard-draft-button" onClick={() => {
                   clearScenarioDraft(draftId);
                   const next = new URLSearchParams(searchParams);
                   next.delete('draft');
@@ -159,6 +159,7 @@ export function ExperimentsPage({
               showRunManagement={false}
               draftId={draftId}
               initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
+              onManualRunAccepted={() => setIsSetupOpen(false)}
               onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
               onOpenManualResults={(runId) => {
                 setIsSetupOpen(false);

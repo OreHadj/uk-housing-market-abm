@@ -45,6 +45,13 @@ function shouldShowParameter(parameter: ModelRunParameterDefinition): boolean {
 }
 
 function displayParameter(parameter: ModelRunParameterDefinition, mode: ControlMode): ModelRunParameterDefinition {
+  if (mode === 'manual' && parameter.key === 'TIME_TO_START_RECORDING_TRANSACTIONS') {
+    return {
+      ...parameter,
+      title: 'Start recording at month'
+    };
+  }
+
   if (parameter.key === 'N_SIMS') {
     return {
       ...parameter,
@@ -111,6 +118,9 @@ export function GeneralModelControl({
     .map((parameter) => displayParameter(parameter, mode));
   const modelParameters = visibleParameters.filter((parameter) => !isRecordSetting(parameter));
   const recordParameters = visibleParameters.filter(isRecordSetting);
+  const optionalRecordParameters = mode === 'manual'
+    ? recordParameters.filter((parameter) => parameter.key !== 'recordCoreIndicators')
+    : recordParameters;
   const summaryCount = modelParameters.length + (showRecordSettings ? recordParameters.length : 0) + (onMaxWorkersChange ? 1 : 0);
 
   const controls = (
@@ -145,7 +155,8 @@ export function GeneralModelControl({
 
       {showRecordSettings && (
         <RecordSettingsControl
-          parameters={recordParameters}
+          mode={mode}
+          parameters={optionalRecordParameters}
           formValues={formValues}
           executionDisabled={executionDisabled}
           onFormValueChange={onFormValueChange}
@@ -171,6 +182,7 @@ export function GeneralModelControl({
 }
 
 interface RecordSettingsControlProps {
+  mode: ControlMode;
   parameters: ModelRunParameterDefinition[];
   formValues: Record<string, FormValue>;
   executionDisabled: boolean;
@@ -178,34 +190,51 @@ interface RecordSettingsControlProps {
 }
 
 export function RecordSettingsControl({
+  mode,
   parameters,
   formValues,
   executionDisabled,
   onFormValueChange
 }: RecordSettingsControlProps) {
-  if (parameters.length === 0) {
+  if (parameters.length === 0 && mode !== 'manual') {
     return null;
   }
 
   return (
-    <CollapsibleSection
-      title="Record settings"
-      defaultOpen={false}
-      summary={`${parameters.length} controls`}
-      className="record-settings-control"
-    >
-      <div className="run-param-grid">
-        {parameters.map((parameter) => (
-          <ParameterInput
-            key={parameter.key}
-            parameter={parameter}
-            value={formValues[parameter.key]}
-            executionDisabled={executionDisabled}
-            mode="manual"
-            onChange={onFormValueChange}
-          />
-        ))}
-      </div>
-    </CollapsibleSection>
+    <>
+      {mode === 'manual' && (
+        <div className="dashboard-results-recording-row">
+          <div>
+            <strong>Dashboard results</strong>
+            <span>Main indicators required for charts — enabled</span>
+          </div>
+          <span className="dashboard-results-enabled" aria-label="Dashboard results enabled">Enabled</span>
+        </div>
+      )}
+      <CollapsibleSection
+        title={mode === 'manual' ? 'Additional data exports' : 'Record settings'}
+        defaultOpen={false}
+        summary={mode === 'manual' ? 'Optional transaction and household-level files' : `${parameters.length} controls`}
+        className="record-settings-control"
+      >
+        {mode === 'manual' && (
+          <p className="additional-data-exports-intro">
+            Optional transaction and household-level files for analysis outside the dashboard. These exports can substantially increase file size and do not add charts to the current Results page.
+          </p>
+        )}
+        <div className="run-param-grid">
+          {parameters.map((parameter) => (
+            <ParameterInput
+              key={parameter.key}
+              parameter={parameter}
+              value={formValues[parameter.key]}
+              executionDisabled={executionDisabled}
+              mode={mode}
+              onChange={onFormValueChange}
+            />
+          ))}
+        </div>
+      </CollapsibleSection>
+    </>
   );
 }

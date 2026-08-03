@@ -169,6 +169,7 @@ import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
   buildGeneralModelControlOverridesFromForm,
+  normalizeManualScenarioFormValues,
   toInitialFormValues
 } from '../src/lib/experimentRunDefaults.js';
 import { buildDeltaTrendOption } from '../src/lib/sensitivityChartOptions.js';
@@ -5498,6 +5499,13 @@ try {
   assert.equal(restoredDraft.draft.calibratedModel, runOptions.requestedBaseline, 'Expected a stale model to fall back safely');
   assert.equal(restoredDraft.draft.basePolicy, DEFAULT_EXPERIMENT_BASE_POLICY_ID, 'Expected a stale policy to fall back safely');
   assert.ok(!('REMOVED_PARAMETER' in restoredDraft.draft.formValues), 'Expected stale parameter keys to be discarded');
+  const normalizedManualDraft = normalizeManualScenarioFormValues({
+    ...restoredDraft.draft.formValues,
+    recordCoreIndicators: false,
+    recordTransactions: true
+  });
+  assert.equal(normalizedManualDraft.recordCoreIndicators, true, 'Expected restored manual drafts to force dashboard chart data on');
+  assert.equal(normalizedManualDraft.recordTransactions, true, 'Expected core normalisation to preserve optional export choices');
   markSmokeStep('rendering experiment setup controls');
   const manualSetupMarkup = renderToStaticMarkup(
     createElement(
@@ -5669,6 +5677,30 @@ try {
   assert.ok(
     advancedPanelSource.includes('GeneralModelControl'),
     'Expected Advanced simulation settings to keep the technical simulation controls'
+  );
+  assert.ok(
+    manualSetupText.includes('Dashboard results') &&
+      manualSetupText.includes('Main indicators required for charts — enabled') &&
+      manualSetupText.includes('Additional data exports') &&
+      manualSetupText.includes('Optional transaction and household-level files for analysis outside the dashboard.'),
+    'Expected Technical details to distinguish fixed dashboard results from optional external exports'
+  );
+  assert.ok(
+    !manualSetupText.includes('Record settings') && !manualSetupText.includes('Record core indicators'),
+    'Expected the manual workflow to remove the ambiguous record-settings title and editable core-indicator control'
+  );
+  assert.ok(
+    manualSetupMarkup.includes('record-settings-control') && manualSetupMarkup.includes('is-collapsed'),
+    'Expected Additional data exports to be collapsed by default'
+  );
+  const manualControllerSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/useExperimentRunController.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    manualControllerSource.includes('overrides.recordCoreIndicators = true') &&
+      manualControllerSource.includes('normalizeManualScenarioFormValues(restored.draft.formValues)'),
+    'Expected policy-scenario submission and draft hydration to force core indicators on'
   );
 
   // --- Benchmark and override behaviour ---------------------------------------------------
@@ -8437,6 +8469,18 @@ assert.ok(
 const manualResultsViewSource = fs.readFileSync(
   path.resolve(repoRoot, 'dashboard/src/pages/experiments/view/ManualResultsView.tsx'),
   'utf-8'
+);
+assert.ok(
+  !manualResultsViewSource.includes('`${run.title} — ${run.runId}`') &&
+    manualResultsViewSource.includes('function formatRunOptionLabel') &&
+    manualResultsViewSource.includes('return getRunPrimaryLabel(run);') &&
+    manualResultsViewSource.includes('<dt>Calibrated model</dt>') &&
+    manualResultsViewSource.includes('<dt>Reference policy</dt>') &&
+    manualResultsViewSource.includes('<dt>Policy settings</dt>') &&
+    manualResultsViewSource.includes('className="run-policy-provenance"') &&
+    manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
+    manualResultsViewSource.includes('Run ID:'),
+  'Manual result labels should show the experiment name alone and keep provenance in labelled summary fields'
 );
 assert.ok(
   manualResultsViewSource.includes("dotted lines show each selected run&apos;s mean over the"),

@@ -548,6 +548,27 @@ section.block:first-of-type { border-top: none; }
   word-break: break-all;
 }
 
+.manual-results-provenance {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.45rem 0 1rem;
+}
+
+.manual-results-provenance div {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, max-content) 1fr;
+  gap: 0.75rem;
+}
+
+.manual-results-provenance dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.manual-results-provenance dd {
+  margin: 0;
+}
+
 /* Run History is a scannable list on the left with a detail panel on the right. The list stays narrow
    so many runs are visible at once; hovering or focusing one describes it in full beside the list,
    rather than expanding every row. */
@@ -2226,6 +2247,43 @@ section.block:first-of-type { border-top: none; }
   margin-top: 1rem;
 }
 
+.dashboard-results-recording-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(17, 32, 24, 0.1);
+  border-radius: 0.65rem;
+  background: #fff;
+}
+
+.dashboard-results-recording-row > div {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.dashboard-results-recording-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.dashboard-results-recording-row .dashboard-results-enabled {
+  flex: none;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(43, 138, 62, 0.1);
+  color: #2b8a3e;
+  font-weight: 750;
+}
+
+.additional-data-exports-intro {
+  margin: 0 0 0.75rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .scenario-submit-row {
   display: flex;
   flex-wrap: wrap;
@@ -2304,6 +2362,50 @@ section.block:first-of-type { border-top: none; }
 
 .run-policy-head small {
   color: var(--muted);
+}
+
+.run-policy-provenance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.run-policy-provenance-item {
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(17, 32, 24, 0.09);
+  border-radius: 0.55rem;
+  background: var(--panel-muted);
+}
+
+.run-policy-provenance-item h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.run-policy-provenance-item dl {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+}
+
+.run-policy-provenance-item dl div {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, max-content) minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
+.run-policy-provenance-item dt {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.run-policy-provenance-item dd {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .policy-settings-table-wrap {
@@ -4798,6 +4900,14 @@ section.block:first-of-type { border-top: none; }
 
 .scenario-modal-head-actions {
   justify-content: flex-end;
+}
+
+.scenario-discard-draft-button {
+  min-height: 2.5rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 750;
 }
 
 @media (max-width: 820px) {

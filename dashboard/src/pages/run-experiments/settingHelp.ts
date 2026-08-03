@@ -24,11 +24,11 @@ const PARAMETER_HELP_BY_KEY: Record<string, string> = {
   ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS:
     'Months included in rolling averages for core indicators. This smooths short-term variation.',
   TIME_TO_START_RECORDING_TRANSACTIONS:
-    'Time step when transaction-level output begins. Earlier recording creates larger files.',
-  recordTransactions: 'Writes every transaction event. Useful for audit trails, but can create large outputs.',
-  recordNBidUpFrequency: 'Writes bid-up frequency series for sale-market competition analysis.',
-  recordCoreIndicators: 'Writes the main result series used across Model Results. Usually keep enabled.',
-  recordQualityBandPrice: 'Writes price series by quality band for more detailed market diagnostics.',
+    'Month when transaction-level export begins. Earlier recording creates larger files and may affect performance.',
+  recordTransactions: 'Exports every transaction event for downloaded or external analysis. This can create very large files and affect performance.',
+  recordNBidUpFrequency: 'Exports bid-up frequency data for analysis outside the dashboard.',
+  recordCoreIndicators: 'Writes the main indicator series required by charts in the dashboard.',
+  recordQualityBandPrice: 'Exports prices by quality band for analysis outside the dashboard; this does not add dashboard charts.',
   recordHouseholdID: 'Writes household identifiers in microdata output. Useful for tracing agents across records.',
   recordEmploymentIncome: 'Writes household employment income in microdata output.',
   recordRentalIncome: 'Writes household rental income in microdata output.',
