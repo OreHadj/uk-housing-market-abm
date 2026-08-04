@@ -111,6 +111,22 @@ function formatDeltaPercent(value: number | null): string {
   return `${value > 0 ? '+' : ''}${formatNumber(value, 1)}%`;
 }
 
+function formatModelWithVersion(version: string): string {
+  const name = formatModelName(version);
+  return name === version ? version : `${name} (${version})`;
+}
+
+function formatStatusCountDifference(
+  status: ValidationMetricStatus,
+  selectedCount: number,
+  comparisonCount: number
+): string {
+  const difference = comparisonCount - selectedCount;
+  if (difference === 0) return 'Same';
+  const noun = status === 'pass' ? 'passes' : status === 'warn' ? 'warnings' : status === 'fail' ? 'failures' : 'unsupported';
+  return `${difference > 0 ? '+' : '−'}${Math.abs(difference)} ${noun}`;
+}
+
 /**
  * Every metric row is drawn on one shared axis measuring deviation from the empirical
  * target, so a 1.6% miss and a 324% miss are visually distinguishable. The axis is
@@ -782,16 +798,26 @@ export function ValidationPage() {
           <span>Compare with another model</span>
         </label>
         {isComparisonPickerOpen && (
-          <div className="comparison-run-pickers">
-            <label className="validation-selector">
-              <span>Compare with</span>
-              <select value={comparisonVersion} onChange={(event) => setComparisonVersion(event.target.value)}>
-                <option value="">Choose a model</option>
-                {pickerVersions
-                  .filter((version) => version !== selectedVersion)
-                  .map((version) => <option key={version} value={version}>{pickerOptionLabel(version)}</option>)}
-              </select>
-            </label>
+          <div className="validation-comparison-row">
+            <div className="comparison-run-pickers">
+              <label className="validation-selector">
+                <span>Compare with</span>
+                <select value={comparisonVersion} onChange={(event) => setComparisonVersion(event.target.value)}>
+                  <option value="">Choose a model</option>
+                  {pickerVersions
+                    .filter((version) => version !== selectedVersion)
+                    .map((version) => <option key={version} value={version}>{pickerOptionLabel(version)}</option>)}
+                </select>
+              </label>
+            </div>
+            {comparisonSummary && (
+              <Link
+                className="secondary-button validation-calibration-link"
+                to={`/calibration?mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonSummary.version)}${evidenceContext}`}
+              >
+                What differs between {selectedVersion} and {comparisonSummary.version}?
+              </Link>
+            )}
           </div>
         )}
         {/*
@@ -799,14 +825,6 @@ export function ValidationPage() {
           differs in their assumptions. That follow-up is the only reason to leave this page, so the
           link exists only in compare mode.
         */}
-        {comparisonSummary && (
-          <Link
-            className="secondary-button validation-calibration-link"
-            to={`/calibration?mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonSummary.version)}${evidenceContext}`}
-          >
-            What differs between {selectedVersion} and {comparisonSummary.version}?
-          </Link>
-        )}
       </article>
 
       {selectionNotice && <p className="info-banner">{selectionNotice}</p>}
@@ -827,36 +845,57 @@ export function ValidationPage() {
                 <p>{summary.validationTargetYear} UK evidence · conclusions across ten fixed seeds</p>
               </div>
             </div>
-            <div className="kpi-grid validation-scorecard-grid">
-              <div className="kpi-card validation-composite-card">
-                <span>Comparative validation loss — lower is better</span>
-                <strong>{formatNumber(summary.overallCompositeLoss, 4)}</strong>
-                {comparisonSummary ? (
-                  <small>
-                    {summary.version} · {comparisonSummary.version} scores{' '}
-                    {formatNumber(comparisonSummary.overallCompositeLoss, 4)}
-                  </small>
-                ) : (
+            {!comparisonSummary && (
+              <div className="kpi-grid validation-scorecard-grid">
+                <div className="kpi-card validation-composite-card">
+                  <span>Comparative validation loss — lower is better</span>
+                  <strong>{formatNumber(summary.overallCompositeLoss, 4)}</strong>
                   <small>Unweighted mean of {summary.metrics.length} metric losses — see the breakdown below.</small>
-                )}
-              </div>
-              {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
-                <div className={`kpi-card validation-count-card validation-metric-${status}`} key={status}>
-                  <span>{status}</span>
-                  <strong>{scorecard.counts[status]}</strong>
-                  <small>{comparisonSummary ? `${comparisonScorecard.counts[status]} for ${comparisonSummary.version}` : 'metrics'}</small>
                 </div>
-              ))}
-              <div className="kpi-card">
-                <span>Average seeds inside target bands</span>
-                <strong>{formatInsideRate(scorecard.averageInsideRate)}</strong>
-                <small>
-                  {comparisonSummary
-                    ? `${formatInsideRate(comparisonScorecard.averageInsideRate)} for ${comparisonSummary.version}`
-                    : 'Unsupported metrics excluded'}
-                </small>
+                {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
+                  <div className={`kpi-card validation-count-card validation-metric-${status}`} key={status}>
+                    <span>{status}</span>
+                    <strong>{scorecard.counts[status]}</strong>
+                    <small>metrics</small>
+                  </div>
+                ))}
+                <div className="kpi-card">
+                  <span>Average seeds inside target bands</span>
+                  <strong>{formatInsideRate(scorecard.averageInsideRate)}</strong>
+                  <small>Unsupported metrics excluded</small>
+                </div>
               </div>
-            </div>
+            )}
+            {comparisonSummary && (
+              <div className="validation-score-comparison-wrap">
+                <table className="policy-results-table validation-score-comparison-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Summary</th>
+                      <th scope="col">{formatModelWithVersion(summary.version)}</th>
+                      <th scope="col">{formatModelWithVersion(comparisonSummary.version)}</th>
+                      <th scope="col">Difference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <th scope="row">Validation loss <small>Lower is better</small></th>
+                      <td>{formatNumber(summary.overallCompositeLoss, 4)}</td>
+                      <td>{formatNumber(comparisonSummary.overallCompositeLoss, 4)}</td>
+                      <td>{formatDelta(comparisonSummary.overallCompositeLoss - summary.overallCompositeLoss)}</td>
+                    </tr>
+                    {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
+                      <tr key={status}>
+                        <th scope="row"><span className={`validation-status-pill validation-status-${status}`}>{status}</span></th>
+                        <td>{scorecard.counts[status]}</td>
+                        <td>{comparisonScorecard.counts[status]}</td>
+                        <td>{formatStatusCountDifference(status, scorecard.counts[status], comparisonScorecard.counts[status])}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <div className="validation-loss-decomposition">
               <h4>Where this model&rsquo;s error sits</h4>
               <p className="validation-card-subtitle">
