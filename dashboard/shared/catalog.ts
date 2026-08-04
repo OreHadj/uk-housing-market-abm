@@ -434,7 +434,8 @@ const TECHNICAL_CARDS = new Set([
 ]);
 const POSTULATED_CARDS = new Set([
   'hpa_expectation_params', 'bank_rate_credit_response', 'bank_ltv_limits', 'bank_lti_limits',
-  'bank_affordability_icr_limits', 'btl_strategy_split'
+  'bank_affordability_icr_limits', 'btl_strategy_split', 'downpayment_btl_lognormal',
+  'downpayment_btl_profile'
 ]);
 
 function readableKey(key: string): string {

@@ -17,6 +17,7 @@ interface CompareCardProps {
   mode: 'single' | 'compare';
   inProgressVersions: string[];
   defaultExpanded?: boolean;
+  presentation?: 'card' | 'visualization';
 }
 
 const formatNumber = formatChartNumber;
@@ -180,8 +181,9 @@ function buildAdaptiveHeatmapLayout(
   });
 }
 
-export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = false }: CompareCardProps) {
-  const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
+export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = false, presentation = 'card' }: CompareCardProps) {
+  const visualizationOnly = presentation === 'visualization';
+  const [isExpanded, setIsExpanded] = useState<boolean>(visualizationOnly || defaultExpanded);
   const [isTableOpen, setIsTableOpen] = useState<boolean>(false);
   const [isMoreInfoOpen, setIsMoreInfoOpen] = useState<boolean>(false);
 
@@ -251,7 +253,7 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
 
   return (
     <article className="compare-card">
-      <header className="compare-card-header">
+      {!visualizationOnly && <header className="compare-card-header">
         <button type="button" className="card-toggle" onClick={() => setIsExpanded((current) => !current)}>
           <span className="card-toggle-indicator">{isExpanded ? '▾' : '▸'}</span>
           <span>
@@ -263,7 +265,7 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
           {hasInProgressOrigin && <span className="status-pill-in-progress">In progress</span>}
           <span className={`change-pill ${updated ? 'updated' : 'neutral'}`}>{updated ? 'Updated' : 'No change'}</span>
         </div>}
-      </header>
+      </header>}
 
       {isExpanded && (
         <>
@@ -703,13 +705,13 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
             <p>{item.explanation}</p>
           </div>
 
-          <div className="card-section">
+          {!visualizationOnly && <div className="card-section">
             <button type="button" className="table-toggle" onClick={() => setIsMoreInfoOpen((current) => !current)}>
               {isMoreInfoOpen ? 'Hide provenance & sources' : 'Provenance & sources'}
             </button>
-          </div>
+          </div>}
 
-          {isMoreInfoOpen && (
+          {!visualizationOnly && isMoreInfoOpen && (
             <div className="card-meta">
               <dl>
                 {mode === 'single' ? (

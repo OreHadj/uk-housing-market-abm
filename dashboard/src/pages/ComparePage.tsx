@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { CalibrationModelOverview, CalibrationOverviewResponse, CompareResponse, ParameterCardMeta, ParameterGroup } from '../../shared/types';
+import type { CalibrationModelOverview, CalibrationOverviewResponse, CompareResponse, DatasetAttribution, ParameterCardMeta, ParameterGroup } from '../../shared/types';
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
 import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
@@ -22,7 +22,7 @@ function fmt(value: number | null): string {
   return new Intl.NumberFormat('en-GB', { maximumSignificantDigits: 6 }).format(value);
 }
 
-function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode): string {
+function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode, meta: ParameterCardMeta) {
   const payload = item.visualPayload;
   if (payload.type === 'joint_distribution') {
     return item.id === 'income_given_age_joint'
@@ -30,12 +30,48 @@ function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode): 
       : 'Income-by-wealth probability distribution';
   }
   if (payload.type !== 'scalar') return payload.type.replaceAll('_', ' ');
-  return payload.values.map((entry) => mode === 'single' ? `${entry.key}: ${fmt(entry.right)}` : `${entry.key}: ${fmt(entry.left)} → ${fmt(entry.right)}`).join(' · ');
+  return <div className="assumption-scalar-values">
+    {payload.values.map((entry) => {
+      const label = meta.keyMetadata.find((key) => key.key === entry.key)?.label ?? entry.key;
+      return <div key={entry.key}>
+        <span>{label}</span>
+        {mode === 'single'
+          ? <strong>{fmt(entry.right)}</strong>
+          : <span className="assumption-scalar-comparison"><strong>{fmt(entry.left)}</strong><i aria-hidden="true">→</i><strong>{fmt(entry.right)}</strong></span>}
+      </div>;
+    })}
+  </div>;
 }
 
-function sourceSummary(item: CompareResponse['items'][number], mode: ViewMode): string {
-  const sources = mode === 'single' ? item.sourceInfo.datasetsRight : [...item.sourceInfo.datasetsLeft, ...item.sourceInfo.datasetsRight];
-  return [...new Set(sources.map((source) => `${source.fullName} (${source.year})`))].join(' · ') || 'Not recorded';
+function sourceBasisFallback(meta: ParameterCardMeta): string {
+  if (meta.id === 'hpa_lookback_years') return 'Documented design decision, selected through robustness analysis.';
+  if (meta.id === 'downpayment_btl_lognormal') return 'Inherited placeholder copied from the owner-occupier distribution; direct BTL calibration not recorded.';
+  if (meta.id === 'downpayment_btl_profile') return 'Legacy BTL parameter; original evidence reference not recorded.';
+  const derivation = meta.keyMetadata[0]?.derivation;
+  if (derivation === 'policy-set') return 'Documented policy or non-binding model setting; no empirical dataset attached.';
+  if (derivation === 'technical/user-set') return 'Documented model-design setting; no empirical dataset attached.';
+  if (derivation === 'postulated') return 'Postulated modelling assumption; no empirical dataset attached.';
+  if (derivation === 'output-calibrated') return 'Fitted to model output rather than directly measured.';
+  return 'Source not recorded for this model version.';
+}
+
+function formatDatasetSource(source: DatasetAttribution): string {
+  const details = [source.year !== 'Unknown' ? source.year : '', source.edition ?? ''].filter(Boolean);
+  return details.length ? `${source.fullName} (${details.join(', ')})` : source.fullName;
+}
+
+function sourceForModel(sources: DatasetAttribution[], meta: ParameterCardMeta): string {
+  const known = sources.filter((source) => source.fullName !== 'Unknown source');
+  if (known.length === 0) return sourceBasisFallback(meta);
+  return [...new Set(known.map(formatDatasetSource))].join(' · ');
+}
+
+function SourceSummary({ item, mode, meta }: { item: CompareResponse['items'][number]; mode: ViewMode; meta: ParameterCardMeta }) {
+  if (mode === 'single') return <span>{sourceForModel(item.sourceInfo.datasetsRight, meta)}</span>;
+  return <div className="assumption-model-sources">
+    <div><b>{item.leftVersion}</b><span>{sourceForModel(item.sourceInfo.datasetsLeft, meta)}</span></div>
+    <div><b>{item.rightVersion}</b><span>{sourceForModel(item.sourceInfo.datasetsRight, meta)}</span></div>
+  </div>;
 }
 
 function inspectionLabel(item: CompareResponse['items'][number]): string {
@@ -222,7 +258,8 @@ export function ComparePage() {
       {mode === 'single' ? <label><span className="control-label">Model</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>{singleOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select><small>{formatModelSubtitle(selected)}</small></label> : <><label><span className="control-label">From model</span><select value={left} onChange={(event) => setLeft(event.target.value)}>{leftOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">To model</span><select value={right} onChange={(event) => setRight(event.target.value)}>{rightOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">Preset comparison</span><select value="" onChange={(event) => { const preset = PRESETS[Number(event.target.value)]; if (preset) { setLeft(preset[1]); setRight(preset[2]); } }}><option value="">Choose a preset…</option>{PRESETS.map((preset, index) => <option value={index} key={preset[0]}>{preset[0]}: {preset[1]} → {preset[2]}</option>)}</select><small>A shortcut that fills the two model selectors for a common analytical question.</small></label></>}
     </div>
     {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
-    {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <div className="calibration-columns">
+    {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <>
+    <div className="calibration-columns">
       <main className="calibration-main">
         <section className="results-card calibration-campaign"><div className="section-heading-row"><div><p className="eyebrow">Calibration campaign</p><h2>Why output calibration is necessary</h2></div><Link className="secondary-button" to={`/validation?version=${encodeURIComponent(overview.primary.identity.version)}&evidenceYear=${validationYear}${evidenceContext}`}>View indicator-level fit</Link></div><p>The five behavioural parameters below describe latent choices and model memory; they cannot be measured directly. Output calibration searches for values whose simulated outcomes collectively reproduce documented evidence.</p>{overview.primary.identity.inheritance && <p className="inheritance-note">{overview.primary.identity.inheritance}</p>}
           <div className="campaign-grid"><div><span>Evidence / fit year</span><strong>{overview.primary.campaign.evidenceYear ?? 'Not recorded'}</strong></div><div><span>Method</span><strong>{overview.primary.campaign.method}</strong></div><div className="wide"><span>Objective</span><strong>{overview.primary.campaign.objective}</strong></div><div><span>Before loss</span><strong>{fmt(overview.primary.campaign.baselineLoss)}</strong></div><div><span>After loss</span><strong>{fmt(overview.primary.campaign.selectedLoss)}</strong></div><div><span>Improvement</span><strong>{fmt(overview.primary.campaign.improvement)}</strong></div><div><span>Promotion</span><strong>{overview.primary.campaign.promotion}</strong></div><div className="wide"><span>Guardrail result</span><strong>{overview.primary.campaign.guardrail}</strong></div></div>
@@ -243,22 +280,23 @@ export function ComparePage() {
             />
           )}
         </section>
-        <section className="results-card assumption-reference">
-          <div className="section-heading-row"><div><p className="eyebrow">Reference</p><h2>Other model assumptions</h2></div></div>
-          <p className="assumption-reference-intro">
-            These are the model inputs outside the five fitted behavioural parameters. Each row represents one
-            related assumption or input dataset. Use the values to see what the selected model contains
-            {mode === 'compare' ? ' and whether it changed between the two models' : ''}. “Basis for assumption” says
-            whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
-            Source/evidence records the specific evidence it came from.
-          </p>
-          <input className="assumption-search" aria-label="Search model assumptions" placeholder="Search assumptions or config keys" value={search} onChange={(event) => setSearch(event.target.value)} />
-          {[...referenceGroups.entries()].map(([group, items]) => <section className="assumption-group" key={group as ParameterGroup}><h3>{group} <span>{items.length}</span></h3><div className="assumption-table" role="table"><div className="assumption-table-head" role="row"><span>Assumption and config key</span><span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span><span>Basis for assumption</span><span>Source / evidence</span></div>{items.map((item) => { const meta = catalog.find((entry) => entry.id === item.id)!; const complex = item.visualPayload.type !== 'scalar'; const derivation = meta.keyMetadata[0]?.derivation; return <div className="assumption-table-row" role="row" key={item.id}><div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div><div>{scalarSummary(item, mode)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div><div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div><div>{sourceSummary(item, mode)}</div></div>; })}</div></section>)}
-          {referenceGroups.size === 0 && <p className="info-banner">No assumptions match the current filters.</p>}
-        </section>
       </main>
       <aside className="calibration-sticky-summary results-card"><p className="eyebrow">Selected model{mode === 'compare' ? 's' : ''}</p>{mode === 'compare' && overview.comparison && <ModelFacts model={overview.comparison} />}<ModelFacts model={overview.primary} /><h3>Fitted values</h3>{overview.primary.parameters.map((parameter) => <div className="sticky-value" key={parameter.key}><span>{parameter.name}</span><strong>{mode === 'compare' && fittedByKey.get(parameter.key) ? `${fmt(fittedByKey.get(parameter.key)!.left)} → ` : ''}{fmt(parameter.value)}</strong></div>)}</aside>
-    </div>}
+    </div>
+    <section className="results-card assumption-reference assumption-reference-full">
+      <div className="section-heading-row"><div><p className="eyebrow">Reference</p><h2>Other model assumptions</h2></div></div>
+      <p className="assumption-reference-intro">
+        These are the model inputs outside the five fitted behavioural parameters. Each row represents one
+        related assumption or input dataset. Use the values to see what the selected model contains
+        {mode === 'compare' ? ' and whether it changed between the two models' : ''}. “Basis for assumption” says
+        whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
+        Source/evidence records the specific evidence it came from.
+      </p>
+      <input className="assumption-search" aria-label="Search model assumptions" placeholder="Search assumptions or config keys" value={search} onChange={(event) => setSearch(event.target.value)} />
+      {[...referenceGroups.entries()].map(([group, items]) => <section className="assumption-group" key={group as ParameterGroup}><h3>{group} <span>{items.length}</span></h3><div className="assumption-table" role="table"><div className="assumption-table-head" role="row"><span>Assumption and config key</span><span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span><span>Basis for assumption</span><span>Source / evidence</span></div>{items.map((item) => { const meta = catalog.find((entry) => entry.id === item.id)!; const complex = item.visualPayload.type !== 'scalar'; const derivation = meta.keyMetadata[0]?.derivation; return <div className="assumption-table-row" role="row" key={item.id}><div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div><div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div><div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div><div><SourceSummary item={item} mode={mode} meta={meta} /></div></div>; })}</div></section>)}
+      {referenceGroups.size === 0 && <p className="info-banner">No assumptions match the current filters.</p>}
+    </section>
+    </>}
     {inspectionItem && <div
       className="scenario-create-modal-backdrop"
       role="presentation"
@@ -274,7 +312,7 @@ export function ComparePage() {
           <button type="button" className="trend-modal-close" aria-label="Close assumption visualization" autoFocus onClick={() => setInspectionItem(null)}>×</button>
         </div>
         <div className="scenario-create-modal-body">
-          <CompareCard item={inspectionItem} mode={mode} inProgressVersions={inProgress} defaultExpanded />
+          <CompareCard item={inspectionItem} mode={mode} inProgressVersions={inProgress} presentation="visualization" />
         </div>
       </section>
     </div>}
