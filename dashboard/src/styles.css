@@ -371,11 +371,14 @@ code {
 .wrap { max-width: var(--maxw); margin: 0 auto; }
 
 header.top { border-bottom: 1px solid var(--rule); padding: 0 1.2rem; position: relative; }
-header.top .top-inner { display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 1.4rem; padding: 1.15rem 0 0.9rem; flex-wrap: wrap; }
-header.top .brand { margin: 0; font-size: clamp(1.15rem, 2vw, 1.5rem); font-weight: 700;
+header.top > .wrap { max-width: none; }
+header.top .top-inner { display: grid; grid-template-columns: auto minmax(15rem, 1fr) auto;
+  align-items: end; gap: 1.4rem; padding: 1.15rem 0 0.9rem; }
+header.top .brand { margin: 0; font-size: clamp(1.45rem, 2.4vw, 2rem); font-weight: 700;
   letter-spacing: -0.015em; line-height: 1.15; }
 header.top .brand a { color: inherit; text-decoration: none; }
+
+.top-brand { min-width: 0; }
 
 nav.main { display: flex; align-items: flex-end; gap: 0.15rem; flex-wrap: wrap; }
 nav.main a, nav.main button { position: relative; color: var(--muted); background: none; border: 0;
@@ -385,13 +388,26 @@ nav.main a:hover, nav.main button:hover { color: var(--text); background: var(--
 nav.main a.active { color: var(--text); font-weight: 600; }
 nav.main a.active::after { content: ""; position: absolute; left: 0.72rem; right: 0.72rem;
   bottom: -0.9rem; height: 2px; background: var(--accent); border-radius: 2px; }
-/* The nav is anchored to a left edge just past the brand, and grows rightwards. Right-aligning it
-   made its position depend on how many items it had, so adding or removing one shifted every
-   existing item sideways. Growing to fill the row fixes the anchor to the brand's width alone. */
-.top-right { display: flex; flex-direction: column; align-items: flex-start; gap: 0.55rem;
-  flex: 1 1 auto; }
-/* Dev-only runtime control pinned to the far top-right corner, clear of the nav */
-header.top .env-controls { position: absolute; top: 0.55rem; right: 1.2rem; z-index: 2; margin: 0; }
+/* Runtime controls keep a dedicated far-right column. */
+header.top .env-controls { flex: 0 0 auto; justify-content: flex-end; margin: 0; }
+
+@media (max-width: 1050px) {
+  header.top .top-inner { grid-template-columns: 1fr auto; align-items: start; }
+  header.top nav.main { grid-column: 1 / -1; grid-row: 2; }
+  header.top .top-brand { grid-column: 1; grid-row: 1; }
+  header.top .env-controls { grid-column: 2; grid-row: 1; }
+}
+
+@media (max-width: 760px) {
+  header.top .top-inner { grid-template-columns: 1fr; }
+  header.top nav.main,
+  header.top .top-brand,
+  header.top .env-controls { grid-column: 1; grid-row: auto; }
+  header.top .top-brand { grid-row: 1; }
+  header.top nav.main { grid-row: 2; }
+  header.top .env-controls { grid-row: 3; }
+  header.top .env-controls { justify-content: flex-start; }
+}
 
 footer.foot { border-top: 1px solid var(--rule); padding: 1.6rem 1.2rem 2.4rem; color: var(--faint);
   font-size: 0.82rem; }
