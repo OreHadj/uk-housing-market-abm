@@ -150,6 +150,7 @@ export function ComparePage() {
   const [selected, setSelected] = useState('');
   const [left, setLeft] = useState('');
   const [right, setRight] = useState('');
+  const [customComparison, setCustomComparison] = useState(false);
   const [overview, setOverview] = useState<CalibrationOverviewResponse | null>(null);
   const [comparison, setComparison] = useState<CompareResponse | null>(null);
   const [inspectionItem, setInspectionItem] = useState<CompareResponse['items'][number] | null>(null);
@@ -181,8 +182,14 @@ export function ComparePage() {
       setVersions(available); setInProgress(versionPayload.inProgressVersions); setCatalog(catalogue);
       setMode(initialMode);
       setSelected(available.includes(requested) ? requested : defaultVersion);
-      setLeft(available.includes(params.get('left') ?? '') ? params.get('left')! : (available.includes('v0') ? 'v0' : available[0] ?? ''));
-      setRight(available.includes(params.get('right') ?? '') ? params.get('right')! : defaultVersion);
+      const requestedLeft = available.includes(params.get('left') ?? '') ? params.get('left')! : (available.includes('v0') ? 'v0' : available[0] ?? '');
+      let requestedRight = available.includes(params.get('right') ?? '') ? params.get('right')! : defaultVersion;
+      if (requestedRight === requestedLeft) requestedRight = defaultVersion !== requestedLeft
+        ? defaultVersion
+        : available.find((version) => version !== requestedLeft) ?? requestedRight;
+      setLeft(requestedLeft);
+      setRight(requestedRight);
+      setCustomComparison(initialMode === 'compare' && !PRESETS.some((preset) => preset[1] === requestedLeft && preset[2] === requestedRight));
     }).catch((reason) => { setError((reason as Error).message); setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -236,6 +243,7 @@ export function ComparePage() {
   const leftOptions = buildModelOptions(versions, left, optionSet);
   const rightOptions = buildModelOptions(versions, right, optionSet);
   const validationYear = overview?.primary.campaign.evidenceYear ?? 2024;
+  const selectedPresetIndex = PRESETS.findIndex((preset) => preset[1] === left && preset[2] === right);
   const evidenceContext = hasScenarioContext ? `&from=scenario&draft=${encodeURIComponent(scenarioDraftId)}&scenarioStep=model-version` : '';
 
   return <section className="calibration-layout calibration-workspace">
@@ -255,7 +263,33 @@ export function ComparePage() {
     </section>
     <div className="calibration-controls results-card" aria-label="Calibration view controls">
       <div><span className="control-label">View</span><div className="mode-switch-row"><button className={`filter-pill ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>Single model</button><button className={`filter-pill ${mode === 'compare' ? 'active' : ''}`} onClick={() => setMode('compare')}>Compare models</button></div></div>
-      {mode === 'single' ? <label><span className="control-label">Model</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>{singleOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select><small>{formatModelSubtitle(selected)}</small></label> : <><label><span className="control-label">From model</span><select value={left} onChange={(event) => setLeft(event.target.value)}>{leftOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">To model</span><select value={right} onChange={(event) => setRight(event.target.value)}>{rightOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">Preset comparison</span><select value="" onChange={(event) => { const preset = PRESETS[Number(event.target.value)]; if (preset) { setLeft(preset[1]); setRight(preset[2]); } }}><option value="">Choose a preset…</option>{PRESETS.map((preset, index) => <option value={index} key={preset[0]}>{preset[0]}: {preset[1]} → {preset[2]}</option>)}</select><small>A shortcut that fills the two model selectors for a common analytical question.</small></label></>}
+      {mode === 'single' ? <label><span className="control-label">Model</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>{singleOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select><small>{formatModelSubtitle(selected)}</small></label> : <div className="calibration-comparison-question">
+        <label>
+          <span className="control-label">Comparison question</span>
+          <select value={selectedPresetIndex >= 0 && !customComparison ? String(selectedPresetIndex) : 'custom'} onChange={(event) => {
+            if (event.target.value === 'custom') { setCustomComparison(true); return; }
+            const preset = PRESETS[Number(event.target.value)];
+            if (preset) { setLeft(preset[1]); setRight(preset[2]); setCustomComparison(false); }
+          }}>
+            {PRESETS.filter((preset) => versions.includes(preset[1]) && versions.includes(preset[2])).map((preset) => {
+              const index = PRESETS.indexOf(preset);
+              return <option value={index} key={preset[0]}>{preset[0]}</option>;
+            })}
+            <option value="custom">Advanced custom comparison</option>
+          </select>
+        </label>
+        <div className="calibration-selected-pair" aria-live="polite">
+          <span>From <strong>{formatModelName(left)} ({left})</strong></span><i aria-hidden="true">→</i><span>To <strong>{formatModelName(right)} ({right})</strong></span>
+        </div>
+        <details className="calibration-custom-comparison" open={customComparison} onToggle={(event) => setCustomComparison(event.currentTarget.open)}>
+          <summary>Advanced custom comparison</summary>
+          <p>For configuration audits where a curated analytical comparison does not answer the question.</p>
+          <div>
+            <label><span className="control-label">From model</span><select value={left} onChange={(event) => setLeft(event.target.value)}>{leftOptions.map((option) => <option key={option.version} value={option.version} disabled={option.version === right}>{option.label}</option>)}</select></label>
+            <label><span className="control-label">To model</span><select value={right} onChange={(event) => setRight(event.target.value)}>{rightOptions.map((option) => <option key={option.version} value={option.version} disabled={option.version === left}>{option.label}</option>)}</select></label>
+          </div>
+        </details>
+      </div>}
     </div>
     {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
     {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <>
