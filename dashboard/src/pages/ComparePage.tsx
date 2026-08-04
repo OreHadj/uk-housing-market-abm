@@ -1,698 +1,282 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { CompareResponse, ParameterCardMeta, ParameterGroup } from '../../shared/types';
-import { API_RETRY_DELAY_MS, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
+import type { CalibrationModelOverview, CalibrationOverviewResponse, CompareResponse, ParameterCardMeta, ParameterGroup } from '../../shared/types';
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
-import { GroupedCheckboxSections } from '../components/GroupedCheckboxSections';
-import { LoadingSkeleton, LoadingSkeletonGroup } from '../components/LoadingSkeleton';
-import { buildModelOptions, formatModelName, getDefaultModelVersion } from '../lib/modelAnchors';
+import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
+import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
+import { buildModelOptions, formatModelName, formatModelSubtitle, getDefaultModelVersion } from '../lib/modelAnchors';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 
-const GROUP_ORDER: ParameterGroup[] = [
-  'Bank & Credit Policy',
-  'Purchase & Mortgage',
-  'BTL & Investor Behavior',
-  'Housing & Rental Market',
-  'Household Demographics & Wealth',
-  'Government & Tax'
-];
-const DEFAULT_OPEN_COMPARE_CARD_IDS = new Set<string>([
-  'central_bank_base_rate',
-  'central_bank_ltv_limits',
-  'central_bank_lti_soft_limits',
-  'central_bank_affordability_icr'
-]);
-const DEFAULT_OPEN_COMPARE_GROUPS = new Set<ParameterGroup>([
-  'Bank & Credit Policy'
-]);
-const HISTORICAL_EVIDENCE_VERSIONS = new Set(['v0', 'v0o2', 'v0o7']);
-
-function formatOverviewDataset(dataset: CompareResponse['items'][number]['sourceInfo']['datasetsRight'][number]): string {
-  return `${dataset.fullName} (${dataset.year}${dataset.edition ? `, ${dataset.edition}` : ''})`;
-}
-
-type ChangeFilter = 'all' | 'updated' | 'unchanged';
 type ViewMode = 'single' | 'compare';
+const FITTED_IDS = new Set(['rent_purchase_choice', 'btl_probability_multiplier', 'btl_choice_intensity', 'market_average_price_decay']);
+const PRESETS = [
+  ['Behavioural refit on 2011 model', 'v0', 'v0o7'],
+  ['Updated empirical inputs', 'v0', 'v4.26'],
+  ['Behavioural refit on 2024 model', 'v4.26', 'v5o3'],
+  ['Full historical update', 'v0', 'v5o3']
+] as const;
 
-function getDefaultDisplayVersion(versions: string[], inProgressVersions: string[]): string {
-  return getDefaultModelVersion(versions, inProgressVersions) || (versions[versions.length - 1] ?? '');
+function fmt(value: number | null): string {
+  if (value === null) return 'Not recorded';
+  return new Intl.NumberFormat('en-GB', { maximumSignificantDigits: 6 }).format(value);
 }
 
-function getOriginalDisplayVersion(versions: string[]): string {
-  return versions.includes('v0') ? 'v0' : (versions[0] ?? '');
+function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode): string {
+  const payload = item.visualPayload;
+  if (payload.type === 'joint_distribution') {
+    return item.id === 'income_given_age_joint'
+      ? 'Age-by-income probability distribution'
+      : 'Income-by-wealth probability distribution';
+  }
+  if (payload.type !== 'scalar') return payload.type.replaceAll('_', ' ');
+  return payload.values.map((entry) => mode === 'single' ? `${entry.key}: ${fmt(entry.right)}` : `${entry.key}: ${fmt(entry.left)} → ${fmt(entry.right)}`).join(' · ');
 }
 
-function groupCatalog(catalog: ParameterCardMeta[]) {
-  const grouped = new Map<string, ParameterCardMeta[]>();
-  for (const item of catalog) {
-    const current = grouped.get(item.group) ?? [];
-    current.push(item);
-    grouped.set(item.group, current);
-  }
-  return grouped;
+function sourceSummary(item: CompareResponse['items'][number], mode: ViewMode): string {
+  const sources = mode === 'single' ? item.sourceInfo.datasetsRight : [...item.sourceInfo.datasetsLeft, ...item.sourceInfo.datasetsRight];
+  return [...new Set(sources.map((source) => `${source.fullName} (${source.year})`))].join(' · ') || 'Not recorded';
 }
 
-function isUpdated(item: CompareResponse['items'][number], mode: ViewMode): boolean {
-  if (mode === 'single') {
-    return item.changeOriginsInRange.length > 0;
-  }
-  return !item.unchanged;
+function inspectionLabel(item: CompareResponse['items'][number]): string {
+  if (item.visualPayload.type === 'joint_distribution') return 'View heatmap';
+  if (item.visualPayload.type === 'binned_distribution') return 'View distribution';
+  return 'View chart';
 }
 
-function groupCompareItems(compareData: CompareResponse | null, filter: ChangeFilter, mode: ViewMode) {
-  const grouped = new Map<ParameterGroup, CompareResponse['items']>();
-  if (!compareData) {
-    return grouped;
+function derivationDescription(derivation: ParameterCardMeta['keyMetadata'][number]['derivation']): string {
+  switch (derivation) {
+    case 'empirically estimated': return 'Calculated from observed survey or administrative data.';
+    case 'postulated': return 'Specified as a modelling assumption rather than directly measured.';
+    case 'policy-set': return 'Set from a documented policy rule or policy setting.';
+    case 'technical/user-set': return 'Chosen to control the model or simulation setup.';
+    case 'output-calibrated': return 'Fitted by matching simulated outcomes to evidence.';
   }
+}
 
-  for (const item of compareData.items) {
-    const updated = isUpdated(item, mode);
-    const include = filter === 'all' || (filter === 'updated' ? updated : !updated);
-    if (!include) {
-      continue;
-    }
+function ModelFacts({ model }: { model: CalibrationModelOverview }) {
+  return <div className="calibration-model-facts">
+    <h3>{model.identity.name} <span>{model.identity.version}</span></h3>
+    <dl>
+      <div><dt>Data vintage</dt><dd>{model.identity.dataVintage}</dd></div>
+      <div><dt>Fit vintage</dt><dd>{model.identity.fitVintage}</dd></div>
+      <div><dt>Method</dt><dd>{model.identity.method}</dd></div>
+    </dl>
+    {model.identity.inheritance && <p>{model.identity.inheritance}</p>}
+  </div>;
+}
 
-    const current = grouped.get(item.group) ?? [];
-    current.push(item);
-    grouped.set(item.group, current);
-  }
+function FittedParameterCard({
+  parameter,
+  compared,
+  primaryVersion,
+  comparisonVersion,
+  mode
+}: {
+  parameter: CalibrationModelOverview['parameters'][number];
+  compared: CalibrationModelOverview['parameters'][number] | undefined;
+  primaryVersion: string;
+  comparisonVersion: string | undefined;
+  mode: ViewMode;
+}) {
+  const changed = compared ? compared.value !== parameter.value : false;
+  const testedRange = parameter.lower === null || parameter.upper === null
+    ? 'Not recorded'
+    : `${fmt(parameter.lower)}–${fmt(parameter.upper)}`;
 
-  return grouped;
+  return <article className="calibration-parameter-row">
+    <div className="parameter-row-head">
+      <div><h3>{parameter.name}</h3><code>{parameter.key}</code></div>
+    </div>
+    <div className="parameter-number-grid">
+      {mode === 'compare' && compared && comparisonVersion &&
+        <div><span>{comparisonVersion} value</span><strong>{fmt(compared.value)}</strong></div>}
+      <div><span>{mode === 'compare' ? `${primaryVersion} value` : 'Selected value'}</span><strong>{fmt(parameter.value)}</strong></div>
+      {mode === 'compare' && compared &&
+        <div><span>Absolute difference</span><strong>{fmt(parameter.value - compared.value)}</strong><small className={changed ? 'changed' : 'unchanged'}>{changed ? 'Changed' : 'Unchanged'}</small></div>}
+      <div><span>Range tested</span><strong>{testedRange}</strong></div>
+    </div>
+    <div className="parameter-explanation-grid">
+      <p><b>Behavioural meaning</b>{parameter.meaning}</p>
+      <p><b>Why calibrate it</b>{parameter.calibrationReason}</p>
+      <p><b>If increased</b>{parameter.increaseEffect}</p>
+      <p><b>If decreased</b>{parameter.decreaseEffect}</p>
+    </div>
+  </article>;
 }
 
 export function ComparePage() {
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [versions, setVersions] = useState<string[]>([]);
-  const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
+  const [inProgress, setInProgress] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<ParameterCardMeta[]>([]);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState<string>('');
-  const [left, setLeft] = useState<string>('');
-  const [right, setRight] = useState<string>('');
   const [mode, setMode] = useState<ViewMode>('single');
-  const [search, setSearch] = useState<string>('');
-  const [compareData, setCompareData] = useState<CompareResponse | null>(null);
-  const [error, setError] = useState<string>('');
-  const [isBootstrapping, setIsBootstrapping] = useState<boolean>(true);
-  const [isBootstrapReady, setIsBootstrapReady] = useState<boolean>(false);
-  const [isWaitingForApi, setIsWaitingForApi] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [changeFilter, setChangeFilter] = useState<ChangeFilter>('all');
-  const [sectionOpen, setSectionOpen] = useState<Record<string, boolean>>({});
-  const scenarioDraftId = searchParams.get('from') === 'scenario' ? searchParams.get('draft')?.trim() ?? '' : '';
+  const [selected, setSelected] = useState('');
+  const [left, setLeft] = useState('');
+  const [right, setRight] = useState('');
+  const [overview, setOverview] = useState<CalibrationOverviewResponse | null>(null);
+  const [comparison, setComparison] = useState<CompareResponse | null>(null);
+  const [inspectionItem, setInspectionItem] = useState<CompareResponse['items'][number] | null>(null);
+  const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [waiting, setWaiting] = useState(false);
+  const [error, setError] = useState('');
+  const scenarioDraftId = params.get('from') === 'scenario' ? params.get('draft')?.trim() ?? '' : '';
   const hasScenarioContext = Boolean(scenarioDraftId && readScenarioDraft(scenarioDraftId));
-  const scenarioReturnStep = searchParams.get('scenarioStep') === 'model-version' ? '&step=model-version' : '';
+  const returnVersion = mode === 'single' ? selected : right;
+
+  useEffect(() => {
+    if (!inspectionItem) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setInspectionItem(null);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [inspectionItem]);
 
   useEffect(() => {
     let cancelled = false;
-    let retryTimer: number | undefined;
-
-    const load = async () => {
-      setError('');
-      setIsBootstrapping(true);
-      setIsWaitingForApi(false);
-
-      try {
-        const [versionsPayload, catalogList] = await Promise.all([fetchVersions(), fetchCatalog()]);
-        if (cancelled) {
-          return;
-        }
-
-        const versionList = versionsPayload.versions;
-        const defaultDisplayVersion = getDefaultDisplayVersion(versionList, versionsPayload.inProgressVersions);
-        const currentParams = new URLSearchParams(window.location.search);
-        const requestedModeRaw = currentParams.get('mode')?.trim() ?? '';
-        const hasRequestedMode = requestedModeRaw.length > 0;
-        const requestedMode: ViewMode = hasRequestedMode
-          ? requestedModeRaw === 'compare'
-            ? 'compare'
-            : 'single'
-          : 'single';
-        const requestedVersionRaw = currentParams.get('version')?.trim() ?? '';
-        const requestedVersion = versionList.includes(requestedVersionRaw) ? requestedVersionRaw : '';
-        const singleVersion = requestedVersion || defaultDisplayVersion;
-        const defaultCompareLeftVersion = getOriginalDisplayVersion(versionList);
-        const requestedLeft = currentParams.get('left')?.trim() ?? '';
-        const requestedRight = currentParams.get('right')?.trim() ?? '';
-        const compareLeftVersion = versionList.includes(requestedLeft) ? requestedLeft : defaultCompareLeftVersion;
-        const compareRightVersion = versionList.includes(requestedRight)
-          ? requestedRight
-          : requestedVersion || defaultDisplayVersion;
-
-        setVersions(versionList);
-        setInProgressVersions(versionsPayload.inProgressVersions);
-        setCatalog(catalogList);
-        setSelectedIds(catalogList.map((item) => item.id));
-        setMode(requestedMode);
-        setSelectedVersion(singleVersion);
-        setLeft(compareLeftVersion);
-        setRight(compareRightVersion);
-        setIsBootstrapReady(true);
-        setIsBootstrapping(false);
-      } catch (loadError) {
-        if (cancelled) {
-          return;
-        }
-
-        if (isRetryableApiError(loadError)) {
-          setIsWaitingForApi(true);
-          setIsBootstrapReady(false);
-          setIsBootstrapping(false);
-          retryTimer = window.setTimeout(() => {
-            void load();
-          }, API_RETRY_DELAY_MS);
-          return;
-        }
-
-        setError((loadError as Error).message);
-        setIsBootstrapReady(false);
-        setIsBootstrapping(false);
-      }
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer !== undefined) {
-        window.clearTimeout(retryTimer);
-      }
-    };
+    void Promise.all([fetchVersions(), fetchCatalog()]).then(([versionPayload, catalogue]) => {
+      if (cancelled) return;
+      const available = versionPayload.versions;
+      const initialMode: ViewMode = params.get('mode') === 'compare' ? 'compare' : 'single';
+      const defaultVersion = getDefaultModelVersion(available, versionPayload.inProgressVersions);
+      const requested = params.get('version') ?? '';
+      setVersions(available); setInProgress(versionPayload.inProgressVersions); setCatalog(catalogue);
+      setMode(initialMode);
+      setSelected(available.includes(requested) ? requested : defaultVersion);
+      setLeft(available.includes(params.get('left') ?? '') ? params.get('left')! : (available.includes('v0') ? 'v0' : available[0] ?? ''));
+      setRight(available.includes(params.get('right') ?? '') ? params.get('right')! : defaultVersion);
+    }).catch((reason) => { setError((reason as Error).message); setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!isBootstrapReady) return;
-    const next = new URLSearchParams(searchParams);
+    if (!selected || (mode === 'compare' && (!left || !right)) || catalog.length === 0) return;
+    const next = new URLSearchParams(params);
     next.set('mode', mode);
-    if (mode === 'single') {
-      if (selectedVersion) next.set('version', selectedVersion);
-      next.delete('left');
-      next.delete('right');
-    } else {
-      if (left) next.set('left', left);
-      if (right) next.set('right', right);
-      next.delete('version');
-    }
-    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [isBootstrapReady, left, mode, right, searchParams, selectedVersion, setSearchParams]);
-
-  useEffect(() => {
-    if (mode === 'compare') {
-      if (!left && versions.length > 0) {
-        setLeft(versions[0]);
-      }
-      if (!right && versions.length > 0) {
-        setRight(getDefaultDisplayVersion(versions, inProgressVersions));
-      }
-    }
-  }, [mode, left, right, versions, inProgressVersions]);
-
-  useEffect(() => {
-    if (!isBootstrapReady) {
-      setCompareData(null);
-      return;
-    }
+    if (mode === 'single') { next.set('version', selected); next.delete('left'); next.delete('right'); }
+    else { next.set('left', left); next.set('right', right); next.delete('version'); }
+    if (next.toString() !== params.toString()) setParams(next, { replace: true });
 
     let cancelled = false;
-    let retryTimer: number | undefined;
-
-    const run = async () => {
-      if (selectedIds.length === 0) {
-        setCompareData(null);
-        setIsWaitingForApi(false);
-        return;
-      }
-
-      if (mode === 'single') {
-        if (!selectedVersion) {
-          setCompareData(null);
-          setIsWaitingForApi(false);
-          return;
-        }
-
-        setIsLoading(true);
-        setIsWaitingForApi(false);
-        setError('');
-        try {
-          const payload = await fetchCompare(selectedVersion, selectedVersion, selectedIds, 'through_right');
-          if (cancelled) {
-            return;
-          }
-          setCompareData(payload);
-        } catch (loadError) {
-          if (cancelled) {
-            return;
-          }
-          if (isRetryableApiError(loadError)) {
-            setIsWaitingForApi(true);
-            retryTimer = window.setTimeout(() => {
-              void run();
-            }, API_RETRY_DELAY_MS);
-            return;
-          }
-          setIsWaitingForApi(false);
-          setError((loadError as Error).message);
-        } finally {
-          if (!cancelled) {
-            setIsLoading(false);
-          }
-        }
-        return;
-      }
-
-      if (!left || !right) {
-        setCompareData(null);
-        setIsWaitingForApi(false);
-        return;
-      }
-
-      setIsLoading(true);
-      setIsWaitingForApi(false);
-      setError('');
+    let timer: number | undefined;
+    const load = async () => {
+      setLoading(true); setWaiting(false); setError('');
+      const primary = mode === 'single' ? selected : right;
+      const other = mode === 'compare' ? left : undefined;
       try {
-        const payload = await fetchCompare(left, right, selectedIds, 'range');
-        if (cancelled) {
-          return;
-        }
-        setCompareData(payload);
-      } catch (loadError) {
-        if (cancelled) {
-          return;
-        }
-        if (isRetryableApiError(loadError)) {
-          setIsWaitingForApi(true);
-          retryTimer = window.setTimeout(() => {
-            void run();
-          }, API_RETRY_DELAY_MS);
-          return;
-        }
-        setIsWaitingForApi(false);
-        setError((loadError as Error).message);
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
+        const [overviewPayload, comparePayload] = await Promise.all([
+          fetchCalibrationOverview(primary, other),
+          fetchCompare(mode === 'single' ? selected : left, primary, catalog.map((item) => item.id), mode === 'single' ? 'through_right' : 'range')
+        ]);
+        if (!cancelled) { setOverview(overviewPayload); setComparison(comparePayload); }
+      } catch (reason) {
+        if (cancelled) return;
+        if (isRetryableApiError(reason)) { setWaiting(true); timer = window.setTimeout(() => void load(), API_RETRY_DELAY_MS); }
+        else setError((reason as Error).message);
+      } finally { if (!cancelled) setLoading(false); }
     };
+    void load();
+    return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
+  }, [mode, selected, left, right, catalog]);
 
-    void run();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer !== undefined) {
-        window.clearTimeout(retryTimer);
-      }
-    };
-  }, [isBootstrapReady, mode, left, right, selectedVersion, selectedIds]);
-
-  const filteredCatalog = useMemo(() => {
+  const fittedByKey = useMemo(() => {
+    const items = comparison?.items.filter((item) => FITTED_IDS.has(item.id)) ?? [];
+    const map = new Map<string, { left: number; right: number }>();
+    for (const item of items) if (item.visualPayload.type === 'scalar') for (const value of item.visualPayload.values) map.set(value.key, value);
+    return map;
+  }, [comparison]);
+  const referenceGroups = useMemo(() => {
     const term = search.trim().toLowerCase();
-    if (!term) {
-      return catalog;
-    }
-    return catalog.filter(
-      (item) =>
-        item.title.toLowerCase().includes(term) ||
-        item.id.toLowerCase().includes(term) ||
-        item.configKeys.some((key) => key.toLowerCase().includes(term))
-    );
-  }, [catalog, search]);
-
-  const setupGrouped = useMemo(() => groupCatalog(filteredCatalog), [filteredCatalog]);
-  const setupSections = useMemo(
-    () =>
-      [...setupGrouped.entries()].map(([groupName, entries]) => ({
-        id: groupName,
-        title: groupName,
-        items: entries.map((entry) => ({
-          id: entry.id,
-          label: entry.title,
-          checked: selectedIds.includes(entry.id)
-        }))
-      })),
-    [selectedIds, setupGrouped]
-  );
-
-  const groupedResults = useMemo(() => groupCompareItems(compareData, changeFilter, mode), [compareData, changeFilter, mode]);
-
-  const sectionCounts = useMemo(() => {
-    const counts = new Map<ParameterGroup, { updated: number; unchanged: number }>();
-    if (!compareData) {
-      return counts;
-    }
-    for (const item of compareData.items) {
-      const current = counts.get(item.group) ?? { updated: 0, unchanged: 0 };
-      if (isUpdated(item, mode)) {
-        current.updated += 1;
-      } else {
-        current.unchanged += 1;
-      }
-      counts.set(item.group, current);
-    }
-    return counts;
-  }, [compareData, mode]);
-
-  useEffect(() => {
-    if (!compareData) {
-      return;
-    }
-
-    setSectionOpen((current) => {
-      if (Object.keys(current).length === 0) {
-        const seeded: Record<string, boolean> = {};
-        for (const groupName of GROUP_ORDER) {
-          seeded[groupName] = DEFAULT_OPEN_COMPARE_GROUPS.has(groupName);
-        }
-        return seeded;
-      }
-
-      let changed = false;
-      const nextState = { ...current };
-      for (const groupName of GROUP_ORDER) {
-        if (!(groupName in nextState)) {
-          nextState[groupName] = false;
-          changed = true;
-        }
-      }
-      return changed ? nextState : current;
-    });
-  }, [compareData]);
-
-  const toggleId = (id: string) => {
-    setSelectedIds((current) => {
-      if (current.includes(id)) {
-        return current.filter((value) => value !== id);
-      }
-      return [...current, id];
-    });
-  };
-
-  const toggleAll = () => {
-    if (selectedIds.length === catalog.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(catalog.map((item) => item.id));
-    }
-  };
-
-  const shownCount = compareData
-    ? compareData.items.filter((item) =>
-        changeFilter === 'all' ? true : changeFilter === 'updated' ? isUpdated(item, mode) : !isUpdated(item, mode)
-      ).length
-    : 0;
-
-  const hasComparedItems = (compareData?.items.length ?? 0) > 0;
-  const isLoadingWithoutData = isBootstrapping || (isLoading && !hasComparedItems);
-  const isRefreshingComparedItems = isLoading && hasComparedItems;
-  const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
-  const titleText =
-    mode === 'single'
-      ? selectedVersion
-        ? `Model parameters at ${formatModelName(selectedVersion)}`
-        : ''
-      : left && right
-        ? `${formatModelName(left)} vs ${formatModelName(right)}`
-        : '';
-  const isTitleLoading = isBootstrapping || titleText.length === 0;
-  // Only the four named models are offered; the selected version is passed so a deep link to an
-  // intermediate calibration step still renders as an option instead of silently resetting.
-  const singleVersionOptions = useMemo(
-    () => buildModelOptions(versions, selectedVersion, inProgressSet),
-    [versions, selectedVersion, inProgressSet]
-  );
-  const leftVersionOptions = useMemo(() => buildModelOptions(versions, left, inProgressSet), [versions, left, inProgressSet]);
-  const rightVersionOptions = useMemo(() => buildModelOptions(versions, right, inProgressSet), [versions, right, inProgressSet]);
-  const renderVersionTags = (prefix: string, version: string) =>
-    inProgressSet.has(version)
-      ? [
-          <span key={`${prefix}-${version}-in-progress`} className="status-pill-in-progress">
-            {`${prefix} ${version} in progress`}
-          </span>
-        ]
-      : [];
-  const selectedVersionTags =
-    mode === 'single'
-      ? renderVersionTags('Version', selectedVersion)
-      : [...renderVersionTags('Left', left), ...renderVersionTags('Right', right)];
-  const overviewItems = compareData?.items ?? [];
-  const documentedDatasets = useMemo(() => {
-    const unique = new Set<string>();
-    for (const item of overviewItems) {
-      const datasets = mode === 'single'
-        ? item.sourceInfo.datasetsRight
-        : [...item.sourceInfo.datasetsLeft, ...item.sourceInfo.datasetsRight];
-      for (const dataset of datasets) unique.add(formatOverviewDataset(dataset));
-    }
-    return [...unique].sort();
-  }, [mode, overviewItems]);
-  const evidenceYears = useMemo(() => {
-    const years = new Set<string>();
-    for (const dataset of documentedDatasets) {
-      for (const match of dataset.matchAll(/\b(?:19|20)\d{2}\b/g)) years.add(match[0]);
-    }
-    return [...years].sort();
-  }, [documentedDatasets]);
-  const validationVersion = mode === 'single' ? selectedVersion : right;
-  const validationEvidenceYear = HISTORICAL_EVIDENCE_VERSIONS.has(validationVersion) ? 2011 : 2024;
+    const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id))
+      .filter((item) => !term || [item.title, item.id, ...item.sourceInfo.configKeys].some((value) => value.toLowerCase().includes(term)));
+    const grouped = new Map<ParameterGroup, CompareResponse['items']>();
+    for (const item of rows) grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
+    return grouped;
+  }, [comparison, mode, search]);
+  const optionSet = useMemo(() => new Set(inProgress), [inProgress]);
+  const singleOptions = buildModelOptions(versions, selected, optionSet);
+  const leftOptions = buildModelOptions(versions, left, optionSet);
+  const rightOptions = buildModelOptions(versions, right, optionSet);
+  const validationYear = overview?.primary.campaign.evidenceYear ?? 2024;
   const evidenceContext = hasScenarioContext ? `&from=scenario&draft=${encodeURIComponent(scenarioDraftId)}&scenarioStep=model-version` : '';
 
-  return (
-    <section className="calibration-layout">
-      {hasScenarioContext && validationVersion && (
-        <aside className="evidence-context-banner">
-          <p>You are checking calibration evidence for an unfinished policy scenario.{mode === 'compare' ? ' The To model is the candidate used by the return action.' : ''}</p>
-          <div>
-            <Link className="secondary-button" to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}${scenarioReturnStep}`}>Return without changing model</Link>
-            <Link className="primary-button" onClick={() => updateScenarioDraftModel(scenarioDraftId, validationVersion)} to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}${scenarioReturnStep}`}>
-              Use {formatModelName(validationVersion)} and return to scenario
-            </Link>
-          </div>
-        </aside>
-      )}
-      <div className="calibration-controls results-card" aria-label="Calibration view controls">
-        <div>
-          <span className="control-label">View</span>
-          <div className="mode-switch-row">
-            <button
-              type="button"
-              className={`filter-pill ${mode === 'single' ? 'active' : ''}`}
-              onClick={() => setMode('single')}
-            >
-              Single version
-            </button>
-            <button
-              type="button"
-              className={`filter-pill ${mode === 'compare' ? 'active' : ''}`}
-              onClick={() => setMode('compare')}
-            >
-              Compare versions
-            </button>
-          </div>
-        </div>
-
-        {mode === 'single' ? (
-            <label htmlFor="single-version"><span className="control-label">Model</span>
-              <select id="single-version" value={selectedVersion} onChange={(event) => setSelectedVersion(event.target.value)}>
-                {singleVersionOptions.map((option) => (
-                  <option key={option.version} value={option.version}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <>
-              <label htmlFor="left-version"><span className="control-label">From model</span>
-              <select id="left-version" value={left} onChange={(event) => setLeft(event.target.value)}>
-                {leftVersionOptions.map((option) => (
-                  <option key={option.version} value={option.version}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              </label>
-
-              <label htmlFor="right-version"><span className="control-label">To model</span>
-              <select id="right-version" value={right} onChange={(event) => setRight(event.target.value)}>
-                {rightVersionOptions.map((option) => (
-                  <option key={option.version} value={option.version}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              </label>
-            </>
-          )}
-      </div>
-
-      <div className="compare-results">
-        <section className="summary-panel calibration-introduction">
-          <div>
-            <h2>Calibration assumptions</h2>
-            <p>
-              The model combines inputs measured directly from UK data with behavioural parameters that cannot be
-              observed directly. Household demographics and incomes, for example, can be set using published
-              statistics, whereas parameters influencing decisions such as whether to rent or buy must be estimated
-              through calibration. This page documents the values used in the selected model version and the evidence
-              supporting them.
-            </p>
-          </div>
-          {validationVersion && (
-            <Link className="secondary-button calibration-validation-link" to={`/validation?version=${encodeURIComponent(validationVersion)}&evidenceYear=${validationEvidenceYear}${evidenceContext}`}>
-              View validation evidence
-            </Link>
-          )}
-        </section>
-
-        <CollapsibleSection
-          title="Filter assumptions"
-          defaultOpen={false}
-          summary={`${selectedIds.length} of ${catalog.length} selected`}
-          className="calibration-filter-disclosure"
-          bodyClassName="calibration-filter-body"
-        >
-          <label htmlFor="search-params">Find parameters</label>
-          <input
-            id="search-params"
-            placeholder="Search title or key"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-            <button type="button" className="secondary-button" onClick={toggleAll}>
-              {selectedIds.length === catalog.length ? 'Clear all' : 'Select all'}
-            </button>
-
-            <GroupedCheckboxSections sections={setupSections} onToggle={toggleId} />
-        </CollapsibleSection>
-
-        <header className="results-head">
-          <h2>
-            {isTitleLoading ? (
-              <LoadingSkeleton as="span" className="loading-skeleton-line compare-title-skeleton" ariaLabel="Loading selected versions" />
-            ) : (
-              titleText
-            )}
-          </h2>
-          {selectedVersionTags.length > 0 && (
-            <div className="results-version-tags">
-              {selectedVersionTags}
-            </div>
-          )}
-          <p>{mode === 'single' ? 'Charts show the assumptions used by this model. Plain-language notes explain their economic and policy relevance.' : 'Compare exact assumptions, deltas, and provenance across any two historical versions.'}</p>
-
-          {mode === 'single' && compareData && (
-            <div className="calibration-overview-grid">
-              <div><span>Status</span><strong>{inProgressSet.has(selectedVersion) ? 'In progress' : 'Stable'}</strong></div>
-              <div><span>Calibrated areas</span><strong>{overviewItems.length}</strong></div>
-              <div><span>Economic themes</span><strong>{GROUP_ORDER.length}</strong></div>
-              <div><span>Documented datasets</span><strong>{documentedDatasets.length}</strong></div>
-              <div className="calibration-overview-wide"><span>Evidence-year coverage</span><strong>{evidenceYears.length ? evidenceYears.join(', ') : 'Not documented'}</strong></div>
-            </div>
-          )}
-          {mode === 'single' && (
-            <p className="calibration-validation-note"><strong>Calibration is not validation.</strong> Calibration sets model assumptions from documented evidence; Validation separately tests simulated outcomes against independent evidence. Dataset coverage is descriptive, not a confidence or validation score.</p>
-          )}
-
-          {mode === 'compare' && <div className="change-filter-row">
-            <span>Filter:</span>
-            <button
-              type="button"
-              className={`filter-pill ${changeFilter === 'all' ? 'active' : ''}`}
-              onClick={() => setChangeFilter('all')}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className={`filter-pill ${changeFilter === 'updated' ? 'active' : ''}`}
-              onClick={() => setChangeFilter('updated')}
-            >
-              Updated
-            </button>
-            <button
-              type="button"
-              className={`filter-pill ${changeFilter === 'unchanged' ? 'active' : ''}`}
-              onClick={() => setChangeFilter('unchanged')}
-            >
-              No change
-            </button>
-            <strong>
-              {isLoadingWithoutData ? (
-                <LoadingSkeleton as="span" className="loading-skeleton-line compare-count-skeleton" ariaLabel="Loading filtered count" />
-              ) : (
-                shownCount
-              )}
-            </strong>
-          </div>}
-          {isRefreshingComparedItems && (
-            <LoadingSkeleton as="span" className="loading-skeleton-pill compare-refresh-pill" ariaLabel="Refreshing parameter comparison" />
-          )}
-        </header>
-
-        {error && <p className="error-banner">{error}</p>}
-        {isWaitingForApi && (
-          <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds...</p>
-        )}
-
-        {!isBootstrapping && !isLoading && (selectedIds.length === 0 || compareData?.items.length === 0) && (
-          <p className="info-banner">No parameters selected.</p>
-        )}
-
-        {isLoadingWithoutData ? (
-          <LoadingSkeletonGroup
-            className="cards-stack-skeleton"
-            count={4}
-            itemClassName="loading-skeleton-card result-group-skeleton"
-            ariaLabel="Loading parameter groups"
-          />
-        ) : (
-          <div className="cards-stack">
-            {GROUP_ORDER.filter((group) => (groupedResults.get(group)?.length ?? 0) > 0).map((groupName) => {
-              const items = groupedResults.get(groupName) ?? [];
-              const counts = sectionCounts.get(groupName) ?? { updated: 0, unchanged: 0 };
-              const open = sectionOpen[groupName] ?? false;
-
-              return (
-                <section className="result-group" key={groupName}>
-                  <button
-                    type="button"
-                    className="result-group-header"
-                    onClick={() =>
-                      setSectionOpen((current) => ({
-                        ...current,
-                        [groupName]: !open
-                      }))
-                    }
-                  >
-                    <span className="result-group-title">
-                      {open ? '▾' : '▸'} {groupName}
-                    </span>
-                    {mode === 'compare' && <span className="result-group-counts">
-                      <span className="unchanged">No change: {counts.unchanged}</span>
-                      <span className="updated">Updated: {counts.updated}</span>
-                    </span>}
-                  </button>
-
-                  {open && (
-                    <div className="result-group-body">
-                      {items.map((item) => (
-                        <CompareCard
-                          key={item.id}
-                          item={item}
-                          mode={mode}
-                          inProgressVersions={inProgressVersions}
-                          defaultExpanded={DEFAULT_OPEN_COMPARE_CARD_IDS.has(item.id)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-        )}
+  return <section className="calibration-layout calibration-workspace">
+    {hasScenarioContext && returnVersion && <aside className="evidence-context-banner"><p>You are reviewing calibration evidence for an unfinished policy scenario.</p><div><Link className="secondary-button" to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}&step=model-version`}>Return without changing model</Link><Link className="primary-button" onClick={() => updateScenarioDraftModel(scenarioDraftId, returnVersion)} to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}&step=model-version`}>Use {formatModelName(returnVersion)} and return</Link></div></aside>}
+    <header className="calibration-page-head"><div><p className="eyebrow">Model evidence</p><h1>Calibration</h1><p>Understand why the model needs fitted behaviour, what was fitted, and which other assumptions it carries.</p></div></header>
+    <section className="summary-panel calibration-introduction calibration-description">
+      <div>
+        <h2>Calibration assumptions</h2>
+        <p>
+          The model combines inputs measured directly from UK data with behavioural parameters that cannot be
+          observed directly. Household demographics and incomes, for example, can be set using published
+          statistics, whereas parameters influencing decisions such as whether to rent or buy must be estimated
+          through calibration. This page documents the values used in the selected model version and the evidence
+          supporting them.
+        </p>
       </div>
     </section>
-  );
+    <div className="calibration-controls results-card" aria-label="Calibration view controls">
+      <div><span className="control-label">View</span><div className="mode-switch-row"><button className={`filter-pill ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>Single model</button><button className={`filter-pill ${mode === 'compare' ? 'active' : ''}`} onClick={() => setMode('compare')}>Compare models</button></div></div>
+      {mode === 'single' ? <label><span className="control-label">Model</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>{singleOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select><small>{formatModelSubtitle(selected)}</small></label> : <><label><span className="control-label">From model</span><select value={left} onChange={(event) => setLeft(event.target.value)}>{leftOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">To model</span><select value={right} onChange={(event) => setRight(event.target.value)}>{rightOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select></label><label><span className="control-label">Preset comparison</span><select value="" onChange={(event) => { const preset = PRESETS[Number(event.target.value)]; if (preset) { setLeft(preset[1]); setRight(preset[2]); } }}><option value="">Choose a preset…</option>{PRESETS.map((preset, index) => <option value={index} key={preset[0]}>{preset[0]}: {preset[1]} → {preset[2]}</option>)}</select><small>A shortcut that fills the two model selectors for a common analytical question.</small></label></>}
+    </div>
+    {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
+    {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <div className="calibration-columns">
+      <main className="calibration-main">
+        <section className="results-card calibration-campaign"><div className="section-heading-row"><div><p className="eyebrow">Calibration campaign</p><h2>Why output calibration is necessary</h2></div><Link className="secondary-button" to={`/validation?version=${encodeURIComponent(overview.primary.identity.version)}&evidenceYear=${validationYear}${evidenceContext}`}>View indicator-level fit</Link></div><p>The five behavioural parameters below describe latent choices and model memory; they cannot be measured directly. Output calibration searches for values whose simulated outcomes collectively reproduce documented evidence.</p>{overview.primary.identity.inheritance && <p className="inheritance-note">{overview.primary.identity.inheritance}</p>}
+          <div className="campaign-grid"><div><span>Evidence / fit year</span><strong>{overview.primary.campaign.evidenceYear ?? 'Not recorded'}</strong></div><div><span>Method</span><strong>{overview.primary.campaign.method}</strong></div><div className="wide"><span>Objective</span><strong>{overview.primary.campaign.objective}</strong></div><div><span>Before loss</span><strong>{fmt(overview.primary.campaign.baselineLoss)}</strong></div><div><span>After loss</span><strong>{fmt(overview.primary.campaign.selectedLoss)}</strong></div><div><span>Improvement</span><strong>{fmt(overview.primary.campaign.improvement)}</strong></div><div><span>Promotion</span><strong>{overview.primary.campaign.promotion}</strong></div><div className="wide"><span>Guardrail result</span><strong>{overview.primary.campaign.guardrail}</strong></div></div>
+          {overview.primary.campaign.targetGroups.length > 0 ? <div className="target-groups"><h3>Target indicators</h3>{overview.primary.campaign.targetGroups.map((group) => <span key={group.name} title={group.indicators.join(', ')}>{group.name} <b>{group.count}</b></span>)}</div> : <p>Target indicators: <strong>Not recorded</strong></p>}
+          {mode === 'compare' && !overview.sameEvidenceProfile && <p className="info-banner">The models use different evidence profiles. Loss values are shown only within each campaign and are not compared across evidence years.</p>}
+          <CollapsibleSection title="Technical campaign details" defaultOpen={false} summary="Seeds, run length, bounds and provenance"><dl className="technical-details"><div><dt>Seeds</dt><dd>{overview.primary.campaign.seeds?.join(', ') ?? 'Not recorded'}</dd></div><div><dt>Simulation length</dt><dd>{overview.primary.campaign.simulationSteps ?? 'Not recorded'}</dd></div><div><dt>Analysis window</dt><dd>{overview.primary.campaign.analysisWindow ? `${overview.primary.campaign.analysisWindow.start}–${overview.primary.campaign.analysisWindow.end}` : 'Not recorded'}</dd></div><div><dt>Optimisation</dt><dd>{overview.primary.campaign.optimisationSettings.join(' · ') || 'Not recorded'}</dd></div><div><dt>Provenance</dt><dd>{overview.primary.campaign.provenance.join(' · ') || 'Not recorded'}</dd></div></dl></CollapsibleSection>
+        </section>
+        <section className="calibration-parameters">
+          <div><p className="eyebrow">Output-calibrated</p><h2>Five fitted behavioural parameters</h2></div>
+          {overview.primary.parameters.map((parameter) =>
+            <FittedParameterCard
+              key={parameter.key}
+              parameter={parameter}
+              compared={overview.comparison?.parameters.find((candidate) => candidate.key === parameter.key)}
+              primaryVersion={overview.primary.identity.version}
+              comparisonVersion={overview.comparison?.identity.version}
+              mode={mode}
+            />
+          )}
+        </section>
+        <section className="results-card assumption-reference">
+          <div className="section-heading-row"><div><p className="eyebrow">Reference</p><h2>Other model assumptions</h2></div></div>
+          <p className="assumption-reference-intro">
+            These are the model inputs outside the five fitted behavioural parameters. Each row represents one
+            related assumption or input dataset. Use the values to see what the selected model contains
+            {mode === 'compare' ? ' and whether it changed between the two models' : ''}. “Basis for assumption” says
+            whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
+            Source/evidence records the specific evidence it came from.
+          </p>
+          <input className="assumption-search" aria-label="Search model assumptions" placeholder="Search assumptions or config keys" value={search} onChange={(event) => setSearch(event.target.value)} />
+          {[...referenceGroups.entries()].map(([group, items]) => <section className="assumption-group" key={group as ParameterGroup}><h3>{group} <span>{items.length}</span></h3><div className="assumption-table" role="table"><div className="assumption-table-head" role="row"><span>Assumption and config key</span><span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span><span>Basis for assumption</span><span>Source / evidence</span></div>{items.map((item) => { const meta = catalog.find((entry) => entry.id === item.id)!; const complex = item.visualPayload.type !== 'scalar'; const derivation = meta.keyMetadata[0]?.derivation; return <div className="assumption-table-row" role="row" key={item.id}><div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div><div>{scalarSummary(item, mode)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div><div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div><div>{sourceSummary(item, mode)}</div></div>; })}</div></section>)}
+          {referenceGroups.size === 0 && <p className="info-banner">No assumptions match the current filters.</p>}
+        </section>
+      </main>
+      <aside className="calibration-sticky-summary results-card"><p className="eyebrow">Selected model{mode === 'compare' ? 's' : ''}</p>{mode === 'compare' && overview.comparison && <ModelFacts model={overview.comparison} />}<ModelFacts model={overview.primary} /><h3>Fitted values</h3>{overview.primary.parameters.map((parameter) => <div className="sticky-value" key={parameter.key}><span>{parameter.name}</span><strong>{mode === 'compare' && fittedByKey.get(parameter.key) ? `${fmt(fittedByKey.get(parameter.key)!.left)} → ` : ''}{fmt(parameter.value)}</strong></div>)}</aside>
+    </div>}
+    {inspectionItem && <div
+      className="scenario-create-modal-backdrop"
+      role="presentation"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) setInspectionItem(null); }}
+    >
+      <section className="scenario-create-modal calibration-inspection-modal" role="dialog" aria-modal="true" aria-labelledby="calibration-inspection-title">
+        <div className="scenario-create-modal-head">
+          <div>
+            <p className="trend-modal-eyebrow">Model assumption</p>
+            <h2 id="calibration-inspection-title">{inspectionItem.title}</h2>
+            <p>{mode === 'compare' ? `${inspectionItem.leftVersion} compared with ${inspectionItem.rightVersion}` : inspectionItem.rightVersion}</p>
+          </div>
+          <button type="button" className="trend-modal-close" aria-label="Close assumption visualization" autoFocus onClick={() => setInspectionItem(null)}>×</button>
+        </div>
+        <div className="scenario-create-modal-body">
+          <CompareCard item={inspectionItem} mode={mode} inProgressVersions={inProgress} defaultExpanded />
+        </div>
+      </section>
+    </div>}
+  </section>;
 }

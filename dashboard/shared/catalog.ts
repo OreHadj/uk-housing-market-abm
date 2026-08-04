@@ -1,6 +1,6 @@
-import type { ParameterCardMeta } from './types';
+import type { ParameterCardMeta, ParameterDerivation, ParameterFormat } from './types';
 
-export const PARAMETER_CATALOG: ParameterCardMeta[] = [
+const PARAMETER_CATALOG_BASE = [
   {
     id: 'income_given_age_joint',
     title: 'How Gross Income Is Distributed Across Age Groups',
@@ -416,6 +416,66 @@ export const PARAMETER_CATALOG: ParameterCardMeta[] = [
     explanation:
       'This intensity parameter controls how strongly BTL investors respond to effective-yield differences when deciding whether to buy or sell. Higher values make choices more sharply concentrated around the highest-yield option.'
   }
-];
+] satisfies Omit<ParameterCardMeta, 'keyMetadata'>[];
+
+const POLICY_CARDS = new Set([
+  'national_insurance_rates', 'income_tax_rates', 'government_allowance_support',
+  'central_bank_base_rate', 'central_bank_ltv_limits', 'central_bank_lti_soft_limits',
+  'central_bank_affordability_icr_limits'
+]);
+const OUTPUT_CALIBRATED_CARDS = new Set([
+  'rent_purchase_choice', 'btl_probability_multiplier', 'btl_choice_intensity',
+  'market_average_price_decay'
+]);
+const TECHNICAL_CARDS = new Set([
+  'uk_housing_stock_totals', 'household_consumption_fractions', 'hpa_lookback_years',
+  'hold_period_years', 'price_reduction_probabilities', 'tenancy_length_range', 'days_under_offer',
+  'bidup_multiplier', 'mortgage_duration_years'
+]);
+const POSTULATED_CARDS = new Set([
+  'hpa_expectation_params', 'bank_rate_credit_response', 'bank_ltv_limits', 'bank_lti_limits',
+  'bank_affordability_icr_limits', 'btl_strategy_split'
+]);
+
+function readableKey(key: string): string {
+  return key.toLowerCase().split('_').map((word) => word === 'btl' ? 'BTL' : word === 'hpa' ? 'HPA' : word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+function derivationFor(id: string): ParameterDerivation {
+  if (OUTPUT_CALIBRATED_CARDS.has(id)) return 'output-calibrated';
+  if (POLICY_CARDS.has(id)) return 'policy-set';
+  if (TECHNICAL_CARDS.has(id)) return 'technical/user-set';
+  if (POSTULATED_CARDS.has(id)) return 'postulated';
+  return 'empirically estimated';
+}
+
+function valueTypeFor(format: ParameterFormat, isDataFile: boolean) {
+  if (format === 'binned_distribution' || format === 'joint_distribution') return 'distribution' as const;
+  if (isDataFile) return 'file' as const;
+  if (!['scalar', 'scalar_pair'].includes(format)) return 'curve' as const;
+  return 'number' as const;
+}
+
+function unitFor(format: ParameterFormat): string {
+  if (format === 'joint_distribution' || format === 'binned_distribution') return 'Probability share';
+  return 'Model units';
+}
+
+/** Explicit catalogue-level classification; it deliberately never derives provenance from filenames. */
+export const PARAMETER_CATALOG: ParameterCardMeta[] = PARAMETER_CATALOG_BASE.map((item) => ({
+  ...item,
+  keyMetadata: [
+    ...item.configKeys,
+    ...(item.derivedScalars?.map((entry) => entry.key) ?? [])
+  ].map((key) => ({
+    key,
+    label: readableKey(key),
+    unit: unitFor(item.format),
+    valueType: valueTypeFor(item.format, item.dataFileConfigKeys?.includes(key) ?? false),
+    derivation: derivationFor(item.id),
+    description: item.explanation,
+    sourceYear: 'Version-specific evidence'
+  }))
+}));
 
 export const PARAMETER_IDS = PARAMETER_CATALOG.map((entry) => entry.id);

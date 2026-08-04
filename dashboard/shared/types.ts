@@ -36,6 +36,76 @@ export interface ParameterCardMeta {
   dataFileConfigKeys?: string[];
   derivedScalars?: DerivedScalarMeta[];
   explanation: string;
+  keyMetadata: ParameterKeyMetadata[];
+}
+
+export type ParameterDerivation =
+  | 'empirically estimated'
+  | 'postulated'
+  | 'policy-set'
+  | 'technical/user-set'
+  | 'output-calibrated';
+
+export interface ParameterKeyMetadata {
+  key: string;
+  label: string;
+  unit: string;
+  valueType: 'number' | 'distribution' | 'curve' | 'file';
+  derivation: ParameterDerivation;
+  description: string;
+  sourceYear: string;
+}
+
+export interface CalibrationModelIdentity {
+  version: string;
+  name: string;
+  dataVintage: string;
+  fitVintage: string;
+  method: string;
+  inheritance: string | null;
+}
+
+export interface CalibrationParameterRecord {
+  key: string;
+  name: string;
+  value: number;
+  lower: number | null;
+  upper: number | null;
+  priorLower: number | null;
+  priorUpper: number | null;
+  meaning: string;
+  calibrationReason: string;
+  increaseEffect: string;
+  decreaseEffect: string;
+}
+
+export interface CalibrationCampaign {
+  evidenceYear: number | null;
+  method: string;
+  objective: string;
+  targetGroups: { name: string; indicators: string[]; count: number }[];
+  baselineLoss: number | null;
+  selectedLoss: number | null;
+  improvement: number | null;
+  promotion: string;
+  guardrail: string;
+  seeds: number[] | null;
+  simulationSteps: number | null;
+  analysisWindow: { start: number; end: number } | null;
+  optimisationSettings: string[];
+  provenance: string[];
+}
+
+export interface CalibrationModelOverview {
+  identity: CalibrationModelIdentity;
+  campaign: CalibrationCampaign;
+  parameters: CalibrationParameterRecord[];
+}
+
+export interface CalibrationOverviewResponse {
+  primary: CalibrationModelOverview;
+  comparison: CalibrationModelOverview | null;
+  sameEvidenceProfile: boolean;
 }
 
 export interface DataSourceInfo {

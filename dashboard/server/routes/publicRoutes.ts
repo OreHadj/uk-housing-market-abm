@@ -1,6 +1,7 @@
 import type express from 'express';
 import { compareParameters, getInProgressVersions, getParameterCatalog, getValidationOverview, getVersions } from '../lib/service';
 import { resolveDashboardWriteAccess } from '../lib/writeAuth';
+import { getCalibrationOverview } from '../lib/calibrationOverview';
 import type { RouteContext } from './routeContext';
 
 export function registerPublicRoutes(app: express.Express, context: RouteContext): void {
@@ -100,6 +101,20 @@ export function registerPublicRoutes(app: express.Express, context: RouteContext
 
   app.get('/api/parameter-catalog', context.withMemoryLogging('parameter-catalog', (_req, res) => {
     res.json({ items: getParameterCatalog() });
+  }));
+
+  app.get('/api/calibration-overview', context.withMemoryLogging('calibration-overview', (req, res) => {
+    const primary = String(req.query.primary ?? '').trim();
+    const comparison = String(req.query.comparison ?? '').trim();
+    if (!primary) {
+      res.status(400).json({ error: 'primary query parameter is required' });
+      return;
+    }
+    try {
+      res.json(getCalibrationOverview(context.runtimePaths, primary, comparison || undefined));
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
   }));
 
   app.get('/api/compare', context.withMemoryLogging('compare', (req, res) => {

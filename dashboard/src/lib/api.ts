@@ -4,6 +4,7 @@ import type {
   AuthLogoutResponse,
   AuthStatusPayload,
   CompareResponse,
+  CalibrationOverviewResponse,
   ExperimentJobCancelResponse,
   ExperimentJobDeleteResponse,
   ExperimentJobLogsPayload,
@@ -291,6 +292,12 @@ export async function fetchCompare(
   });
 
   return requestJson<CompareResponse>(`${buildApiUrl('/api/compare')}?${params.toString()}`, 'Failed to fetch comparison');
+}
+
+export async function fetchCalibrationOverview(primary: string, comparison?: string): Promise<CalibrationOverviewResponse> {
+  const params = new URLSearchParams({ primary });
+  if (comparison) params.set('comparison', comparison);
+  return requestJson<CalibrationOverviewResponse>(`${buildApiUrl('/api/calibration-overview')}?${params.toString()}`, 'Failed to fetch calibration overview');
 }
 
 export async function fetchResultsRuns(): Promise<ResultsRunSummary[]> {
