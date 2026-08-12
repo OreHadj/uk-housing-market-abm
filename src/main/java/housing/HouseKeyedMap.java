@@ -38,11 +38,9 @@ public class HouseKeyedMap<V> {
     //----- Fields -----//
     //------------------//
 
-    private static final int[]      EMPTY_IDS = new int[0];
     private static final House[]    EMPTY_KEYS = new House[0];
     private static final Object[]   EMPTY_VALUES = new Object[0];
 
-    private int[]       ids = EMPTY_IDS;       // ascending House.id, parallel to keys
     private House[]     keys = EMPTY_KEYS;     // ascending House.id
     private Object[]    values = EMPTY_VALUES; // parallel to keys
     private int         size;
@@ -72,10 +70,8 @@ public class HouseKeyedMap<V> {
         }
         int insertionPoint = -i - 1;
         if (size == keys.length) grow();
-        System.arraycopy(ids, insertionPoint, ids, insertionPoint + 1, size - insertionPoint);
         System.arraycopy(keys, insertionPoint, keys, insertionPoint + 1, size - insertionPoint);
         System.arraycopy(values, insertionPoint, values, insertionPoint + 1, size - insertionPoint);
-        ids[insertionPoint] = house.id;
         keys[insertionPoint] = house;
         values[insertionPoint] = value;
         size++;
@@ -106,7 +102,6 @@ public class HouseKeyedMap<V> {
 
     public void removeAt(int i) {
         int trailing = size - i - 1;
-        System.arraycopy(ids, i + 1, ids, i, trailing);
         System.arraycopy(keys, i + 1, keys, i, trailing);
         System.arraycopy(values, i + 1, values, i, trailing);
         size--;
@@ -125,7 +120,7 @@ public class HouseKeyedMap<V> {
         int hi = size - 1;
         while (lo <= hi) {
             int mid = (lo + hi) >>> 1;
-            int c = Integer.compare(ids[mid], id);
+            int c = Integer.compare(keys[mid].id, id);
             if (c < 0) {
                 lo = mid + 1;
             } else if (c > 0) {
@@ -140,7 +135,6 @@ public class HouseKeyedMap<V> {
     private void grow() {
         // Most households hold 0-1 entries, so start small and double from there
         int capacity = keys.length == 0 ? 2 : keys.length * 2;
-        ids = Arrays.copyOf(ids, capacity);
         keys = Arrays.copyOf(keys, capacity);
         values = Arrays.copyOf(values, capacity);
     }
