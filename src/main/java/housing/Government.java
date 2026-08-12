@@ -73,7 +73,7 @@ public class Government {
      * @param untaxedAllowance Any untaxed allowance
      * @return The banded percentage of "taxableIncome"
      */
-    private double bandedPercentage(double taxableIncome, Double [] bands, Double [] rates, double untaxedAllowance) {
+    private double bandedPercentage(double taxableIncome, double[] bands, double[] rates, double untaxedAllowance) {
         // Set counters to zero
         int i = 0;
         double lastRate = 0.0;

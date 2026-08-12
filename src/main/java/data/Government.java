@@ -28,14 +28,14 @@ public class Government {
      * Class to group bands and rates arrays in a single object, such that it can be returned from methods
      */
     public static class BandsAndRates {
-        public Double[] bands = null;
-        public Double[] rates = null;
+        public double[] bands = null;
+        public double[] rates = null;
     }
 
     /**
      * Method to read bands and rates from a file, to be used to read both tax and national insurance data
      * @param   fileName    String with name of file (address inside source folder)
-     * @return  BandsAndRates object containing two arrays of Doubles, one with the bands and the other with the rates
+     * @return  BandsAndRates object containing two arrays of doubles, one with the bands and the other with the rates
      */
     private static BandsAndRates readBandsAndRates(String fileName) {
         BandsAndRates bandsAndRates = new BandsAndRates();
@@ -63,10 +63,14 @@ public class Government {
                 }
                 line = buffReader.readLine();
             }
-            bandsAndRates.bands = new Double[dummyBands.size()];
-            bandsAndRates.rates = new Double[dummyRates.size()];
-            bandsAndRates.bands = dummyBands.toArray(bandsAndRates.bands);
-            bandsAndRates.rates = dummyRates.toArray(bandsAndRates.rates);
+            bandsAndRates.bands = new double[dummyBands.size()];
+            bandsAndRates.rates = new double[dummyRates.size()];
+            for (int i = 0; i < dummyBands.size(); i++) {
+                bandsAndRates.bands[i] = dummyBands.get(i);
+            }
+            for (int i = 0; i < dummyRates.size(); i++) {
+                bandsAndRates.rates[i] = dummyRates.get(i);
+            }
 
         } catch (IOException ioe) {
             System.out.println("Exception " + ioe + " while trying to read file '" + fileName + "'");
