@@ -1,7 +1,7 @@
 package housing;
 
 import org.apache.commons.math3.distribution.LogNormalDistribution;
-import org.apache.commons.math3.random.MersenneTwister;
+import org.apache.commons.math3.random.RandomGenerator;
 
 import collectors.HousingMarketStats;
 import collectors.RentalMarketStats;
@@ -22,14 +22,15 @@ public class HouseholdBehaviour {
     //------------------//
 
     private static Config                   config = Model.config; // Passes the Model's configuration parameters object to a private static field
-    private static MersenneTwister          prng = Model.prng; // Passes the Model's random number generator to a private static field
     private static HousingMarketStats       housingMarketStats = Model.housingMarketStats; // Passes the Model's housing market stats object to a private static field
     private static RentalMarketStats        rentalMarketStats = Model.rentalMarketStats; // Passes the Model's rental market stats object to a private static field
     private static Pdf                      saleMarkUpPdf = new Pdf(config.DATA_INITIAL_SALE_MARKUP_DIST); // Read initial sale price mark-up distribution from file
     private static Pdf                      rentMarkUpPdf = new Pdf(config.DATA_INITIAL_RENT_MARKUP_DIST); // Read initial rent price mark-up distribution from file
-    private static LogNormalDistribution    downpaymentDistFTB = new LogNormalDistribution(prng,
+    // Inverse-CDF lookups only: the stored income percentile supplies p, so these intentionally have
+    // no generator and must never be sampled (Step 2 zero-consumption finding).
+    private static LogNormalDistribution    downpaymentDistFTB = new LogNormalDistribution(null,
             config.DOWNPAYMENT_FTB_SCALE, config.DOWNPAYMENT_FTB_SHAPE); // Size distribution for downpayments of first-time-buyers
-    private static LogNormalDistribution    downpaymentDistOO = new LogNormalDistribution(prng,
+    private static LogNormalDistribution    downpaymentDistOO = new LogNormalDistribution(null,
             config.DOWNPAYMENT_OO_SCALE, config.DOWNPAYMENT_OO_SHAPE); // Size distribution for downpayments of owner-occupiers
     private static BinnedDataDouble         BTLProbability = new BinnedDataDouble(config.DATA_BTL_PROBABILITY);
     private boolean                         BTLInvestor;
@@ -47,7 +48,7 @@ public class HouseholdBehaviour {
      *
      * @param incomePercentile Fixed income percentile for the household (assumed constant over a lifetime)
      */
-    HouseholdBehaviour(double incomePercentile) {
+    HouseholdBehaviour(RandomGenerator prng, double incomePercentile) {
         // Compute propensity to save, so that it is constant for a given household
         propensityToSave = prng.nextDouble();
         // Decide if household is a BTL investor and, if so, its tendency to seek capital gains or rental yields
@@ -101,7 +102,7 @@ public class HouseholdBehaviour {
      *
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      */
-    double updateDesiredPurchasePrice(double annualGrossEmploymentIncome) {
+    double updateDesiredPurchasePrice(RandomGenerator prng, double annualGrossEmploymentIncome) {
         return config.BUY_SCALE * Math.pow(annualGrossEmploymentIncome, config.BUY_EXPONENT)
                 * Math.exp(config.BUY_MU + config.BUY_SIGMA*prng.nextGaussian());
     }
@@ -116,7 +117,7 @@ public class HouseholdBehaviour {
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      * @param LTV Loan to value ratio targeted by the household
      */
-    double getAltDesiredPurchasePrice(double annualGrossEmploymentIncome, double LTV) {
+    double getAltDesiredPurchasePrice(RandomGenerator prng, double annualGrossEmploymentIncome, double LTV) {
         double r = Model.bank.getMortgageInterestRate();
         double denominator = 0.05
                 + LTV * r / (1 - Math.pow((1 + r / config.constants.MONTHS_IN_YEAR), -config.derivedParams.N_PAYMENTS))
@@ -134,7 +135,8 @@ public class HouseholdBehaviour {
      *
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      */
-    double getDesiredRentPrice(double annualGrossEmploymentIncome, double monthlyNetTotalIncome) {
+    double getDesiredRentPrice(RandomGenerator prng, double annualGrossEmploymentIncome,
+            double monthlyNetTotalIncome) {
         double desiredRentalPrice = config.DESIRED_RENT_SCALE
                 * Math.pow(annualGrossEmploymentIncome, config.DESIRED_RENT_EXPONENT)
                 * Math.exp(config.DESIRED_RENT_MU + config.DESIRED_RENT_SIGMA * prng.nextGaussian());
@@ -151,7 +153,7 @@ public class HouseholdBehaviour {
      * @param quality Quality of the house to be sold
      * @param principal Amount of principal left on any mortgage on this house
      */
-    double getInitialSalePrice(int quality, double principal) {
+    double getInitialSalePrice(RandomGenerator prng, int quality, double principal) {
         return Math.max(saleMarkUpPdf.nextDouble(prng) * housingMarketStats.getExpAvSalePriceForQuality(quality),
                 principal);
     }
@@ -163,7 +165,7 @@ public class HouseholdBehaviour {
      *
      * @param quality Quality of the house to be rented out
      */
-    double getInitialRentPrice(int quality) {
+    double getInitialRentPrice(RandomGenerator prng, int quality) {
         return rentMarkUpPdf.nextDouble(prng) * rentalMarketStats.getExpAvSalePriceForQuality(quality);
     }
 
@@ -173,7 +175,7 @@ public class HouseholdBehaviour {
      *
      * @return True if the owner-occupier decides to sell the house and false otherwise.
      */
-    boolean decideToSellHome() {
+    boolean decideToSellHome(RandomGenerator prng) {
         // TODO: This if implies BTL agents never sell their homes, need to explain in paper!
         return !isPropertyInvestor() && (prng.nextDouble() < config.derivedParams.MONTHLY_P_SELL);
     }
@@ -184,7 +186,7 @@ public class HouseholdBehaviour {
      * @param me the household
      * @param housePrice the price of the house
      */
-    double decideDownPayment(Household me, double housePrice, boolean isHome) {
+    double decideDownPayment(RandomGenerator prng, Household me, double housePrice, boolean isHome) {
         if (me.getBankBalance() > housePrice*config.DOWNPAYMENT_BANK_BALANCE_FOR_CASH_SALE) {
             return housePrice;
         }
@@ -219,7 +221,7 @@ public class HouseholdBehaviour {
      *
      * @param me the household
      */
-    double decideLTV(Household me) {
+    double decideLTV(RandomGenerator prng, Household me) {
         if (me.isFirstTimeBuyer()) {
             return (0.0002826 * me.getAnnualGrossEmploymentIncome()
                     - 0.00000000128 * Math.pow(me.getAnnualGrossEmploymentIncome(), 2)
@@ -252,7 +254,8 @@ public class HouseholdBehaviour {
      *
      * @return True if the household decides to buy a house, False if the household decides to rent
      */
-    boolean decideRentOrPurchase(Household me, double purchasePrice, double desiredDownPayment, double desiredPrice) {
+    boolean decideRentOrPurchase(RandomGenerator prng, Household me, double purchasePrice,
+            double desiredDownPayment, double desiredPrice) {
         // By definition, BTL households never rent
         if(isPropertyInvestor()) return(true);
         // First, find the maximum quality the household could afford in the ownership market
@@ -297,7 +300,7 @@ public class HouseholdBehaviour {
      * @param me The investor household
      * @return True if investor me decides to sell investment property h
      */
-    boolean decideToSellInvestmentProperty(House h, Household me) {
+    boolean decideToSellInvestmentProperty(RandomGenerator prng, House h, Household me) {
         // First find the mortgage agreement for this property
         MortgageAgreement mortgage = me.mortgageFor(h);
 
@@ -349,7 +352,7 @@ public class HouseholdBehaviour {
      * @param me The investor household
      * @return True if investor me decides to try to buy a new investment property, False otherwise
      */
-    boolean decideToBuyInvestmentProperty(Household me) {
+    boolean decideToBuyInvestmentProperty(RandomGenerator prng, Household me) {
         // Fast decisions...
         // ...do not buy if current bank balance below desired level
         // TODO: Review whether to keep this mechanism as well as its particular position (before or after next rule)
@@ -394,7 +397,7 @@ public class HouseholdBehaviour {
      *
      * @param sale The HouseOfferRecord of the house that is on the sale market
      */
-    double rethinkHouseSalePrice(HouseOfferRecord sale) {
+    double rethinkHouseSalePrice(RandomGenerator prng, HouseOfferRecord sale) {
         if (prng.nextDouble() < config.P_SALE_PRICE_REDUCE) {
             double logReduction = config.REDUCTION_MU + (prng.nextGaussian() * config.REDUCTION_SIGMA);
             // This prevents negative and too small new prices. While the limit of 0.5 is ad-hoc, being the probability
@@ -410,7 +413,7 @@ public class HouseholdBehaviour {
      *
      * @param sale The HouseOfferRecord of the house that is on the rental market
      */
-    double rethinkHouseRentPrice(HouseOfferRecord sale) {
+    double rethinkHouseRentPrice(RandomGenerator prng, HouseOfferRecord sale) {
         if (prng.nextDouble() < config.P_RENT_PRICE_REDUCE) {
             double logReduction = config.RENT_REDUCTION_MU + (prng.nextGaussian() * config.RENT_REDUCTION_SIGMA);
             // This prevents negative and too small new prices. While the limit of 0.5 is ad-hoc, being the probability
@@ -428,7 +431,9 @@ public class HouseholdBehaviour {
     private double sigma(double x) { return 1.0/(1.0 + Math.exp(-1.0*x)); }
 
     private LogNormalDistribution getBTLDownpaymentDist() {
-        return new LogNormalDistribution(prng, config.DOWNPAYMENT_BTL_SCALE, config.DOWNPAYMENT_BTL_SHAPE);
+        // Inverse-CDF only: null preserves the stored-percentile correlation and consumes no draw;
+        // calling sample() on this object would be a bug.
+        return new LogNormalDistribution(null, config.DOWNPAYMENT_BTL_SCALE, config.DOWNPAYMENT_BTL_SHAPE);
     }
 
     private double getBTLAlternativeReturn() {

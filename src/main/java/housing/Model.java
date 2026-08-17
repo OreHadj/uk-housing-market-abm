@@ -8,9 +8,9 @@ import java.time.Instant;
 
 import collectors.*;
 
-import org.apache.commons.math3.random.MersenneTwister;
 import org.apache.commons.cli.*;
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.math3.random.RandomGenerator;
 
 /**************************************************************************************************
  * This is the root object of the simulation. Upon creation it creates and initialises all the
@@ -41,7 +41,7 @@ public class Model {
     //------------------//
 
     public static Config                config;
-    public static MersenneTwister       prng;
+    private static RandomGenerator      prng;
     public static Construction          construction;
     public static CentralBank           centralBank;
     public static Bank                  bank;
@@ -75,7 +75,7 @@ public class Model {
      */
     public Model(String configFileName, String outputFolder) {
         config = new Config(configFileName);
-        prng = new MersenneTwister(config.SEED);
+        prng = RngFactory.create(config.SEED);
 
         government = new Government();
         demographics = new Demographics(prng);
@@ -198,7 +198,7 @@ public class Model {
         // Update number of houses
         construction.step();
         // Updates regional households consumption, housing decisions, and corresponding regional bids and offers
-        for(Household h : households) h.step();
+        for(Household h : households) h.step(prng);
         // Reset counters to store credit supply statistics
         creditSupply.preClearingResetCounters(t);
         // Store sale market bid and offer prices and averages before bids are matched by clearing the market

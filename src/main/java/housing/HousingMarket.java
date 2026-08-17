@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 
 import org.apache.commons.math3.distribution.GeometricDistribution;
-import org.apache.commons.math3.random.MersenneTwister;
+import org.apache.commons.math3.random.RandomGenerator;
 
 import utilities.ArrayOrderBook;
 import utilities.OrderBook2D;
@@ -23,7 +23,7 @@ public abstract class HousingMarket {
     //------------------//
 
     private Config                                  config = Model.config; // Passes the Model's configuration parameters object to a private field
-    private MersenneTwister                         prng;
+    protected final RandomGenerator                 prng;
     private OrderBook2D<HousingMarketRecord>        offersPQ;
     private ArrayList<HouseBidderRecord>            bids;
     private int []                                  nBidUpFrequency; // Counts the frequency of the number of bid-ups. TODO: Move to a collector class
@@ -32,7 +32,7 @@ public abstract class HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    HousingMarket(MersenneTwister prng) {
+    HousingMarket(RandomGenerator prng) {
         offersPQ = OrderBookFactory.create(new HousingMarketRecord.PQComparator(), //Order book of (Price, Quality)
                 ArrayOrderBook.BOOK_PRICE_QUALITY, config.TARGET_POPULATION/10);
         // The integer passed to the ArrayList constructor is an initially declared capacity (for initial memory

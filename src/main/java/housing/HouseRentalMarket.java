@@ -1,6 +1,6 @@
 package housing;
 
-import org.apache.commons.math3.random.MersenneTwister;
+import org.apache.commons.math3.random.RandomGenerator;
 
 /**************************************************************************************************
  * Class to represent the rental market
@@ -14,7 +14,7 @@ public class HouseRentalMarket extends HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    public HouseRentalMarket(MersenneTwister prng) { super(prng); }
+    public HouseRentalMarket(RandomGenerator prng) { super(prng); }
 
     //-------------------//
     //----- Methods -----//
@@ -33,7 +33,7 @@ public class HouseRentalMarket extends HousingMarket {
     public void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale) {
         sale.getHouse().rentalRecord = null;
         // This affects: house's resident, renter's home, renter's housePayments, renter, seller's rental income
-        sale.getHouse().owner.completeHouseLet(sale, purchase.getBidder().completeHouseRental(sale));
+        sale.getHouse().owner.completeHouseLet(sale, purchase.getBidder().completeHouseRental(sale, prng));
         // This uses: house's id and quality; mortgage's type, downpayment and principal; sale's initial listing price,
         // initial listing time and final price; buyer's id, age, BTL gene, income, rental income, bank balance, and
         // capital gains coefficient; and seller's id, age, BTL gene, income, rental income, bank balance and capital

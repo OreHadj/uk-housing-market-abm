@@ -1,5 +1,7 @@
 package housing;
 
+import org.apache.commons.math3.random.RandomGenerator;
+
 /***************************************************
  * Common interface for agents who enter the sale
  * market as sellers and, thus, house owners. This
@@ -16,7 +18,7 @@ public interface IHouseOwner {
     void completeHouseSale(HouseOfferRecord saleRecord);
 
     /** Called when a tenant moves out of a house that the agent owns **/
-    void endOfLettingAgreement(House house, PaymentAgreement contract);
+    void endOfLettingAgreement(House house, PaymentAgreement contract, RandomGenerator prng);
 
     /** Called when an agent lets a house **/
     void completeHouseLet(HouseOfferRecord saleRecord, RentalAgreement rentalAgreement);

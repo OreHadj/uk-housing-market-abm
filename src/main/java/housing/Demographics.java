@@ -3,7 +3,7 @@ package housing;
 import java.util.Arrays;
 import java.util.Iterator;
 
-import org.apache.commons.math3.random.MersenneTwister;
+import org.apache.commons.math3.random.RandomGenerator;
 
 public class Demographics {
 
@@ -11,7 +11,7 @@ public class Demographics {
     //----- Fields -----//
     //------------------//
 
-    private MersenneTwister     prng;
+    private RandomGenerator     prng;
     private double              firstBinMin = data.Demographics.getMonthlyAgeDistributionMinimum();
     private double              binWidth = data.Demographics.getMonthlyAgeDistributionBinWidth();
     private int []              householdsPerAgeBand = new int[data.Demographics.getMonthlyAgeDistributionSize() + 1];
@@ -22,7 +22,7 @@ public class Demographics {
     //----- Constructors -----//
     //------------------------//
 
-    public Demographics(MersenneTwister prng) { this.prng = prng; }
+    public Demographics(RandomGenerator prng) { this.prng = prng; }
 
     //-------------------//
     //----- Methods -----//
@@ -119,7 +119,7 @@ public class Demographics {
             if (prng.nextDouble() < deathProbabilities[i]) {
                 iterator.remove();
                 // Implement inheritance with a randomly chosen heir
-                h.transferAllWealthTo(Model.households.get(prng.nextInt(Model.households.size())));
+                h.transferAllWealthTo(Model.households.get(prng.nextInt(Model.households.size())), prng);
                 // Update the death probability for the corresponding age band. This prevents killing more than strictly
                 // necessary. Note that this will tend to underestimate the number of deaths and this, in its turn, lead
                 // to a slight overpopulation

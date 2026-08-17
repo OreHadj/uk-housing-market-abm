@@ -1,8 +1,8 @@
 package housing;
 
-import org.apache.commons.math3.random.MersenneTwister;
-
 import java.util.HashSet;
+
+import org.apache.commons.math3.random.RandomGenerator;
 
 
 public class Construction implements IHouseOwner{
@@ -15,14 +15,14 @@ public class Construction implements IHouseOwner{
     private int                         nNewBuild; // Number of houses built this month
 
     private Config                      config = Model.config; // Passes the Model's configuration parameters object to a private field
-    private MersenneTwister             prng;
+    private RandomGenerator             prng;
     private HashSet<House>              onMarket;
 
     //------------------------//
     //----- Constructors -----//
     //------------------------//
 
-    public Construction(MersenneTwister prng) {
+    public Construction(RandomGenerator prng) {
         housingStock = 0;
         onMarket = new HashSet<>();
         this.prng = prng;
@@ -65,7 +65,7 @@ public class Construction implements IHouseOwner{
             // inheritance mechanism and assuming the reference price for houses of that quality as previous price
             newHouse = new House((int)(prng.nextDouble() * config.derivedParams.N_QUALITIES));
             Model.households.get(prng.nextInt(Model.households.size())).inheritHouse(
-                    newHouse, Model.housingMarketStats.getReferencePriceForQuality(newHouse.getQuality()));
+                    newHouse, Model.housingMarketStats.getReferencePriceForQuality(newHouse.getQuality()), prng);
             // ...and finally increase housing stocks, and decrease shortfall
             ++housingStock;
             --shortFall;
@@ -76,7 +76,7 @@ public class Construction implements IHouseOwner{
     public void completeHouseSale(HouseOfferRecord sale) { onMarket.remove(sale.getHouse()); }
 
     @Override
-    public void endOfLettingAgreement(House h, PaymentAgreement p) {
+    public void endOfLettingAgreement(House h, PaymentAgreement p, RandomGenerator prng) {
         System.out.println("Strange: a tenant is moving out of a house owned by the construction sector!");
     }
 

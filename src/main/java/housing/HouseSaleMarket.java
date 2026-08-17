@@ -1,7 +1,9 @@
 package housing;
 
 import java.util.Iterator;
-import org.apache.commons.math3.random.MersenneTwister;
+
+import org.apache.commons.math3.random.RandomGenerator;
+
 import utilities.ArrayOrderBook;
 import utilities.OrderBook2D;
 import utilities.OrderBookFactory;
@@ -24,7 +26,7 @@ public class HouseSaleMarket extends HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    HouseSaleMarket(MersenneTwister prng) {
+    HouseSaleMarket(RandomGenerator prng) {
         super(prng);
         offersPY = OrderBookFactory.create(new HousingMarketRecord.PYComparator(),
                 ArrayOrderBook.BOOK_PRICE_YIELD, Model.config.TARGET_POPULATION/10);
@@ -57,7 +59,7 @@ public class HouseSaleMarket extends HousingMarket {
         sale.getHouse().owner.completeHouseSale(sale);
         // This affects: buyer's home resident, buyer's home owner rental income, buyer's bank balance, mortgage,
         // buyer's housePayments, buyer's home, house's resident, HouseRentalMarket offers, and buyer's isFirstTimeBuyer
-        purchase.getBidder().completeHousePurchase(sale, purchase.getDesiredDownPayment());
+        purchase.getBidder().completeHousePurchase(sale, purchase.getDesiredDownPayment(), prng);
         // This uses: house's id and quality; mortgage's type, downpayment and principal; sale's initial listing price,
         // initial listing time and final price; buyer's id, age, BTL gene, income, rental income, bank balance, and
         // capital gains coefficient; and seller's id, age, BTL gene, income, rental income, bank balance and capital

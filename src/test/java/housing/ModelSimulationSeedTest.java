@@ -36,6 +36,17 @@ class ModelSimulationSeedTest {
                 nextInts(reseededPrng(baseSeed, 3), 10)));
     }
 
+    @Test
+    void documentsLegacyCollisionAcrossSeedAndRunIndexPairs() {
+        int seed42Run2 = Model.simulationSeed(42, 2);
+        int seed43Run1 = Model.simulationSeed(43, 1);
+
+        // Compatibility evidence only: the addressed RNG must not inherit this legacy collision.
+        assertEquals(43, seed42Run2);
+        assertEquals(43, seed43Run1);
+        assertEquals(seed42Run2, seed43Run1);
+    }
+
     private static MersenneTwister reseededPrng(int baseSeed, int runIndex) {
         MersenneTwister prng = new MersenneTwister(baseSeed);
         prng.setSeed(Model.simulationSeed(baseSeed, runIndex));

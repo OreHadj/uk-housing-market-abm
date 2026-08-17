@@ -1,6 +1,6 @@
 package utilities;
 
-import org.apache.commons.math3.random.MersenneTwister;
+import org.apache.commons.math3.random.RandomGenerator;
 
 /****
  * Represents an arbitrarily shaped, 1-dimensional Probability Density Function.
@@ -153,7 +153,7 @@ public class Pdf {
      * Sample from the PDF
      * @return A random sample from the PDF
      */
-    public double nextDouble(MersenneTwister rand) {
+    public double nextDouble(RandomGenerator rand) {
         return(inverseCumulativeProbability(rand.nextDouble()));
 //      double uniform = rand.nextDouble(); // uniform random sample on [0:1)
 //      int i = (int)(uniform*(nSamples-1));
