@@ -2935,18 +2935,58 @@ section.block:first-of-type { border-top: none; }
 
 .validation-largest-gaps li {
   counter-increment: gaps;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.7rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.35rem;
   border-radius: 0.75rem;
   background: #f7f8f3;
-  padding: 0.7rem;
+  padding: 0.25rem 0.35rem;
 }
 
 .validation-largest-gaps li::before {
   content: counter(gaps);
   color: var(--muted);
   font-weight: 700;
+}
+
+.validation-largest-gaps button {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+  border: 0;
+  border-radius: 0.55rem;
+  background: transparent;
+  padding: 0.45rem 0.35rem;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.validation-largest-gaps button:hover {
+  background: var(--hover);
+}
+
+.validation-largest-gaps button:focus-visible {
+  outline: 3px solid rgba(11, 114, 133, 0.35);
+  outline-offset: 1px;
+}
+
+.validation-largest-gaps button strong {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.validation-gap-improved {
+  color: #2b8a3e;
+}
+
+.validation-gap-worsened {
+  color: #b02a37;
 }
 
 .validation-largest-gaps li span {

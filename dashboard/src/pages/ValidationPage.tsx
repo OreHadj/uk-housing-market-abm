@@ -1,6 +1,6 @@
 // Author: Max Stoddard
 import { useEffect, useMemo, useState } from 'react';
-import type { EChartsOption } from 'echarts';
+// import type { EChartsOption } from 'echarts'; // Retained for the temporarily hidden trend chart below.
 import { Link, useSearchParams } from 'react-router-dom';
 import type {
   ValidationMetricComparisonPoint,
@@ -8,7 +8,7 @@ import type {
   ValidationMetricSummary,
   ValidationOverviewPayload
 } from '../../shared/types';
-import { EChart } from '../components/EChart';
+// import { EChart } from '../components/EChart'; // Retained for the temporarily hidden trend chart below.
 import {
   API_RETRY_DELAY_MS,
   fetchValidationOverview,
@@ -332,6 +332,7 @@ function lossFamilyDescription(metric: ValidationMetricSummary): string {
     : 'Not applicable';
 }
 
+/* Retained with the temporarily hidden model-development trend chart.
 function buildTrendOption(
   overview: ValidationOverviewPayload,
   year: 2024 | 2011,
@@ -387,6 +388,7 @@ function buildTrendOption(
     ]
   };
 }
+*/
 
 function formatDeviation(percent: number | null): string {
   if (percent === null || !Number.isFinite(percent)) return 'No single target';
@@ -495,7 +497,7 @@ function MetricRow({
   // Two band-width cautions in one row is noise, so the advisory is single-mode only.
   const bandNote = comparisonMetric ? null : buildBandWidthNote(metric, positions.deviationPercent);
   return (
-    <details className={`validation-metric-row validation-metric-${metric.status}`}>
+    <details id={`validation-metric-${metric.metricId}`} className={`validation-metric-row validation-metric-${metric.status}`}>
       <summary>
         <div className="validation-metric-title">
           <strong>{metric.label}</strong>
@@ -686,8 +688,21 @@ export function ValidationPage() {
     () => new Map((comparisonSummary?.metrics ?? []).map((metric) => [metric.metricId, metric])),
     [comparisonSummary]
   );
-  const chart2024 = useMemo(() => (overview ? buildTrendOption(overview, 2024, versionLabel) : null), [overview]);
-  const chart2011 = useMemo(() => (overview ? buildTrendOption(overview, 2011, versionLabel) : null), [overview]);
+  const largestComparisonDifferences = useMemo(() => {
+    if (!comparisonSummary) return [];
+    return summary?.metrics
+      .flatMap((metric) => {
+        const comparisonMetric = comparisonMetricById.get(metric.metricId);
+        if (metric.metricLoss === null || comparisonMetric?.metricLoss === null || comparisonMetric?.metricLoss === undefined) {
+          return [];
+        }
+        return [{ metric, difference: comparisonMetric.metricLoss - metric.metricLoss }];
+      })
+      .sort((left, right) => Math.abs(right.difference) - Math.abs(left.difference))
+      .slice(0, 3) ?? [];
+  }, [comparisonMetricById, comparisonSummary, summary]);
+  // const chart2024 = useMemo(() => (overview ? buildTrendOption(overview, 2024, versionLabel) : null), [overview]);
+  // const chart2011 = useMemo(() => (overview ? buildTrendOption(overview, 2011, versionLabel) : null), [overview]);
   const availableYears =
     overview?.availableValidationTargetYearsByVersion[selectedVersion] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
 
@@ -728,9 +743,16 @@ export function ValidationPage() {
     const years = overview?.availableValidationTargetYearsByVersion[version] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
     selectVersionAndValidationYear(version, years.includes(selectedValidationTargetYear) ? selectedValidationTargetYear : 2024);
   };
-  const handleChartClick = (year: 2024 | 2011) => (raw: unknown) => {
-    const point = raw as { name?: string };
-    if (point?.name) selectVersionAndValidationYear(point.name, year);
+  // const handleChartClick = (year: 2024 | 2011) => (raw: unknown) => {
+  //   const point = raw as { name?: string };
+  //   if (point?.name) selectVersionAndValidationYear(point.name, year);
+  // };
+  const openMetricDiagnostic = (metricId: string) => {
+    const row = document.getElementById(`validation-metric-${metricId}`);
+    if (!(row instanceof HTMLDetailsElement)) return;
+    row.open = true;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.querySelector('summary')?.focus({ preventScroll: true });
   };
 
   return (
@@ -936,18 +958,42 @@ export function ValidationPage() {
               )}
             </div>
             <div className="validation-largest-gaps">
-              <h4>Largest validation gaps</h4>
-              {scorecard.largestGaps.length > 0 ? (
-                <ol>{scorecard.largestGaps.map((metric) => <li key={metric.metricId}><span>{metric.label}</span><strong>{formatLoss(metric.metricLoss)}</strong></li>)}</ol>
+              <h4>{comparisonSummary ? 'Biggest differences between models' : 'Largest validation gaps'}</h4>
+              {comparisonSummary && (
+                <p className="validation-card-subtitle">
+                  How {formatModelWithVersion(comparisonSummary.version)} changes metric loss relative to{' '}
+                  {formatModelWithVersion(summary.version)}. Lower loss is better.
+                </p>
+              )}
+              {comparisonSummary ? (
+                largestComparisonDifferences.length > 0 ? (
+                  <ol>{largestComparisonDifferences.map(({ metric, difference }) => (
+                    <li key={metric.metricId}>
+                      <button type="button" onClick={() => openMetricDiagnostic(metric.metricId)}>
+                        <span>{metric.label}</span>
+                        <strong className={difference < 0 ? 'validation-gap-improved' : difference > 0 ? 'validation-gap-worsened' : ''}>
+                          {difference < 0 ? 'Improves' : difference > 0 ? 'Worsens' : 'No change'} {difference === 0 ? '' : `${formatLoss(Math.abs(difference))} loss`}
+                        </strong>
+                      </button>
+                    </li>
+                  ))}</ol>
+                ) : <p>No comparable metric losses are available.</p>
+              ) : scorecard.largestGaps.length > 0 ? (
+                <ol>{scorecard.largestGaps.map((metric) => (
+                  <li key={metric.metricId}>
+                    <button type="button" onClick={() => openMetricDiagnostic(metric.metricId)}>
+                      <span>{metric.label}</span><strong>{formatLoss(metric.metricLoss)}</strong>
+                    </button>
+                  </li>
+                ))}</ol>
               ) : <p>No supported metric losses are available.</p>}
             </div>
           </article>
 
           {/*
-            Only the chart for the selected evidence year is shown. Side by side the two carried the
-            same y-axis wording on different bases (2024 bottoms at 0.5864, 2011 at 0.5212), which
-            read as "the 2011 model beats the 2024 one" — a comparison neither chart supports.
-          */}
+            Temporarily hidden from the analyst-facing Validation page. The full chart code is
+            retained here in case it is later reused as a secondary model-development history view.
+
           <article className="results-card">
             {selectedValidationTargetYear === 2011 ? (
               <>
@@ -966,6 +1012,7 @@ export function ValidationPage() {
               </>
             )}
           </article>
+          */}
 
           <article className="results-card">
             <div className="validation-overview-header">
