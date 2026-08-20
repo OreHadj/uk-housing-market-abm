@@ -1602,10 +1602,34 @@ function validatePayload(
       throw new Error(`Sensitivity overrides are limited to General model control parameters: ${key}`);
     }
 
+    // Sensitivity retains only the derived core-indicator summaries. Ignore raw-recording controls
+    // supplied by older clients; the fixed policy below enables core indicators and disables every
+    // raw export flag before any sampled model process is launched.
+    if (
+      definition.key === 'TIME_TO_START_RECORDING_TRANSACTIONS' ||
+      (definition.type === 'boolean' && definition.key.startsWith('record'))
+    ) {
+      continue;
+    }
+
     const parsedOverride = normalizeSensitivityOverrideValue(key, rawValue, definition.type);
     normalizedGeneralOverrides.set(key, parsedOverride.serialized);
     valuesByKey.set(key, parsedOverride.typed);
     generalOverrides[key] = parsedOverride.typed;
+  }
+
+  for (const definition of parameters) {
+    if (
+      definition.group !== 'General model control' ||
+      definition.type !== 'boolean' ||
+      !definition.key.startsWith('record')
+    ) {
+      continue;
+    }
+    const enabled = definition.key === 'recordCoreIndicators';
+    normalizedGeneralOverrides.set(definition.key, String(enabled));
+    valuesByKey.set(definition.key, enabled);
+    generalOverrides[definition.key] = enabled;
   }
 
   if (!normalizedGeneralOverrides.has('N_SIMS')) {
@@ -2420,7 +2444,7 @@ export function submitSensitivityExperiment(
   }
 
   if (Object.prototype.hasOwnProperty.call(payload as unknown as Record<string, unknown>, 'retainFullOutput')) {
-    throw new Error('retainFullOutput is no longer supported for sensitivity experiments; use record settings instead.');
+    throw new Error('retainFullOutput is no longer supported; sensitivity experiments retain core-indicator summaries only.');
   }
 
   const now = options.now ?? new Date();

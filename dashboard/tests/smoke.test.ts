@@ -164,6 +164,7 @@ import { buildResultsCompareSearchParams } from '../src/lib/api.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
 import { restoreScenarioDraft, type ScenarioDraftV1 } from '../src/lib/scenarioDraft.js';
 import { SensitivitySetupCard } from '../src/pages/run-experiments/SensitivitySetupCard.js';
+import { ExperimentsLandingPage } from '../src/pages/ExperimentsLandingPage.js';
 import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.js';
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
@@ -5540,62 +5541,68 @@ try {
     )
   );
   const sensitivitySetupMarkup = renderToStaticMarkup(
-    createElement(SensitivitySetupCard, {
-      executionDisabled: false,
-      isLoadingOptions: false,
-      selectedBaseline: runOptions.requestedBaseline,
-      onBaselineChange: noop,
-      snapshots: runOptions.snapshots,
-      basePolicies: runOptions.basePolicies,
-      basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
-      onBasePolicyChange: noop,
-      policyPackages: runOptions.sensitivityPolicyPackages,
-      policyPackageId: selectedSensitivityPackage?.id ?? '',
-      onPolicyPackageChange: noop,
-      minValue: '4',
-      maxValue: '5',
-      onMinValueChange: noop,
-      onMaxValueChange: noop,
-      sampleCount: '5',
-      onSampleCountChange: noop,
-      parameters: runOptions.parameters,
-      formValues: defaultExperimentFormValues,
-      onFormValueChange: noop,
-      maxWorkers: '2',
-      onMaxWorkersChange: noop,
-      title: '',
-      onTitleChange: noop,
-      selectedPackage: selectedSensitivityPackage,
-      warnings: [],
-      isSubmitting: false,
-      isCanceling: false,
-      sensitivitySubmissionLockedByManual: false,
-      lockMessage: null,
-      hasActiveSensitivityJob: false,
-      onSubmit: noop,
-      onCancelActive: noop
-    })
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(SensitivitySetupCard, {
+        executionDisabled: false,
+        isLoadingOptions: false,
+        selectedBaseline: runOptions.requestedBaseline,
+        onBaselineChange: noop,
+        snapshots: runOptions.snapshots,
+        basePolicies: runOptions.basePolicies,
+        basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+        onBasePolicyChange: noop,
+        policyPackages: runOptions.sensitivityPolicyPackages,
+        policyPackageId: selectedSensitivityPackage?.id ?? '',
+        onPolicyPackageChange: noop,
+        minValue: '4',
+        maxValue: '5',
+        onMinValueChange: noop,
+        onMaxValueChange: noop,
+        sampleCount: '5',
+        onSampleCountChange: noop,
+        parameters: runOptions.parameters,
+        formValues: defaultExperimentFormValues,
+        onFormValueChange: noop,
+        maxWorkers: '2',
+        onMaxWorkersChange: noop,
+        title: '',
+        onTitleChange: noop,
+        selectedPackage: selectedSensitivityPackage,
+        warnings: [],
+        isSubmitting: false,
+        isCanceling: false,
+        sensitivitySubmissionLockedByManual: false,
+        lockMessage: null,
+        hasActiveSensitivityJob: false,
+        onSubmit: noop,
+        onCancelActive: noop
+      })
+    )
   );
   assert.ok(
     manualSetupMarkup.includes('setting-info-trigger') && sensitivitySetupMarkup.includes('setting-info-trigger'),
     'Expected manual and sensitivity setup controls to render shared info indicators'
   );
   const manualSetupText = visibleText(manualSetupMarkup);
-  // --- Four-stage structure ----------------------------------------------------------------
+  // --- Five-stage structure ----------------------------------------------------------------
   assert.ok(
     manualSetupText.includes('Scenario name') &&
       manualSetupText.includes('Model version') &&
       manualSetupText.includes('Policy settings') &&
-      manualSetupText.includes('Technical details'),
-    'Expected the manual scenario form to present all four policy-scenario stages'
+      manualSetupText.includes('Technical details') &&
+      manualSetupText.includes('Review and start'),
+    'Expected the manual scenario form to present all five policy-scenario stages'
   );
   assert.ok(
     manualSetupMarkup.indexOf('scenario-details-heading') < manualSetupMarkup.indexOf('model-evidence-heading') &&
       manualSetupMarkup.indexOf('model-evidence-heading') < manualSetupMarkup.indexOf('policy-settings-heading') &&
-      manualSetupMarkup.indexOf('policy-settings-heading') < manualSetupMarkup.indexOf('technical-details-heading'),
-    'Expected the four sections to appear in the agreed order'
+      manualSetupMarkup.indexOf('policy-settings-heading') < manualSetupMarkup.indexOf('technical-details-heading') &&
+      manualSetupMarkup.indexOf('technical-details-heading') < manualSetupMarkup.indexOf('scenario-review-heading'),
+    'Expected the five sections to appear in the agreed order'
   );
-  for (const label of ['Scenario name', 'Model version', 'Policy settings', 'Technical details']) {
+  for (const label of ['Scenario name', 'Model version', 'Policy settings', 'Technical details', 'Review and start']) {
     assert.ok(manualSetupText.includes(label), `Expected the section stepper to offer ${label}`);
   }
 
@@ -5636,6 +5643,10 @@ try {
     assert.ok(manualSetupText.includes(heading), `Expected a policy accordion for ${heading}`);
   }
   assert.ok((manualSetupMarkup.match(/<details/g) ?? []).length >= 4, 'Expected native details elements for policy groups');
+  assert.ok(
+    !manualSetupMarkup.includes('<details open=""'),
+    'Expected every policy accordion in Step 3 to start closed'
+  );
   assert.ok(manualSetupText.includes('No changes yet — this scenario will use the 2024 reference policy.'), 'Expected the unchanged-policy status');
   assert.ok(manualSetupText.includes('2011 policy') && manualSetupText.includes('2024 policy'), 'Expected concise reference-policy options');
   assert.ok(
@@ -5679,11 +5690,15 @@ try {
     'Expected Advanced simulation settings to keep the technical simulation controls'
   );
   assert.ok(
-    manualSetupText.includes('Dashboard results') &&
-      manualSetupText.includes('Main indicators required for charts — enabled') &&
-      manualSetupText.includes('Additional data exports') &&
+    manualSetupText.includes('Additional data exports') &&
       manualSetupText.includes('Optional transaction and household-level files for analysis outside the dashboard.'),
-    'Expected Technical details to distinguish fixed dashboard results from optional external exports'
+    'Expected Technical details to offer the optional external exports'
+  );
+  // Core indicators are always on and cannot be turned off, so the setup form states no status for
+  // them; the review step still records it. A status row that can only ever read "Enabled" is noise.
+  assert.ok(
+    !manualSetupText.includes('Main indicators required for charts'),
+    'Expected the manual setup form to drop the always-enabled dashboard-results status row'
   );
   assert.ok(
     !manualSetupText.includes('Record settings') && !manualSetupText.includes('Record core indicators'),
@@ -5805,7 +5820,7 @@ try {
     'Expected keyboard-operable navigation between the separate scenario pages'
   );
   assert.ok(
-    (manualSetupMarkup.match(/aria-labelledby="/g) ?? []).length >= 4,
+    (manualSetupMarkup.match(/aria-labelledby="/g) ?? []).length >= 5,
     'Expected each form section to be programmatically labelled for assistive technology'
   );
   const dashboardStyles = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
@@ -8512,6 +8527,11 @@ assert.equal(
   'Manual policy groups should share one consistently aligned results table'
 );
 assert.ok(
+  manualResultsViewSource.includes('useState<string[]>([])') &&
+    !manualResultsViewSource.includes("useState<string[]>(['credit_access'])"),
+  'Every policy-results group should start collapsed until the user opens it'
+);
+assert.ok(
   manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-indicator-column') &&
     manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-value-column') &&
     manualResultsStylesSource.includes('width: 32%;') &&
@@ -8569,12 +8589,12 @@ assert.ok(
   'App should expose experiments in dev, production, and preview views'
 );
 assert.ok(
-  appSource.includes("from './pages/ValidationPage'"),
-  'App should import the validation page when dev-only validation is available'
+  appSource.includes("from './pages/ModelEvidencePage'"),
+  'App should import the combined model evidence page'
 );
 assert.ok(
-  appSource.includes('const validationVisible = true;'),
-  'App should expose validation as a main page in the four-page structure'
+  appSource.includes('const modelEvidenceVisible = true;'),
+  'App should expose model evidence as a main page in the four-page structure'
 );
 assert.ok(
   appSource.includes('VIEW_MODE_OPTIONS') &&
@@ -8584,12 +8604,13 @@ assert.ok(
   'App should expose a persisted dev-only runtime view selector'
 );
 assert.ok(
-  appSource.includes('to="/scenarios"') && appSource.includes('Scenarios'),
-  'App should expose one shared Scenarios destination in the header'
+  appSource.includes('to="/experiments"') && appSource.includes('Experiments'),
+  'App should expose one shared Experiments destination in the header'
 );
 assert.ok(
-  appSource.includes('to="/sensitivity"') && appSource.includes('Sensitivity'),
-  'App should expose Sensitivity as a separate primary destination'
+  !appSource.includes("activePrimaryDestination === 'scenarios'") &&
+    !appSource.includes("activePrimaryDestination === 'sensitivity'"),
+  'App should not expose scenario and sensitivity as separate primary destinations'
 );
 assert.ok(
   appSource.includes('<Route path="/compare" element={<LegacyCompareRedirect />} />') &&
@@ -8597,20 +8618,27 @@ assert.ok(
   'App should redirect the retired /compare alias into the scenarios workspace rather than offering it as a destination'
 );
 assert.ok(
-  appSource.includes('to="/calibration"') && appSource.includes('Calibration'),
-  'App should preserve Calibration as a primary navigation destination'
+  appSource.includes('to="/model-evidence"') && appSource.includes('Model Evidence'),
+  'App should expose one shared Model Evidence destination in the header'
 );
 assert.ok(
-  appSource.includes('to="/validation"') && appSource.includes('Validation'),
-  'App should preserve Validation as a primary navigation destination'
+  !appSource.includes("activePrimaryDestination === 'calibration'") &&
+    !appSource.includes("activePrimaryDestination === 'validation'"),
+  'App should not expose calibration and validation as separate primary destinations'
 );
 assert.ok(
-  !appSource.includes('>Results</NavLink>') && !appSource.includes('Model information'),
-  'App should replace the broad Results navigation label without introducing Model information'
+  appSource.includes('to="/results"') && appSource.includes('Results') && !appSource.includes('Model information'),
+  'App should preserve the dedicated Results destination without introducing Model information'
 );
 assert.ok(
-  appSource.includes("return type === 'sensitivity' ? 'sensitivity' : 'scenarios';"),
-  'Legacy result routes should activate the workspace matching their experiment type'
+  appSource.includes("pathname === '/scenarios/new'") &&
+    appSource.includes("pathname === '/sensitivity/new'") &&
+    appSource.includes("return 'experiments';"),
+  'Creation routes should keep the shared Experiments destination active'
+);
+assert.ok(
+  appSource.includes('<Route path="/experiments" element={<ExperimentsLandingPage />} />'),
+  'App should register the minimal Experiments landing page'
 );
 assert.ok(
   appSource.includes('path="/scenarios/new"') && appSource.includes('path="/sensitivity/new"'),
@@ -8622,15 +8650,81 @@ assert.ok(
   'Legacy scenario routes should resolve to the scenarios workspace'
 );
 assert.ok(
-  appSource.includes('{validationVisible && <Route path="/validation" element={<ValidationPage />} />}'),
-  'App should only register the validation route when validation is visible'
+  appSource.includes('{modelEvidenceVisible && <Route path="/model-evidence" element={<ModelEvidencePage />} />}') &&
+    appSource.includes('<Route path="/calibration" element={<LegacyEvidenceRedirect view="calibration" />} />') &&
+    appSource.includes('<Route path="/validation" element={<LegacyEvidenceRedirect view="validation" />} />'),
+  'App should register the combined evidence route and preserve both legacy evidence URLs'
 );
 assert.ok(
   appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/results\""),
   'App should retain the legacy results route'
 );
 
+const modelEvidencePageSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/ModelEvidencePage.tsx'),
+  'utf-8'
+);
+assert.ok(
+  modelEvidencePageSource.includes("label: 'Calibration'") &&
+    modelEvidencePageSource.includes("label: 'Validation'") &&
+    modelEvidencePageSource.includes("activeView === 'calibration' ? <ComparePage /> : <ValidationPage />"),
+  'Model evidence should switch between the existing calibration and validation pages'
+);
+assert.ok(
+  modelEvidencePageSource.includes('results-view-switcher') &&
+    modelEvidencePageSource.includes('results-type-toggle') &&
+    modelEvidencePageSource.includes('results-type-option') &&
+    modelEvidencePageSource.includes("searchParams.get('view')"),
+  'Model evidence should use the same wide URL-backed navigation pattern as Results'
+);
+
 const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsPage.tsx'), 'utf-8');
+const resultsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ResultsPage.tsx'), 'utf-8');
+const experimentsLandingPageSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsLandingPage.tsx'),
+  'utf-8'
+);
+const experimentsLandingMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ExperimentsLandingPage))
+);
+assert.ok(
+  experimentsLandingPageSource.includes("to: '/scenarios/new'") &&
+    experimentsLandingPageSource.includes("to: '/sensitivity/new'") &&
+    experimentsLandingMarkup.includes('New policy scenario') &&
+    experimentsLandingMarkup.includes('New sensitivity analysis') &&
+    experimentsLandingMarkup.includes('Test a specific combination of policy settings and compare the results with a baseline.') &&
+    experimentsLandingMarkup.includes('Vary one policy instrument across a range to see how model outcomes respond.'),
+  'Experiments landing page should link to both creation flows'
+);
+assert.equal(
+  experimentsLandingMarkup.match(/class="experiment-launch-action"/g)?.length ?? 0,
+  2,
+  'Experiments landing page should visibly contain exactly two large actions'
+);
+assert.ok(
+  experimentsPageSource.includes("navigate('/experiments')") &&
+    experimentsPageSource.includes('onClick={returnToExperiments}') &&
+    experimentsPageSource.includes('returnToExperiments();'),
+  'Closing, escaping, clicking outside, or discarding experiment creation should return to the Experiments hub'
+);
+assert.ok(
+  experimentsPageSource.includes("initialView === 'create' && <ExperimentsLandingPage />") &&
+    experimentsPageSource.includes("initialView !== 'create' && <article") &&
+    experimentsPageSource.includes("initialView !== 'create' && (workspace === 'manual'"),
+  'Creation routes should keep the Experiments hub behind the modal instead of rendering result workspaces'
+);
+assert.ok(
+  experimentsPageSource.includes("onManualRunAccepted={() => navigate('/results?type=manual')}") &&
+    experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
+    experimentsPageSource.includes('/results?type=sensitivity'),
+  'Accepted scenario and sensitivity submissions should move into the matching Results view'
+);
+assert.ok(
+  resultsPageSource.includes('className="results-view-switcher"') &&
+    resultsPageSource.includes('className="visually-hidden">Results</h2>') &&
+    !resultsPageSource.includes('className="results-card workspace-heading"'),
+  'Results should use the full-width view switcher without the old boxed page heading'
+);
 assert.ok(
   experimentsPageSource.includes("heading: 'Policy scenarios'") &&
     experimentsPageSource.includes("heading: 'Sensitivity analysis'") &&
@@ -8677,6 +8771,7 @@ const apiSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/lib/api.
 const validationVersionSelectorIndex = validationPageSource.indexOf('<span>Version</span>');
 const validationYearSelectorIndex = validationPageSource.indexOf('<span>Validation Year</span>');
 // Retained temporarily as a readable record of the superseded table-first contract.
+// eslint-disable-next-line no-constant-condition
 if (false) {
 assert.ok(
   !validationPageSource.includes('three_lines'),
@@ -9047,22 +9142,21 @@ assert.ok(
   !homePageSource.includes('Just Launched'),
   'Home page should no longer render the launch badge'
 );
-// The Home page is a policy-first launchpad. It explains the research purpose and routes users to
-// review manual policy settings without submitting a run.
+// The Home page is a launcher: a title, four actions, and the research disclaimer. Nothing else.
 assert.ok(
-  homePageSource.includes('UK Housing Policy Simulation') &&
-    homePageSource.includes('Use this agent-based model to explore how changes to mortgage-policy settings may affect'),
-  'Home page should open with a plain-English explanation of the policy simulation'
+  homePageSource.includes('See what a mortgage-policy change') &&
+    homePageSource.includes('the UK housing market'),
+  'Home page should open with a plain-English statement of what the model is for'
 );
 assert.ok(
   appSource.includes('UK Housing Market Model') && !appSource.includes('UK Housing Market ABM'),
   'Application heading should not require users to understand an unexplained acronym'
 );
 assert.ok(
-  homePageSource.includes('className="primary-button home-scenario-button"') &&
-    homePageSource.includes('to="/scenarios"') &&
-    homePageSource.includes('Create a policy scenario'),
-  'Home page should provide one prominent action using the semantic manual scenario route'
+  ["title: 'Experiments'", "title: 'Results'", "title: 'Model evidence'", '<strong>Run demo</strong>'].every(
+    (fragment) => homePageSource.includes(fragment)
+  ),
+  'Home page should offer the four launcher actions'
 );
 assert.ok(
   !homePageSource.includes('submitModelRun') &&
@@ -9071,14 +9165,16 @@ assert.ok(
   'Home page onboarding should not submit or advertise an opaque default run'
 );
 assert.ok(
-  homePageSource.includes('Research simulation — not a policy forecast') &&
-    homePageSource.includes('not forecasts, official Bank of England projections, or policy recommendations'),
-  'Home page should clearly disclaim forecast, official projection, and recommendation interpretations'
+  homePageSource.includes("to: '/experiments'") &&
+    homePageSource.includes("to: '/results'") &&
+    homePageSource.includes("to: '/model-evidence'"),
+  'Home page launcher should route to the experiments hub, the results page, and model evidence'
 );
 assert.ok(
-  homePageSource.includes('to="/scenarios">or compare existing results') &&
-    homePageSource.includes("to: '/calibration'"),
-  'Home page should provide lower-emphasis links to the scenarios workspace and the preserved Calibration page'
+  homePageSource.includes('home-action-inactive') &&
+    homePageSource.includes('disabled') &&
+    homePageSource.includes('Coming soon'),
+  'Run demo should stay an inert placeholder until the demo run itself is designed'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&

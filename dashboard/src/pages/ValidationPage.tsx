@@ -18,7 +18,6 @@ import {
 import {
   buildModelOptions,
   formatModelName,
-  formatModelOptionLabel,
   formatModelSubtitle
 } from '../lib/modelAnchors';
 import { BASELINE_COLOR, COMPARISON_COLOR } from '../lib/manualOverlayChartOption';
@@ -395,6 +394,80 @@ function formatDeviation(percent: number | null): string {
   return `${percent > 0 ? '+' : percent < 0 ? '−' : ''}${formatNumber(Math.abs(percent), 1)}%`;
 }
 
+export function ValidationModelOptions({
+  versions,
+  selectedVersion,
+  name,
+  label,
+  rankings = null,
+  disabled = false,
+  unavailableVersion = '',
+  inProgressVersions,
+  onChange
+}: {
+  versions: readonly string[];
+  selectedVersion: string;
+  name: string;
+  label: string;
+  rankings?: readonly ValidationModelRanking[] | null;
+  disabled?: boolean;
+  unavailableVersion?: string;
+  inProgressVersions?: ReadonlySet<string>;
+  onChange: (version: string) => void;
+}) {
+  return (
+    <div className="validation-model-options" role="radiogroup" aria-label={label} aria-disabled={disabled}>
+      {versions.map((version, index) => {
+        const ranking = rankings?.find((entry) => entry.version === version) ?? null;
+        const isUnavailable = version === unavailableVersion;
+        const isDisabled = disabled || isUnavailable;
+        const isSelected = version === selectedVersion;
+        return (
+          <label
+            key={version}
+            className={`validation-model-option${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
+          >
+            <input
+              type="radio"
+              name={name}
+              value={version}
+              checked={isSelected}
+              disabled={isDisabled}
+              onChange={() => onChange(version)}
+            />
+            <span className="validation-model-option-copy">
+              <span className="validation-model-option-heading">
+                {rankings && <span className="validation-model-option-rank" aria-label={`Rank ${index + 1}`}>{index + 1}.</span>}
+                <strong>{formatModelName(version)}</strong>
+                <span className="validation-model-option-version">{version}</span>
+              </span>
+              <small>{formatModelSubtitle(version)}</small>
+              {(ranking || isUnavailable || inProgressVersions?.has(version)) && (
+                <span className="validation-model-option-meta">
+                  {ranking && (
+                    <span>
+                      {ranking.deviationPercent === null
+                        ? 'No single target'
+                        : `${formatDeviation(ranking.deviationPercent)} from target`}
+                    </span>
+                  )}
+                  {ranking?.status && (
+                    <span className={`validation-model-option-status validation-status-${ranking.status}`}>
+                      {ranking.status}
+                    </span>
+                  )}
+                  {isUnavailable && <span className="validation-model-option-unavailable">Selected as primary</span>}
+                  {inProgressVersions?.has(version) && <span className="validation-model-option-progress">In progress</span>}
+                </span>
+              )}
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * One model's IQR and mean on the shared axis. The axis, ticks, target marker and band are drawn
  * once by `MetricRange` because they are identical for every model scored on the same metric and
@@ -480,6 +553,69 @@ function MetricRange({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * What pass / warn / fail / unsupported actually mean, stated once for the whole page — the words
+ * appear on the scorecard counts, on every metric row, and in the technical table.
+ *
+ * The rules mirror `classify_metric_status` (scripts/python/validation/model/scoring.py): a status
+ * is decided by two things together, how far the seed mean sits from the nearest edge of the target
+ * band (measured in band-widths) and what fraction of individual seeds land inside that band. Both
+ * conditions must hold, which is why a metric can be centred on its target and still only warn.
+ */
+const VALIDATION_STATUS_DEFINITIONS: {
+  status: ValidationMetricStatus;
+  meaning: string;
+  rule: string;
+}[] = [
+  {
+    status: 'pass',
+    meaning: 'Matches the evidence, and does so consistently.',
+    rule: 'Seed mean inside the target band, and at least 75% of seeds inside it.'
+  },
+  {
+    status: 'warn',
+    meaning: 'Close to the evidence, or on target but unsteady across seeds.',
+    rule: 'Seed mean within half a band-width of the band, and at least 50% of seeds inside it.'
+  },
+  {
+    status: 'fail',
+    meaning: 'Neither close enough nor consistent enough to rely on.',
+    rule: 'Falls outside both of the limits above.'
+  },
+  {
+    status: 'unsupported',
+    meaning: 'Cannot be scored — no target band is published for this metric.',
+    rule: 'Carries no weight and is excluded from the composite loss.'
+  }
+];
+
+function ValidationStatusLegend() {
+  return (
+    <aside className="validation-status-legend" aria-labelledby="validation-status-legend-heading">
+      <h3 id="validation-status-legend-heading">How each metric is scored</h3>
+      <dl>
+        {VALIDATION_STATUS_DEFINITIONS.map((definition) => (
+          <div key={definition.status}>
+            <dt>
+              <span className={`validation-status-pill validation-status-${definition.status}`}>
+                {definition.status}
+              </span>
+            </dt>
+            <dd>
+              <strong>{definition.meaning}</strong>
+              <span>{definition.rule}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p>
+        Target bands vary in width, so a pass can still sit some way from the empirical target. Rows
+        say so when that happens.
+      </p>
+    </aside>
   );
 }
 
@@ -703,9 +839,6 @@ export function ValidationPage() {
   }, [comparisonMetricById, comparisonSummary, summary]);
   // const chart2024 = useMemo(() => (overview ? buildTrendOption(overview, 2024, versionLabel) : null), [overview]);
   // const chart2011 = useMemo(() => (overview ? buildTrendOption(overview, 2011, versionLabel) : null), [overview]);
-  const availableYears =
-    overview?.availableValidationTargetYearsByVersion[selectedVersion] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
-
   const metricsByVersion = overview?.metricsByVersion ?? {};
   /** Indicator list in theme order, labelled from the selected summary (all models share ids). */
   const sortableMetrics = useMemo(() => {
@@ -717,23 +850,17 @@ export function ValidationPage() {
       })
     );
   }, [summary]);
-  /** Only versions scored against the selected evidence year can be ranked or compared. */
-  const comparableVersions = useMemo(
-    () => orderedVersions.filter((version) => metricsByVersion[version] !== undefined),
-    [orderedVersions, metricsByVersion]
-  );
+  // Keep every named model visible. The ranking helper places a model with no value for the
+  // selected indicator at the end instead of making that row disappear from either column.
   const rankedVersions = useMemo(
-    () => (sortMetricId ? rankVersionsByMetric(metricsByVersion, comparableVersions, sortMetricId) : null),
-    [sortMetricId, metricsByVersion, comparableVersions]
+    () => (sortMetricId ? rankVersionsByMetric(metricsByVersion, orderedVersions, sortMetricId) : null),
+    [sortMetricId, metricsByVersion, orderedVersions]
   );
   const pickerVersions = rankedVersions ? rankedVersions.map((entry) => entry.version) : orderedVersions;
-  const pickerOptionLabel = (version: string) => {
-    const ranked = rankedVersions?.find((entry) => entry.version === version);
-    if (!ranked) return formatModelOptionLabel(version, { isInProgress: inProgressSet.has(version) });
-    const deviation = ranked.deviationPercent === null ? 'no target' : `${formatDeviation(ranked.deviationPercent)} off`;
-    return `${formatModelName(version)} — ${deviation}${ranked.status ? `, ${ranked.status}` : ''}`;
-  };
   const evidenceContext = isScenarioContext ? `&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version` : '';
+  const calibrationPageHref = comparisonVersion
+    ? `/model-evidence?view=calibration&mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonVersion)}${evidenceContext}`
+    : `/model-evidence?view=calibration&mode=single&version=${encodeURIComponent(selectedVersion)}${evidenceContext}`;
 
   const selectVersionAndValidationYear = (version: string, year: number) => {
     setSelectedVersion(version);
@@ -741,6 +868,7 @@ export function ValidationPage() {
   };
   const handleVersionChange = (version: string) => {
     const years = overview?.availableValidationTargetYearsByVersion[version] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
+    if (version === comparisonVersion) setComparisonVersion('');
     selectVersionAndValidationYear(version, years.includes(selectedValidationTargetYear) ? selectedValidationTargetYear : 2024);
   };
   // const handleChartClick = (year: 2024 | 2011) => (raw: unknown) => {
@@ -773,25 +901,25 @@ export function ValidationPage() {
         </div>
       )}
       <article className="results-card validation-introduction">
-        <h2>Validation</h2>
-        <p>Compare the selected model with independent UK evidence, see which outcomes are credible or problematic, and check whether results hold across random seeds.</p>
-        <p className="validation-protocol-note">
-          Validation uses a fixed ten-seed, 3,500-step protocol; the first 500 steps are discarded. Runs launched on the Experiments page do not update these validation results.
-        </p>
-        <div className="validation-page-selectors">
-          <label className="validation-selector">
-            <span>Model</span>
-            <select value={selectedVersion} onChange={(event) => handleVersionChange(event.target.value)}>
-              {pickerVersions.map((version) => <option key={version} value={version}>{pickerOptionLabel(version)}</option>)}
-            </select>
-            {selectedVersion && <small className="validation-selector-note">{formatModelSubtitle(selectedVersion)}</small>}
-          </label>
-          <label className="validation-selector">
-            <span>Evidence year</span>
-            <select value={selectedValidationTargetYear} onChange={(event) => setSelectedValidationTargetYear(Number(event.target.value))}>
-              {availableYears.map((year) => <option key={year} value={year}>{year} UK evidence</option>)}
-            </select>
-          </label>
+        <div className="validation-introduction-top">
+          <div className="validation-introduction-copy">
+            <h2>Validation</h2>
+            <p>Compare the selected model with independent UK evidence, see which outcomes are credible or problematic, and check whether results hold across random seeds.</p>
+            <p className="validation-protocol-note">
+              Validation uses a fixed ten-seed, 3,500-step protocol; the first 500 steps are discarded. Runs launched on the Experiments page do not update these validation results.
+            </p>
+            <p className="validation-evidence-statement">
+              The evidence used to validate this model was from <strong>{selectedValidationTargetYear}</strong>.
+            </p>
+            <p className="validation-calibration-guidance">
+              If you want to understand the difference between two models, visit the{' '}
+              <Link to={calibrationPageHref}>calibration page</Link>.
+            </p>
+          </div>
+          <ValidationStatusLegend />
+        </div>
+
+        <div className="validation-model-picker-toolbar">
           <label className="validation-selector">
             <span>Sort models by</span>
             <select value={sortMetricId} onChange={(event) => setSortMetricId(event.target.value)}>
@@ -802,51 +930,68 @@ export function ValidationPage() {
             </select>
           </label>
         </div>
-        {sortMetricId && (
-          <p className="validation-sort-note">
-            Models ordered by distance from the {selectedValidationTargetYear} target for{' '}
-            <strong>{sortableMetrics.find((metric) => metric.metricId === sortMetricId)?.label}</strong>. Closest first.
-          </p>
-        )}
-        <label className="comparison-enable-toggle">
-          <input
-            type="checkbox"
-            checked={isComparisonPickerOpen}
-            onChange={(event) => {
-              setIsComparisonPickerOpen(event.target.checked);
-              if (!event.target.checked) setComparisonVersion('');
-            }}
-          />
-          <span>Compare with another model</span>
-        </label>
-        {isComparisonPickerOpen && (
-          <div className="validation-comparison-row">
-            <div className="comparison-run-pickers">
-              <label className="validation-selector">
-                <span>Compare with</span>
-                <select value={comparisonVersion} onChange={(event) => setComparisonVersion(event.target.value)}>
-                  <option value="">Choose a model</option>
-                  {pickerVersions
-                    .filter((version) => version !== selectedVersion)
-                    .map((version) => <option key={version} value={version}>{pickerOptionLabel(version)}</option>)}
-                </select>
-              </label>
-            </div>
-            {comparisonSummary && (
-              <Link
-                className="secondary-button validation-calibration-link"
-                to={`/calibration?mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonSummary.version)}${evidenceContext}`}
-              >
-                What differs between {selectedVersion} and {comparisonSummary.version}?
-              </Link>
-            )}
+
+        <div className="validation-model-columns-scroll">
+          <div className="validation-model-columns" aria-label="Validation model selection">
+            <section className="validation-model-column" aria-labelledby="validation-primary-model-heading">
+              <div className="validation-model-column-heading">
+                <div>
+                  <span>Model 1</span>
+                  <h3 id="validation-primary-model-heading">Primary model</h3>
+                </div>
+              </div>
+              <ValidationModelOptions
+                versions={pickerVersions}
+                selectedVersion={selectedVersion}
+                name="validation-primary-model"
+                label="Primary validation model"
+                rankings={rankedVersions}
+                inProgressVersions={inProgressSet}
+                onChange={handleVersionChange}
+              />
+            </section>
+
+            <section
+              className={`validation-model-column validation-model-column-comparison ${isComparisonPickerOpen ? 'is-enabled' : 'is-disabled'}`}
+              aria-labelledby="validation-comparison-model-heading"
+              aria-disabled={!isComparisonPickerOpen}
+            >
+              <div className="validation-model-column-heading">
+                <div>
+                  <span>Model 2</span>
+                  <h3 id="validation-comparison-model-heading">Comparison model</h3>
+                </div>
+                <label className="comparison-enable-toggle validation-comparison-enable-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isComparisonPickerOpen}
+                    onChange={(event) => {
+                      setIsComparisonPickerOpen(event.target.checked);
+                      if (!event.target.checked) setComparisonVersion('');
+                    }}
+                  />
+                  <span>Compare</span>
+                </label>
+              </div>
+              <ValidationModelOptions
+                versions={pickerVersions}
+                selectedVersion={comparisonVersion}
+                name="validation-comparison-model"
+                label="Comparison validation model"
+                rankings={rankedVersions}
+                disabled={!isComparisonPickerOpen}
+                unavailableVersion={selectedVersion}
+                inProgressVersions={inProgressSet}
+                onChange={setComparisonVersion}
+              />
+              <small className="validation-selector-note">
+                {isComparisonPickerOpen
+                  ? comparisonVersion ? 'One model selected for comparison.' : 'Choose one model to compare with the primary model.'
+                  : 'Check Compare to enable this column.'}
+              </small>
+            </section>
           </div>
-        )}
-        {/*
-          Validation shows *that* two models fit the evidence differently; Calibration shows *what*
-          differs in their assumptions. That follow-up is the only reason to leave this page, so the
-          link exists only in compare mode.
-        */}
+        </div>
       </article>
 
       {selectionNotice && <p className="info-banner">{selectionNotice}</p>}
@@ -921,7 +1066,7 @@ export function ValidationPage() {
             <div className="validation-loss-decomposition">
               <h4>Where this model&rsquo;s error sits</h4>
               <p className="validation-card-subtitle">
-                Each theme&rsquo;s share of the total metric loss. A smaller share means this model version fits
+                Each theme&rsquo;s share of the total metric loss. A <strong>smaller</strong> share means this model version fits
                 the 2024 evidence better for that group of indicators.
               </p>
               <ol className="validation-decomposition-list">

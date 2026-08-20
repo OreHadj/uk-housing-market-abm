@@ -24,11 +24,12 @@ import {
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
-  buildGeneralModelControlOverridesFromForm,
+  buildSensitivityGeneralModelControlOverridesFromForm,
   getDefaultExperimentBasePolicy,
   getPackageBaselineValues,
   isSameValue,
   normalizeManualScenarioFormValues,
+  normalizeSensitivityFormValues,
   parseFormValue,
   toInitialFormValues,
   type FormValue
@@ -113,6 +114,7 @@ interface UseExperimentRunControllerOptions {
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
   onManualRunAccepted?: () => void;
+  onSensitivityRunAccepted?: (experimentId: string) => void;
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
   draftId?: string;
@@ -214,6 +216,7 @@ export function useExperimentRunController({
   onOpenManualResults,
   onOpenSensitivityResults,
   onManualRunAccepted,
+  onSensitivityRunAccepted,
   followJobRef,
   draftId = ''
 }: UseExperimentRunControllerOptions): ExperimentRunController {
@@ -302,7 +305,9 @@ export function useExperimentRunController({
       const defaultBasePolicy = getDefaultExperimentBasePolicy(payload);
       const defaultBasePolicyOption = payload.basePolicies.find((item) => item.id === defaultBasePolicy) ?? null;
       const initialValues = toInitialFormValues(payload.parameters, defaultBasePolicyOption);
-      const initialSensitivityValues = { ...initialValues, N_SIMS: '5' };
+      // Seeds per sampled point come from the shared builder default, so a sweep point is scored
+      // on the same seed depth as a scenario run.
+      const initialSensitivityValues = normalizeSensitivityFormValues(payload.parameters, initialValues);
       setOptions(payload);
       setSelectedBaseline(payload.requestedBaseline);
       setBasePolicyState(defaultBasePolicy);
@@ -625,6 +630,12 @@ export function useExperimentRunController({
   };
 
   const onSensitivityFormValueChange = (parameter: ModelRunParameterDefinition, value: FormValue) => {
+    if (
+      parameter.key === 'TIME_TO_START_RECORDING_TRANSACTIONS' ||
+      (parameter.type === 'boolean' && parameter.key.startsWith('record'))
+    ) {
+      return;
+    }
     setSensitivityFormValues((current) => ({
       ...current,
       [parameter.key]: value
@@ -673,7 +684,7 @@ export function useExperimentRunController({
       throw new Error('Run options are not loaded yet.');
     }
 
-    return buildGeneralModelControlOverridesFromForm(options.parameters, sensitivityFormValues);
+    return buildSensitivityGeneralModelControlOverridesFromForm(options.parameters, sensitivityFormValues);
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {
@@ -696,12 +707,12 @@ export function useExperimentRunController({
       clearScenarioDraft(draftId);
       setWarnings([]);
       setTitle('');
-      onManualRunAccepted?.();
       if (response.job) {
         const jobRef = `manual:${response.job.jobId}`;
         setPendingManualJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
+      onManualRunAccepted?.();
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);
@@ -750,11 +761,14 @@ export function useExperimentRunController({
 
       setSensitivityWarnings([]);
       setSensitivityTitle('');
+      let acceptedExperimentId = '';
       if (response.experiment) {
-        const jobRef = `sensitivity:${response.experiment.experimentId}`;
+        acceptedExperimentId = response.experiment.experimentId;
+        const jobRef = `sensitivity:${acceptedExperimentId}`;
         setPendingSensitivityJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
+      onSensitivityRunAccepted?.(acceptedExperimentId);
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);

@@ -18,7 +18,7 @@ import {
 import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
 import { getModelAnchor } from '../../lib/modelAnchors';
 import { CentralBankPolicyInput } from './CentralBankPolicyInput';
-import { GeneralModelControl } from './GeneralModelControl';
+import { GeneralModelControl, isRecordSetting } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
@@ -73,6 +73,22 @@ function formatPolicyFieldValue(key: string, value: FormValue | undefined): stri
   return display ? formatPolicyValue(parsed, display.unit) : String(parsed);
 }
 
+function reviewParameterLabel(parameter: ModelRunParameterDefinition): string {
+  if (parameter.key === 'N_SIMS') return 'Seeds per run';
+  if (parameter.key === 'TIME_TO_START_RECORDING_TRANSACTIONS') return 'Start recording at month';
+  if (parameter.key === 'recordCoreIndicators') return 'Dashboard results';
+  return parameter.title;
+}
+
+function reviewParameterValue(parameter: ModelRunParameterDefinition, value: FormValue | undefined): string {
+  if (parameter.key === 'recordCoreIndicators') return 'Enabled';
+  if (parameter.type === 'boolean') return value ? 'Enabled' : 'Disabled';
+  if (value === undefined || value === '') return 'Not set';
+  if (parameter.key === 'N_STEPS') return `${value} steps`;
+  if (parameter.key === 'N_SIMS') return `${value} seeds`;
+  return String(value);
+}
+
 export function ManualRunSetupCard({
   draftId = '',
   draftNotice = '',
@@ -102,15 +118,14 @@ export function ManualRunSetupCard({
   lockMessage,
   onSubmit
 }: ManualRunSetupCardProps) {
-  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(3, initialStep)));
-  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(
-    () => new Set(POLICY_SETTING_GROUPS.filter((group) => group.defaultOpen).map((group) => group.id))
-  );
+  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4, initialStep)));
+  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>());
   const steps = [
     { id: 'scenario-details', label: 'Scenario name' },
     { id: 'model-evidence', label: 'Model version' },
     { id: 'policy-settings', label: 'Policy settings' },
-    { id: 'technical-details', label: 'Technical details' }
+    { id: 'technical-details', label: 'Technical details' },
+    { id: 'scenario-review', label: 'Review and start' }
   ] as const;
   const orderedSnapshots = orderExperimentModelOptions(snapshots, selectedBaseline);
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy);
@@ -121,6 +136,12 @@ export function ManualRunSetupCard({
     [policyParameters]
   );
   const knownPolicyKeys = useMemo(() => new Set(parametersByKey.keys()), [parametersByKey]);
+  const reviewRunParameters = parameters.filter(
+    (parameter) => parameter.group === 'General model control' && parameter.key !== 'SEED' && !isRecordSetting(parameter)
+  );
+  const reviewRecordingParameters = parameters.filter(
+    (parameter) => parameter.group === 'General model control' && parameter.key !== 'SEED' && isRecordSetting(parameter)
+  );
 
   // Benchmark status is derived from the values themselves, not from which instruments are selected:
   // editing any policy field makes this a policy-change scenario immediately.
@@ -159,10 +180,10 @@ export function ManualRunSetupCard({
         <>
           <div className="scenario-builder-heading">
             <h2>Create a new policy scenario</h2>
-            <p>Name the scenario, choose a model, set the policy and review the technical details.</p>
+            <p>Name the scenario, choose a model, set the policy and review everything before starting.</p>
           </div>
           {draftNotice && <p className="info-banner">{draftNotice}</p>}
-          <nav className="scenario-stepper" aria-label="Scenario sections">
+          <nav className="scenario-stepper policy-stepper" aria-label="Scenario sections">
             {steps.map((step, index) => (
               <button key={step.id} type="button" onClick={() => setActiveStep(index)} aria-current={activeStep === index ? 'step' : undefined}>
                 <span>{index + 1}</span>{step.label}
@@ -335,17 +356,88 @@ export function ManualRunSetupCard({
 
               </section>
 
-              {warnings.length > 0 && (
-                <div className="run-warning-card">
-                  <h4>Warnings detected</h4>
-                  <p>Confirm to submit anyway.</p>
-                  <ul>
-                    {warnings.map((warning) => (
-                      <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
+              <section hidden={activeStep !== 4} id="scenario-review" className="scenario-section scenario-step-page" aria-labelledby="scenario-review-heading">
+                <h3 id="scenario-review-heading">Review and start</h3>
+                <p className="scenario-section-intro">Check the complete scenario specification before starting the model run.</p>
+
+                <dl className="sensitivity-review-list scenario-review-overview">
+                  <div><dt>Scenario name</dt><dd>{title.trim() || 'Not set'}</dd></div>
+                  <div><dt>Model</dt><dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline || 'Not set'}</dd></div>
+                  <div><dt>Reference policy</dt><dd>{selectedBasePolicy?.title ?? 'Not set'}</dd></div>
+                  <div><dt>Policy changes</dt><dd>{changedPolicyKeys.size === 0 ? 'No settings changed' : `${changedPolicyKeys.size} ${changedPolicyKeys.size === 1 ? 'setting' : 'settings'} changed`}</dd></div>
+                </dl>
+
+                <div className="scenario-policy-review">
+                  <div className="scenario-policy-review-heading">
+                    <h4>Policy settings</h4>
+                    <p>Every policy control is shown below. Values matching the reference policy are marked Unchanged.</p>
+                  </div>
+                  <div className="scenario-policy-review-groups">
+                    {POLICY_SETTING_GROUPS.map((group) => (
+                      <section key={group.id} className="scenario-policy-review-group" aria-labelledby={`review-${group.id}-heading`}>
+                        <h5 id={`review-${group.id}-heading`}>{group.heading}</h5>
+                        <dl>
+                          {group.keys.map((key) => {
+                            const baseValue = selectedBasePolicy?.values[key];
+                            const baseText = formatPolicyFieldValue(key, baseValue === undefined ? undefined : String(baseValue));
+                            const isChanged = changedPolicyKeys.has(key);
+                            const currentText = isChanged ? formatPolicyFieldValue(key, formValues[key]) : baseText;
+                            return (
+                              <div key={key} className={isChanged ? 'is-changed' : undefined}>
+                                <dt>{policyLabel(key)}</dt>
+                                <dd>
+                                  <span className="scenario-policy-review-value">{currentText}</span>
+                                  <span className={`scenario-policy-review-status ${isChanged ? 'is-changed' : 'is-unchanged'}`}>
+                                    {isChanged ? 'Changed' : 'Unchanged'}
+                                  </span>
+                                  {isChanged && <small>Reference: {baseText}</small>}
+                                </dd>
+                              </div>
+                            );
+                          })}
+                        </dl>
+                      </section>
                     ))}
-                  </ul>
+                  </div>
                 </div>
-              )}
+
+                <div className="scenario-review-run-settings">
+                  <h4>Run settings</h4>
+                  <dl className="sensitivity-review-list">
+                    {reviewRunParameters.map((parameter) => (
+                      <div key={parameter.key}>
+                        <dt>{reviewParameterLabel(parameter)}</dt>
+                        <dd>{reviewParameterValue(parameter, formValues[parameter.key])}</dd>
+                      </div>
+                    ))}
+                    <div><dt>Max workers</dt><dd>{maxWorkers || 'Not set'}</dd></div>
+                  </dl>
+                </div>
+
+                <div className="scenario-review-run-settings">
+                  <h4>Recording configuration</h4>
+                  <dl className="sensitivity-review-list">
+                    {reviewRecordingParameters.map((parameter) => (
+                      <div key={parameter.key}>
+                        <dt>{reviewParameterLabel(parameter)}</dt>
+                        <dd>{reviewParameterValue(parameter, formValues[parameter.key])}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+
+                {warnings.length > 0 && (
+                  <div className="run-warning-card">
+                    <h4>Warnings detected</h4>
+                    <p>Confirm to start anyway.</p>
+                    <ul>
+                      {warnings.map((warning) => (
+                        <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
 
               <div className="scenario-page-navigation" aria-label="Scenario page navigation">
                 <div className="scenario-page-movement">
@@ -353,12 +445,16 @@ export function ManualRunSetupCard({
                   {activeStep < steps.length - 1 && <button type="button" className="secondary-button" onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}>Continue</button>}
                 </div>
                 <div className="scenario-persistent-run-action">
-                  {warnings.length > 0 && (
-                    <button type="button" className="secondary-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(true)}>Confirm and Queue</button>
+                  {activeStep === steps.length - 1 && (
+                    <>
+                      <button type="button" className="primary-button scenario-create-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(false)}>
+                        {isSubmitting ? 'Starting policy scenario...' : 'Start policy scenario'}
+                      </button>
+                      {warnings.length > 0 && (
+                        <button type="button" className="secondary-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(true)}>Confirm and start</button>
+                      )}
+                    </>
                   )}
-                  <button type="button" className="primary-button scenario-create-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(false)}>
-                    {isSubmitting ? 'Running policy scenario...' : 'Run policy scenario'}
-                  </button>
                 </div>
               </div>
               <p className="scenario-matched-baseline-note">Results compare the edited policy settings with the unchanged reference policy using the same calibrated model and run settings.</p>

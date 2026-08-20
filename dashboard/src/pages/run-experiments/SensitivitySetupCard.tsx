@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   BasePolicyId,
@@ -13,11 +13,12 @@ import {
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../../lib/experimentVersionOptions';
-import { GeneralModelControl } from './GeneralModelControl';
+import { GeneralModelControl, isRecordSetting } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
 interface SensitivitySetupCardProps {
+  initialStep?: number;
   executionDisabled: boolean;
   isLoadingOptions: boolean;
   selectedBaseline: string;
@@ -54,7 +55,115 @@ interface SensitivitySetupCardProps {
   onCancelActive: () => void;
 }
 
+const SENSITIVITY_STEPS = [
+  { id: 'sensitivity-details', label: 'Experiment details' },
+  { id: 'sensitivity-sweep', label: 'Define the sweep' },
+  { id: 'sensitivity-model-baseline', label: 'Model and baseline' },
+  { id: 'sensitivity-run-settings', label: 'Run and recording' },
+  { id: 'sensitivity-review', label: 'Review and start' }
+] as const;
+
+const POSITIVE_RUN_CONTROL_KEYS = new Set([
+  'N_STEPS',
+  'N_SIMS',
+  'TARGET_POPULATION',
+  'ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS'
+]);
+
+export function validateSensitivityExperimentDetails(title: string): string | null {
+  return title.trim() ? null : 'Enter an experiment name before continuing.';
+}
+
+export function validateSensitivitySweepDefinition(
+  selectedPackage: SensitivityPolicyPackageDefinition | null,
+  minValue: string,
+  maxValue: string,
+  sampleCount: string
+): string | null {
+  if (!selectedPackage) {
+    return 'Choose a policy instrument to vary.';
+  }
+  const min = Number.parseFloat(minValue);
+  const max = Number.parseFloat(maxValue);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return 'Enter numeric minimum and maximum values.';
+  }
+  if (!(min < max)) {
+    return 'Minimum value must be lower than maximum value.';
+  }
+  const count = Number.parseFloat(sampleCount);
+  if (!Number.isFinite(count) || !Number.isInteger(count) || count < 2) {
+    return 'Sample count must be a whole number of at least 2.';
+  }
+  return null;
+}
+
+export function validateSensitivityModelAndBaseline(
+  selectedSnapshot: ModelRunSnapshotOption | null,
+  selectedBasePolicy: BasePolicyOption | null,
+  selectedPackage: SensitivityPolicyPackageDefinition | null,
+  minValue: string,
+  maxValue: string
+): string | null {
+  if (!selectedSnapshot) {
+    return 'Choose a model version.';
+  }
+  if (!selectedBasePolicy) {
+    return 'Choose a baseline policy.';
+  }
+  if (!selectedPackage) {
+    return 'Return to Define the sweep and choose a policy instrument.';
+  }
+
+  const min = Number.parseFloat(minValue);
+  const max = Number.parseFloat(maxValue);
+  const baselineValues = getPackageBaseValues(selectedPackage, selectedBasePolicy);
+  if (
+    baselineValues.length !== selectedPackage.parameterKeys.length ||
+    baselineValues.some((value) => value < min || value > max)
+  ) {
+    return `The ${selectedBasePolicy.title} value for this instrument must fall inside the sweep range. Return to Define the sweep or choose another baseline policy.`;
+  }
+  return null;
+}
+
+export function validateSensitivityRunSettings(
+  parameters: ModelRunParameterDefinition[],
+  formValues: Record<string, string | boolean>,
+  maxWorkers: string,
+  maxWorkersCap?: number
+): string | null {
+  for (const parameter of parameters) {
+    if (parameter.group !== 'General model control' || parameter.key === 'SEED' || isRecordSetting(parameter)) {
+      continue;
+    }
+    if (parameter.type === 'boolean') {
+      continue;
+    }
+    const parsed = Number.parseFloat(String(formValues[parameter.key] ?? ''));
+    if (!Number.isFinite(parsed)) {
+      return `${parameter.title} must be numeric.`;
+    }
+    if (parameter.type === 'integer' && !Number.isInteger(parsed)) {
+      return `${parameter.title} must be a whole number.`;
+    }
+    if (POSITIVE_RUN_CONTROL_KEYS.has(parameter.key) && parsed < 1) {
+      return `${parameter.title} must be at least 1.`;
+    }
+  }
+
+  const workers = Number.parseFloat(maxWorkers);
+  if (!Number.isFinite(workers) || !Number.isInteger(workers) || workers < 1) {
+    return 'Max workers must be a whole number of at least 1.';
+  }
+  if (maxWorkersCap !== undefined && workers > maxWorkersCap) {
+    return `Max workers cannot exceed ${maxWorkersCap} in this runtime.`;
+  }
+  return null;
+}
+
 export function SensitivitySetupCard({
+  initialStep = 0,
   executionDisabled,
   isLoadingOptions,
   selectedBaseline,
@@ -90,14 +199,17 @@ export function SensitivitySetupCard({
   onSubmit,
   onCancelActive
 }: SensitivitySetupCardProps) {
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const normalizedInitialStep = Math.max(0, Math.min(SENSITIVITY_STEPS.length - 1, initialStep));
+  const [activeStep, setActiveStep] = useState(normalizedInitialStep);
+  const [stepError, setStepError] = useState('');
+  const stepErrorRef = useRef<HTMLParagraphElement>(null);
   const orderedSnapshots = orderExperimentModelOptions(snapshots, selectedBaseline);
   const selectedSnapshot = orderedSnapshots.find((snapshot) => snapshot.version === selectedBaseline) ?? null;
   const selectedBasePolicy = basePolicies.find((policy) => policy.id === basePolicy) ?? null;
   const sampleValues = buildSensitivitySampleValues(selectedPackage, selectedBasePolicy, minValue, maxValue, sampleCount);
   const basePolicyValues = selectedPackage && selectedBasePolicy ? formatPackageBaseValues(selectedPackage, selectedBasePolicy) : null;
   const simulationDuration = String(formValues.N_STEPS ?? '');
-  const monteCarloRuns = String(formValues.N_SIMS ?? '');
+  const seedsPerPoint = parsePositiveIntegerForDisplay(formValues.N_SIMS);
   const submissionBlocked =
     isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual || hasActiveSensitivityJob;
 
@@ -115,6 +227,65 @@ export function SensitivitySetupCard({
     }; every other instrument stays at the ${baseName} value.`;
   })();
 
+  const totalExecutions = pointCount > 0 && seedsPerPoint !== null ? pointCount * seedsPerPoint : 0;
+
+  useEffect(() => {
+    if (stepError) {
+      stepErrorRef.current?.focus();
+    }
+  }, [stepError]);
+
+  const validateStep = (step: number): string | null => {
+    if (step === 0) return validateSensitivityExperimentDetails(title);
+    if (step === 1) return validateSensitivitySweepDefinition(selectedPackage, minValue, maxValue, sampleCount);
+    if (step === 2) {
+      return validateSensitivityModelAndBaseline(
+        selectedSnapshot,
+        selectedBasePolicy,
+        selectedPackage,
+        minValue,
+        maxValue
+      );
+    }
+    if (step === 3) return validateSensitivityRunSettings(parameters, formValues, maxWorkers, maxWorkersCap);
+    return null;
+  };
+
+  const firstInvalidStepThrough = (lastStep: number): { step: number; message: string } | null => {
+    for (let step = 0; step <= Math.min(lastStep, SENSITIVITY_STEPS.length - 2); step += 1) {
+      const message = validateStep(step);
+      if (message) return { step, message };
+    }
+    return null;
+  };
+
+  const navigateToStep = (nextStep: number) => {
+    setStepError('');
+    setActiveStep(nextStep);
+  };
+
+  const continueToNextStep = () => {
+    const invalid = firstInvalidStepThrough(activeStep);
+    if (invalid) {
+      setActiveStep(invalid.step);
+      setStepError(invalid.message);
+      return;
+    }
+    navigateToStep(Math.min(SENSITIVITY_STEPS.length - 1, activeStep + 1));
+  };
+
+  const submitFromReview = (confirmWarnings: boolean) => {
+    const invalid = firstInvalidStepThrough(SENSITIVITY_STEPS.length - 2);
+    if (invalid) {
+      setActiveStep(invalid.step);
+      setStepError(invalid.message);
+      return;
+    }
+    onSubmit(confirmWarnings);
+  };
+
+  const clearValidationError = () => setStepError('');
+
   return (
     <article className="scenario-builder-surface">
       {sensitivitySubmissionLockedByManual && lockMessage && <p className="info-banner">{lockMessage}</p>}
@@ -125,34 +296,61 @@ export function SensitivitySetupCard({
         <>
           <div className="scenario-builder-heading">
             <h2>Create a sensitivity analysis</h2>
-            <p>Vary one policy instrument across a range and compare each tested value with the selected baseline policy.</p>
+            <p>Define the sweep, choose the model and baseline, configure the run, then review it before starting.</p>
           </div>
+          <nav className="scenario-stepper sensitivity-stepper" aria-label="Sensitivity analysis sections">
+            {SENSITIVITY_STEPS.map((step, index) => (
+              <button
+                key={step.id}
+                type="button"
+                aria-current={activeStep === index ? 'step' : undefined}
+                onClick={() => navigateToStep(index)}
+              >
+                <span>{index + 1}</span>{step.label}
+              </button>
+            ))}
+          </nav>
           <div className="scenario-builder-grid">
             <div className="scenario-builder-form">
-              <section className="scenario-section">
-                <h3>Experiment details</h3>
+              {stepError && (
+                <p ref={stepErrorRef} className="sensitivity-step-error" role="alert" tabIndex={-1}>
+                  {stepError}
+                </p>
+              )}
+
+              <section hidden={activeStep !== 0} id="sensitivity-details" className="scenario-section scenario-step-page" aria-labelledby="sensitivity-details-heading">
+                <h3 id="sensitivity-details-heading">Experiment details</h3>
+                <p className="scenario-section-intro">Give this analysis a clear name so it is easy to find in Results.</p>
                 <label className="scenario-field">
                   <span>Experiment name</span>
                   <input
                     type="text"
                     value={title}
                     disabled={executionDisabled}
-                    onChange={(event) => onTitleChange(event.target.value)}
+                    onChange={(event) => {
+                      clearValidationError();
+                      onTitleChange(event.target.value);
+                    }}
                     maxLength={120}
+                    required
+                    aria-invalid={activeStep === 0 && Boolean(stepError)}
                     placeholder="For example, Soft LTI limit sweep"
                   />
                 </label>
               </section>
 
-              <section className="scenario-section">
-                <h3>Policy instrument</h3>
-                <p className="scenario-section-intro">Choose the policy instrument to vary and the range of values to test.</p>
+              <section hidden={activeStep !== 1} id="sensitivity-sweep" className="scenario-section scenario-step-page" aria-labelledby="sensitivity-sweep-heading">
+                <h3 id="sensitivity-sweep-heading">Define the sweep</h3>
+                <p className="scenario-section-intro">Choose one policy instrument and the range of values to test.</p>
                 <label className="scenario-field">
                   <InfoLabel label="Policy instrument to vary" info={SETTING_HELP.sensitivityPolicyPackage} />
                   <select
                     value={policyPackageId}
                     disabled={executionDisabled}
-                    onChange={(event) => onPolicyPackageChange(event.target.value)}
+                    onChange={(event) => {
+                      clearValidationError();
+                      onPolicyPackageChange(event.target.value);
+                    }}
                   >
                     {policyPackages.map((policyPackage) => (
                       <option key={policyPackage.id} value={policyPackage.id}>
@@ -170,7 +368,10 @@ export function SensitivitySetupCard({
                       step={selectedPackage?.type === 'integer' ? 1 : 'any'}
                       value={minValue}
                       disabled={executionDisabled}
-                      onChange={(event) => onMinValueChange(event.target.value)}
+                      onChange={(event) => {
+                        clearValidationError();
+                        onMinValueChange(event.target.value);
+                      }}
                     />
                   </label>
                   <label className="scenario-field">
@@ -180,7 +381,10 @@ export function SensitivitySetupCard({
                       step={selectedPackage?.type === 'integer' ? 1 : 'any'}
                       value={maxValue}
                       disabled={executionDisabled}
-                      onChange={(event) => onMaxValueChange(event.target.value)}
+                      onChange={(event) => {
+                        clearValidationError();
+                        onMaxValueChange(event.target.value);
+                      }}
                     />
                   </label>
                   <label className="scenario-field">
@@ -191,21 +395,74 @@ export function SensitivitySetupCard({
                       min={2}
                       value={sampleCount}
                       disabled={executionDisabled}
-                      onChange={(event) => onSampleCountChange(event.target.value)}
+                      onChange={(event) => {
+                        clearValidationError();
+                        onSampleCountChange(event.target.value);
+                      }}
                     />
                   </label>
                 </div>
+                <div className="sensitivity-sweep-preview" aria-live="polite">
+                  <strong>Values that will be tested</strong>
+                  {sampleValues.length > 0 ? (
+                    <ul className="sensitivity-sampled-values">
+                      {sampleValues.map((value) => <li key={value}>{value}</li>)}
+                    </ul>
+                  ) : (
+                    <p>Enter a valid minimum, maximum and sample count to preview the sampled values.</p>
+                  )}
+                  <p>{sweepSentence}</p>
+                </div>
               </section>
 
-              <section className="scenario-section">
-                <h3>Baseline policy</h3>
-                <p className="scenario-section-intro">Every instrument that isn&apos;t being varied stays at this policy&apos;s value.</p>
+              <section hidden={activeStep !== 2} id="sensitivity-model-baseline" className="scenario-section scenario-step-page" aria-labelledby="sensitivity-model-baseline-heading">
+                <h3 id="sensitivity-model-baseline-heading">Model and baseline</h3>
+                <p className="scenario-section-intro">
+                  Choose the calibrated model and reference policy. Every instrument not being swept remains at the selected baseline-policy value.
+                </p>
+                <label className="scenario-field">
+                  <InfoLabel label="Model version" info={SETTING_HELP.calibrationParameterVersion} />
+                  <select
+                    value={selectedBaseline}
+                    disabled={executionDisabled}
+                    onChange={(event) => {
+                      clearValidationError();
+                      onBaselineChange(event.target.value);
+                    }}
+                  >
+                    {orderedSnapshots.map((snapshot) => (
+                      <option key={snapshot.version} value={snapshot.version}>
+                        {formatExperimentModelOption(snapshot)}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedSnapshot && <p className="scenario-evidence-note">{formatEvidenceNote(selectedSnapshot)}</p>}
+                  <p className="scenario-field-links">
+                    <Link
+                      className="summary-link-inline"
+                      to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}
+                    >
+                      View this model&rsquo;s assumptions
+                    </Link>
+                    <Link
+                      className="summary-link-inline"
+                      to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
+                        selectedSnapshot?.evidenceYear ?? 2024
+                      }&from=sensitivity`}
+                    >
+                      Compare how models fit the evidence
+                    </Link>
+                  </p>
+                </label>
                 <label className="scenario-field">
                   <InfoLabel label="Baseline policy" info={SETTING_HELP.basePolicy} />
                   <select
                     value={basePolicy}
                     disabled={executionDisabled}
-                    onChange={(event) => onBasePolicyChange(event.target.value as BasePolicyId)}
+                    onChange={(event) => {
+                      clearValidationError();
+                      onBasePolicyChange(event.target.value as BasePolicyId);
+                    }}
                   >
                     {basePolicies.map((policy) => (
                       <option key={policy.id} value={policy.id}>
@@ -222,116 +479,136 @@ export function SensitivitySetupCard({
                 ) : null}
               </section>
 
-              <button
-                type="button"
-                className={`scenario-advanced-toggle ${advancedOpen ? 'active' : ''}`}
-                aria-expanded={advancedOpen}
-                onClick={() => setAdvancedOpen((open) => !open)}
-              >
-                <span>Advanced simulation settings</span>
-                <span aria-hidden="true">{advancedOpen ? '−' : '+'}</span>
-              </button>
-
-              {advancedOpen && (
+              <section hidden={activeStep !== 3} id="sensitivity-run-settings" className="scenario-section scenario-step-page" aria-labelledby="sensitivity-run-settings-heading">
+                <h3 id="sensitivity-run-settings-heading">Run and recording settings</h3>
+                <p className="scenario-section-intro">
+                  Set the simulation workload first. Recording is fixed to the summaries retained by sensitivity results.
+                </p>
                 <div className="scenario-advanced-panel scenario-advanced-panel--inline">
-                  <div className="scenario-advanced-panel-heading">
-                    <p className="eyebrow">Advanced</p>
-                    <h3>Simulation settings</h3>
-                    <p>Configure execution details without changing the analysis itself.</p>
-                  </div>
                   <div className="scenario-advanced-content">
-                    <div className="scenario-fields-grid">
-                      <label className="scenario-field">
-                        <InfoLabel label="Model" info={SETTING_HELP.calibrationParameterVersion} />
-                        <select
-                          value={selectedBaseline}
-                          disabled={executionDisabled}
-                          onChange={(event) => onBaselineChange(event.target.value)}
-                        >
-                          {orderedSnapshots.map((snapshot) => (
-                            <option key={snapshot.version} value={snapshot.version}>
-                              {formatExperimentModelOption(snapshot)}
-                            </option>
-                          ))}
-                        </select>
-                        {selectedSnapshot && (
-                          <p className="scenario-evidence-note">{formatEvidenceNote(selectedSnapshot)}</p>
-                        )}
-                        <p className="scenario-field-links">
-                          <Link
-                            className="summary-link-inline"
-                            to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
-                              selectedSnapshot?.evidenceYear ?? 2024
-                            }&from=sensitivity`}
-                          >
-                            Compare how models fit the evidence
-                          </Link>
-                          <Link className="summary-link-inline" to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}>
-                            View this model&rsquo;s assumptions
-                          </Link>
-                        </p>
-                      </label>
-                    </div>
-
-                    <h4>Simulation controls</h4>
+                    <h4>Run settings</h4>
                     <GeneralModelControl
                       mode="sensitivity"
                       parameters={parameters}
                       formValues={formValues}
                       executionDisabled={executionDisabled}
-                      onFormValueChange={onFormValueChange}
+                      onFormValueChange={(parameter, value) => {
+                        clearValidationError();
+                        onFormValueChange(parameter, value);
+                      }}
                       maxWorkers={maxWorkers}
                       maxWorkersCap={maxWorkersCap}
-                      onMaxWorkersChange={onMaxWorkersChange}
+                      onMaxWorkersChange={(value) => {
+                        clearValidationError();
+                        onMaxWorkersChange(value);
+                      }}
                       maxWorkersHint={SETTING_HELP.maxWorkers}
                       includeFixedControls
                       embedded
                     />
                   </div>
                 </div>
-              )}
+              </section>
 
-              {warnings.length > 0 && (
-                <div className="run-warning-card">
-                  <h4>Warnings detected</h4>
-                  <p>Confirm to start anyway.</p>
-                  <ul>
-                    {warnings.map((warning) => (
-                      <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
-                    ))}
-                  </ul>
+              <section hidden={activeStep !== 4} id="sensitivity-review" className="scenario-section scenario-step-page" aria-labelledby="sensitivity-review-heading">
+                <h3 id="sensitivity-review-heading">Review and start</h3>
+                <p className="scenario-section-intro">Check the complete analysis specification before starting any model executions.</p>
+                <dl className="sensitivity-review-list">
+                  <div><dt>Experiment name</dt><dd>{title.trim() || 'Not set'}</dd></div>
+                  <div><dt>Policy instrument</dt><dd>{selectedPackage?.title ?? 'Not set'}</dd></div>
+                  <div><dt>Sweep range</dt><dd>{minValue || '—'} to {maxValue || '—'} ({sampleCount || '—'} requested samples)</dd></div>
+                  <div className="sensitivity-review-wide">
+                    <dt>Actual sampled values</dt>
+                    <dd>{sampleValues.length > 0 ? sampleValues.join(', ') : 'Not available'}</dd>
+                  </div>
+                  <div><dt>Model</dt><dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : 'Not set'}</dd></div>
+                  <div><dt>Baseline policy</dt><dd>{selectedBasePolicy?.title ?? 'Not set'}</dd></div>
+                  <div><dt>Simulation duration</dt><dd>{simulationDuration ? `${simulationDuration} steps` : 'Not set'}</dd></div>
+                  <div><dt>Seeds per sampled point</dt><dd>{seedsPerPoint ?? 'Not set'}</dd></div>
+                  <div><dt>Max workers</dt><dd>{maxWorkers || 'Not set'}</dd></div>
+                  <div className="sensitivity-review-wide">
+                    <dt>Recording configuration</dt>
+                    <dd>Dashboard outcomes enabled; raw transaction, bid-up, quality-band and household files are not retained.</dd>
+                  </div>
+                </dl>
+                <div className="sensitivity-execution-total" aria-live="polite">
+                  <strong>{totalExecutions || '—'}</strong>
+                  <span>Total model executions</span>
+                  <small>
+                    {pointCount || '—'} unique sampled {pointCount === 1 ? 'point' : 'points'} × {seedsPerPoint ?? '—'} {seedsPerPoint === 1 ? 'seed' : 'seeds'} per point
+                  </small>
                 </div>
-              )}
-
-              <div className="scenario-submit-row">
-                <button
-                  type="button"
-                  className="primary-button scenario-create-button"
-                  disabled={submissionBlocked}
-                  onClick={() => onSubmit(false)}
-                >
-                  {isSubmitting ? 'Submitting...' : 'Start sensitivity analysis'}
-                </button>
                 {warnings.length > 0 && (
+                  <div className="run-warning-card">
+                    <h4>Warnings detected</h4>
+                    <p>Confirm to start anyway.</p>
+                    <ul>
+                      {warnings.map((warning) => (
+                        <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+
+              <div className="scenario-page-navigation" aria-label="Sensitivity analysis page navigation">
+                <div className="scenario-page-movement">
                   <button
                     type="button"
-                    className="secondary-button"
-                    disabled={submissionBlocked}
-                    onClick={() => onSubmit(true)}
+                    className="secondary-button scenario-wizard-arrow-button"
+                    disabled={activeStep === 0}
+                    aria-label="Back to previous step"
+                    title="Back to previous step"
+                    onClick={() => navigateToStep(Math.max(0, activeStep - 1))}
                   >
-                    Confirm and start
+                    <span aria-hidden="true">←</span>
                   </button>
-                )}
-                {hasActiveSensitivityJob && (
-                  <button
-                    type="button"
-                    className="secondary-button"
-                    disabled={isCanceling || executionDisabled}
-                    onClick={onCancelActive}
-                  >
-                    {isCanceling ? 'Canceling...' : 'Cancel active experiment'}
-                  </button>
-                )}
+                  {activeStep < SENSITIVITY_STEPS.length - 1 && (
+                    <button
+                      type="button"
+                      className="secondary-button scenario-wizard-arrow-button"
+                      aria-label="Continue to next step"
+                      title="Continue to next step"
+                      onClick={continueToNextStep}
+                    >
+                      <span aria-hidden="true">→</span>
+                    </button>
+                  )}
+                </div>
+                <div className="scenario-persistent-run-action">
+                  {hasActiveSensitivityJob && (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={isCanceling || executionDisabled}
+                      onClick={onCancelActive}
+                    >
+                      {isCanceling ? 'Canceling...' : 'Cancel active experiment'}
+                    </button>
+                  )}
+                  {activeStep === SENSITIVITY_STEPS.length - 1 && (
+                    <>
+                      <button
+                        type="button"
+                        className="primary-button scenario-create-button"
+                        disabled={submissionBlocked}
+                        onClick={() => submitFromReview(false)}
+                      >
+                        {isSubmitting ? 'Starting...' : 'Start sensitivity analysis'}
+                      </button>
+                      {warnings.length > 0 && (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={submissionBlocked}
+                          onClick={() => submitFromReview(true)}
+                        >
+                          Confirm and start
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -358,7 +635,7 @@ export function SensitivitySetupCard({
                 </div>
                 <div>
                   <dt>Monte Carlo runs per point</dt>
-                  <dd>{monteCarloRuns || 'Not set'}</dd>
+                  <dd>{seedsPerPoint ?? 'Not set'}</dd>
                 </div>
                 <div>
                   <dt>Model version</dt>
@@ -372,6 +649,14 @@ export function SensitivitySetupCard({
                   <dt>Workers parallelised across</dt>
                   <dd>{maxWorkers || 'Not set'}</dd>
                 </div>
+                <div>
+                  <dt>Total model executions</dt>
+                  <dd>{totalExecutions || 'Not available'}</dd>
+                </div>
+                <div>
+                  <dt>Recording</dt>
+                  <dd>Dashboard outcomes only</dd>
+                </div>
               </dl>
             </aside>
           </div>
@@ -381,7 +666,7 @@ export function SensitivitySetupCard({
   );
 }
 
-function buildSensitivitySampleValues(
+export function buildSensitivitySampleValues(
   policyPackage: SensitivityPolicyPackageDefinition | null,
   basePolicy: BasePolicyOption | null,
   minRaw: string,
@@ -426,6 +711,12 @@ function buildSensitivitySampleValues(
     .map((value) => formatPolicyValue(value, policyPackage.type));
   const usesDistinctBaseValues = baseline === null && baseValues.every((value) => value >= min && value <= max);
   return usesDistinctBaseValues ? [`baseline policy values (${formatPackageBaseValues(policyPackage, basePolicy)})`, ...formattedValues] : formattedValues;
+}
+
+function parsePositiveIntegerForDisplay(value: string | boolean | undefined): number | null {
+  if (typeof value === 'boolean') return null;
+  const parsed = Number.parseFloat(value ?? '');
+  return Number.isFinite(parsed) && Number.isInteger(parsed) && parsed >= 1 ? parsed : null;
 }
 
 function getPackageBaseValues(policyPackage: SensitivityPolicyPackageDefinition, basePolicy: BasePolicyOption): number[] {

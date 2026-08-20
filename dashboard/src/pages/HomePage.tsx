@@ -1,90 +1,63 @@
 import { Link } from 'react-router-dom';
 
-const START_HERE = [
+/**
+ * The four things someone can do from here, in the order they are usually needed: set a run up,
+ * read a finished one, check whether the model is worth believing, and — once it exists — start a
+ * pre-configured example.
+ *
+ * These deliberately describe user goals rather than repeat the destination labels in the nav.
+ */
+const DESTINATIONS = [
   {
-    num: '01',
-    to: '/scenarios/new',
-    title: 'Run a policy scenario',
-    desc: 'Set the Central Bank toolkit — LTV / LTI caps — and compare it with an unchanged reference-policy run.'
+    to: '/experiments',
+    title: 'Experiments',
+    description: 'Set up a policy scenario, or sweep one instrument across a range of values.'
   },
   {
-    num: '02',
-    to: '/sensitivity',
-    title: 'Test policy sensitivity',
-    desc: 'Vary one policy instrument across a range and compare the housing and credit responses with the baseline policy.'
+    to: '/results',
+    title: 'Results',
+    description: 'Open a finished scenario or sweep, and compare it against another run.'
   },
   {
-    num: '03',
-    to: '/scenarios',
-    title: 'Compare completed results',
-    desc: 'Open a finished scenario, then diff it against another run side by side.'
-  },
-  {
-    num: '04',
-    to: '/calibration',
-    title: 'Understand the model',
-    desc: 'Calibration parameters, validation against the paper, and version differences.'
+    to: '/model-evidence',
+    title: 'Model evidence',
+    description: 'How the model was calibrated, and how closely its output matches the evidence.'
   }
-] as const;
-
-const EXAMINE = [
-  { label: 'Mortgage lending', desc: 'Approvals, principal, and the LTV / LTI distributions of new lending.' },
-  { label: 'House prices and housing transactions', desc: 'The house price index, sales volumes, and market activity.' },
-  { label: 'First-time buyers and home movers', desc: 'Who gets credit, and on what terms.' },
-  { label: 'Rental and buy-to-let markets', desc: 'Rental yields, tenure shares, and buy-to-let portfolios.' }
 ] as const;
 
 export function HomePage() {
   return (
-    <div className="wrap">
-      <section className="hero">
-        <p className="eyebrow" style={{ color: 'var(--accent-2)' }}>Research tool for mortgage-policy analysis</p>
-        <h2>
-          See what a mortgage-policy change <em>does</em> to the UK housing market.
-        </h2>
-        <p className="lede">
-          Run an LTV or LTI cap against an unchanged reference policy and read the effects — on lending, house prices,
-          first-time buyers, and the buy-to-let and rental markets.
-        </p>
-        <div className="cta-row">
-          <Link className="btn-primary" to="/scenarios/new">
-            Create a policy scenario <span aria-hidden="true">→</span>
+    <div className="wrap home-launcher">
+      <h2 className="home-title">
+        See what a mortgage-policy change <em>does</em> to the UK housing market.
+      </h2>
+
+      <div className="home-actions">
+        {DESTINATIONS.map((destination) => (
+          <Link className="home-action" to={destination.to} key={destination.to}>
+            <span className="home-action-text">
+              <strong>{destination.title}</strong>
+              <span>{destination.description}</span>
+            </span>
+            <span className="home-action-arrow" aria-hidden="true">
+              →
+            </span>
           </Link>
-          <Link className="text-link" to="/scenarios">or compare existing results</Link>
-        </div>
-        <aside className="notice" aria-label="Research simulation disclaimer">
-          <strong>Research simulation — not a policy forecast</strong>
-          <p>Results are not forecasts, official Bank of England projections, or policy recommendations.</p>
-        </aside>
-      </section>
+        ))}
 
-      <section className="block" aria-labelledby="home-start-here">
-        <p className="kicker" id="home-start-here">Start here</p>
-        <div className="entries">
-          {START_HERE.map((entry) => (
-            <Link className="entry" to={entry.to} key={entry.num}>
-              <span className="num">{entry.num}</span>
-              <div>
-                <h3>{entry.title}</h3>
-                <p>{entry.desc}</p>
-              </div>
-              <span className="arrow" aria-hidden="true">→</span>
-            </Link>
-          ))}
-        </div>
-      </section>
-
-      <section className="block" aria-labelledby="home-examine">
-        <p className="kicker" id="home-examine">What you can examine</p>
-        <div className="examine">
-          {EXAMINE.map((item) => (
-            <div key={item.label}>
-              <h4>{item.label}</h4>
-              <p>{item.desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+        {/*
+          Placeholder only. The zero-decision run preset it will eventually submit already exists in
+          lib/homeDefaultRun.ts, but nothing here may reference it yet: this page must stay free of
+          run-submission imports until the demo is actually designed.
+        */}
+        <button type="button" className="home-action home-action-inactive" disabled>
+          <span className="home-action-text">
+            <strong>Run demo</strong>
+            <span>A one-click example run, with no settings to choose.</span>
+          </span>
+          <span className="home-action-note">Coming soon</span>
+        </button>
+      </div>
     </div>
   );
 }

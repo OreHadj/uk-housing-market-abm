@@ -167,7 +167,7 @@ export function ManualResultsView({
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
-  const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>(['credit_access']);
+  const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
   const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState<boolean>(
     Boolean(requestedComparisonRunId)
   );

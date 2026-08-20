@@ -120,13 +120,19 @@ export function GeneralModelControl({
   const recordParameters = visibleParameters.filter(isRecordSetting);
   const optionalRecordParameters = mode === 'manual'
     ? recordParameters.filter((parameter) => parameter.key !== 'recordCoreIndicators')
-    : recordParameters;
+    : [];
+  const primaryModelParameters = modelParameters.filter((parameter) =>
+    parameter.key === 'N_STEPS' || parameter.key === 'N_SIMS'
+  );
+  const remainingModelParameters = modelParameters.filter((parameter) =>
+    parameter.key !== 'N_STEPS' && parameter.key !== 'N_SIMS'
+  );
   const summaryCount = modelParameters.length + (showRecordSettings ? recordParameters.length : 0) + (onMaxWorkersChange ? 1 : 0);
 
   const controls = (
     <>
       <div className="run-param-grid">
-        {modelParameters.map((parameter) => (
+        {primaryModelParameters.map((parameter) => (
           <ParameterInput
             key={parameter.key}
             parameter={parameter}
@@ -151,6 +157,17 @@ export function GeneralModelControl({
             />
           </label>
         )}
+
+        {remainingModelParameters.map((parameter) => (
+          <ParameterInput
+            key={parameter.key}
+            parameter={parameter}
+            value={formValues[parameter.key]}
+            executionDisabled={executionDisabled}
+            mode={mode}
+            onChange={onFormValueChange}
+          />
+        ))}
       </div>
 
       {showRecordSettings && (
@@ -196,21 +213,20 @@ export function RecordSettingsControl({
   executionDisabled,
   onFormValueChange
 }: RecordSettingsControlProps) {
-  if (parameters.length === 0 && mode !== 'manual') {
-    return null;
+  if (mode === 'sensitivity') {
+    return (
+      <section className="sensitivity-recording-settings" aria-labelledby="sensitivity-recording-settings-heading">
+        <h4 id="sensitivity-recording-settings-heading">Recording settings</h4>
+        <p className="sensitivity-recording-note">
+          Transaction, bid-up, quality-band and household microdata files are unavailable for sensitivity analyses.
+          Each sampled run is reduced to dashboard outcome summaries, then its raw output directory is discarded.
+        </p>
+      </section>
+    );
   }
 
   return (
     <>
-      {mode === 'manual' && (
-        <div className="dashboard-results-recording-row">
-          <div>
-            <strong>Dashboard results</strong>
-            <span>Main indicators required for charts — enabled</span>
-          </div>
-          <span className="dashboard-results-enabled" aria-label="Dashboard results enabled">Enabled</span>
-        </div>
-      )}
       <CollapsibleSection
         title={mode === 'manual' ? 'Additional data exports' : 'Record settings'}
         defaultOpen={false}

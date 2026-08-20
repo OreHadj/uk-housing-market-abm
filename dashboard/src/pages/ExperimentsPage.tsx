@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
 import { ManualResultsView } from './experiments/view/ManualResultsView';
 import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
+import { ExperimentsLandingPage } from './ExperimentsLandingPage';
 import type { ExperimentType } from './experiments/types';
 import { clearScenarioDraft, createScenarioDraftId } from '../lib/scenarioDraft';
 
@@ -34,6 +35,11 @@ export function ExperimentsPage({
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
   const draftId = workspace === 'manual' ? searchParams.get('draft')?.trim() ?? '' : '';
 
+  const returnToExperiments = useCallback(() => {
+    setIsSetupOpen(false);
+    navigate('/experiments');
+  }, [navigate]);
+
   useEffect(() => {
     if (workspace !== 'manual' || !isSetupOpen || draftId) return;
     const next = new URLSearchParams(searchParams);
@@ -57,7 +63,7 @@ export function ExperimentsPage({
 
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsSetupOpen(false);
+        returnToExperiments();
       }
     };
     const previousOverflow = document.body.style.overflow;
@@ -68,7 +74,7 @@ export function ExperimentsPage({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [isSetupOpen]);
+  }, [isSetupOpen, returnToExperiments]);
 
   const copy = useMemo(() => workspace === 'manual' ? {
     heading: 'Policy scenarios',
@@ -88,7 +94,9 @@ export function ExperimentsPage({
 
   return (
     <section className="run-exp-layout workspace-page">
-      <article className="results-card workspace-heading">
+      {initialView === 'create' && <ExperimentsLandingPage />}
+
+      {initialView !== 'create' && <article className="results-card workspace-heading">
         <div>
           <h2>{copy.heading}</h2>
           <p>{copy.description}</p>
@@ -104,7 +112,7 @@ export function ExperimentsPage({
             {copy.createAction}
           </button>
         </div>
-      </article>
+      </article>}
 
       <div
         hidden={!isSetupOpen}
@@ -112,7 +120,7 @@ export function ExperimentsPage({
         role="presentation"
         onMouseDown={(event) => {
           if (event.target === event.currentTarget) {
-            setIsSetupOpen(false);
+            returnToExperiments();
           }
         }}
       >
@@ -132,17 +140,14 @@ export function ExperimentsPage({
               {workspace === 'manual' && draftId && (
                 <button type="button" className="danger-button scenario-discard-draft-button" onClick={() => {
                   clearScenarioDraft(draftId);
-                  const next = new URLSearchParams(searchParams);
-                  next.delete('draft');
-                  setSearchParams(next, { replace: true });
-                  setIsSetupOpen(false);
+                  returnToExperiments();
                 }}>Discard draft</button>
               )}
               <button
                 type="button"
                 className="trend-modal-close"
                 aria-label={`Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
-                onClick={() => setIsSetupOpen(false)}
+                onClick={returnToExperiments}
               >×</button>
             </div>
           </div>
@@ -159,22 +164,25 @@ export function ExperimentsPage({
               showRunManagement={false}
               draftId={draftId}
               initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
-              onManualRunAccepted={() => setIsSetupOpen(false)}
+              onManualRunAccepted={() => navigate('/results?type=manual')}
+              onSensitivityRunAccepted={(id) => navigate(
+                `/results?type=sensitivity${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`
+              )}
               onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
               onOpenManualResults={(runId) => {
                 setIsSetupOpen(false);
-                navigate(`/scenarios?baselineRunId=${encodeURIComponent(runId)}`);
+                navigate(`/results?type=manual&baselineRunId=${encodeURIComponent(runId)}`);
               }}
               onOpenSensitivityResults={(id) => {
                 setIsSetupOpen(false);
-                navigate(`/sensitivity?experimentId=${encodeURIComponent(id)}`);
+                navigate(`/results?type=sensitivity&experimentId=${encodeURIComponent(id)}`);
               }}
             />
           </div>
         </section>
       </div>
 
-      {workspace === 'manual' ? (
+      {initialView !== 'create' && (workspace === 'manual' ? (
         <ManualResultsView
           canWrite={canWrite}
           canDownloadResults={canDownloadResults}
@@ -197,7 +205,7 @@ export function ExperimentsPage({
           onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
           sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />
-      )}
+      ))}
     </section>
   );
 }

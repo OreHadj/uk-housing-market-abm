@@ -9,6 +9,7 @@ import type {
   SensitivityIndicatorPointMetric
 } from '../../../../shared/types';
 import type { EChartsOption } from 'echarts';
+import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
 import {
   API_RETRY_DELAY_MS,
@@ -22,6 +23,9 @@ import {
 } from '../../../lib/api';
 import { KPI_LABELS, SELECTABLE_KPI_KEYS } from '../../../lib/kpiLabels';
 import { buildDeltaTrendOption } from '../../../lib/sensitivityChartOptions';
+import { BASE_POLICY_OPTIONS, CENTRAL_BANK_POLICY_KEYS } from '../../../../shared/policyCatalogue';
+import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
+import { formatModelOptionLabel } from '../../../lib/modelAnchors';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
 
@@ -76,6 +80,96 @@ function formatSignedPercent(value: number | null): string {
 
 function formatBasePolicyLabel(basePolicy: SensitivityExperimentSummary['basePolicy']): string {
   return basePolicy ? `${basePolicy} baseline policy` : 'Not recorded';
+}
+
+/**
+ * The setup a completed sweep actually ran with, in the same terms the run-setup form's live summary
+ * used when it was created — so what you read afterwards matches what you chose.
+ *
+ * Values are shown in their display unit (85%, 4.5x income) rather than the raw stored fraction the
+ * setup form prints, so this card does not disagree with the settings table directly beneath it.
+ */
+function describeSweepSummary(detail: SensitivityExperimentMetadata | null) {
+  if (!detail) {
+    return null;
+  }
+  const sweptKey = detail.parameter.parameterKeys?.[0] ?? detail.parameter.key;
+  const unit = CENTRAL_BANK_POLICY_DISPLAY[sweptKey]?.unit ?? null;
+  const format = (value: number) =>
+    unit ? formatPolicyValue(value, unit) : String(Number(value.toFixed(6)));
+
+  const baselineValues = detail.parameter.baselineValuesByKey
+    ? [...new Set(Object.values(detail.parameter.baselineValuesByKey))]
+    : detail.parameter.baselineValue !== null && detail.parameter.baselineValue !== undefined
+      ? [detail.parameter.baselineValue]
+      : [];
+
+  const testedValues = detail.sampledPoints.map((point) => {
+    if (point.value !== null) {
+      return format(point.value);
+    }
+    const fromKeys = Object.values(point.valuesByKey ?? {}).find((value) => Number.isFinite(value));
+    return fromKeys === undefined ? point.label : format(fromKeys);
+  });
+
+  const basePolicyTitle = BASE_POLICY_OPTIONS.find((option) => option.id === detail.basePolicy)?.title ?? null;
+  const pointCount = detail.sampledPoints.length;
+  const steps = detail.generalOverrides?.N_STEPS;
+  const seedCount = detail.seedsPerPoint ?? detail.seeds?.length ?? 1;
+
+  return {
+    sentence: `This experiment varies ${detail.parameter.title} across ${pointCount} value${
+      pointCount === 1 ? '' : 's'
+    }; every other instrument stays at the ${basePolicyTitle ?? 'baseline policy'} value.`,
+    instrument: detail.parameter.title,
+    basePolicyTitle: basePolicyTitle ?? 'Not recorded',
+    baselineValues: baselineValues.length > 0 ? baselineValues.map(format).join(', ') : 'Not recorded',
+    testedValues: testedValues.length > 0 ? testedValues.join(', ') : 'Not recorded',
+    seedCount,
+    seeds: detail.seeds && detail.seeds.length > 0 ? detail.seeds.join(', ') : 'Not recorded',
+    modelVersion: formatModelOptionLabel(detail.baseline),
+    duration: typeof steps === 'number' ? `${steps.toLocaleString('en-GB')} steps` : 'Not recorded',
+    maxWorkers: detail.maxWorkers ?? 1
+  };
+}
+
+/**
+ * A sweep's policy setup: the base policy it ran against, and the settings it varied.
+ *
+ * A sensitivity run records the base policy id and the swept parameter rather than a full policy
+ * snapshot, so the fixed backdrop is read from the same catalogue the run-setup form uses. The
+ * result is the eleven Central Bank settings shown for a policy scenario, with the swept ones
+ * carrying their tested range instead of a single value.
+ */
+function describeSweptPolicy(detail: SensitivityExperimentMetadata | null) {
+  if (!detail) {
+    return null;
+  }
+  const basePolicy = BASE_POLICY_OPTIONS.find((option) => option.id === detail.basePolicy) ?? null;
+  if (!basePolicy) {
+    return null;
+  }
+  const sweptKeys = new Set(
+    detail.parameter.parameterKeys && detail.parameter.parameterKeys.length > 0
+      ? detail.parameter.parameterKeys
+      : [detail.parameter.key]
+  );
+  const rows = CENTRAL_BANK_POLICY_KEYS.map((key) => {
+    const display = CENTRAL_BANK_POLICY_DISPLAY[key];
+    const format = (value: number) => (display ? formatPolicyValue(value, display.unit) : String(value));
+    const swept = sweptKeys.has(key);
+    const baselineValue = detail.parameter.baselineValuesByKey?.[key] ?? detail.parameter.baselineValue;
+    return {
+      key,
+      label: display?.label ?? key,
+      swept,
+      value: swept
+        ? `${format(detail.parameter.min)} → ${format(detail.parameter.max)}`
+        : format(basePolicy.values[key]),
+      baselineText: swept && baselineValue !== null && baselineValue !== undefined ? format(baselineValue) : null
+    };
+  });
+  return { basePolicy, rows, sweptCount: sweptKeys.size };
 }
 
 function formatPointValue(value: number | null, valuesByKey?: Record<string, number>): string {
@@ -144,6 +238,15 @@ function buildTornadoOption(bars: SensitivityExperimentChartsPayload['tornado'],
   };
 }
 
+/**
+ * Option text for the run selector. The instrument is what actually distinguishes two sweeps of the
+ * same baseline, so it rides along with the name rather than being left to the summary below.
+ */
+function formatExperimentOptionLabel(experiment: SensitivityExperimentSummary): string {
+  const name = experiment.title || experiment.experimentId;
+  return `${name} — ${experiment.parameter.title}`;
+}
+
 export function SensitivityResultsView({
   canDownloadResults,
   canDeleteResults,
@@ -164,28 +267,7 @@ export function SensitivityResultsView({
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(false);
   const [isDownloadingExperiment, setIsDownloadingExperiment] = useState<boolean>(false);
   const [isDeletingExperimentId, setIsDeletingExperimentId] = useState<string>('');
-  const [isRunPickerOpen, setIsRunPickerOpen] = useState<boolean>(false);
   const [pageError, setPageError] = useState<string>('');
-
-  useEffect(() => {
-    if (!isRunPickerOpen) {
-      return;
-    }
-
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setIsRunPickerOpen(false);
-      }
-    };
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', closeOnEscape);
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [isRunPickerOpen]);
 
   useEffect(() => {
     // Wait for the experiment list to load before syncing the selection back to the URL. On mount
@@ -401,6 +483,9 @@ export function SensitivityResultsView({
     }
   };
 
+  const sweptPolicy = useMemo(() => describeSweptPolicy(detail), [detail]);
+  const sweepSummary = useMemo(() => describeSweepSummary(detail), [detail]);
+
   const loginPath = `/login?next=${encodeURIComponent(
     buildExperimentsPath({
       ...DEFAULT_EXPERIMENT_ROUTE_STATE,
@@ -414,222 +499,152 @@ export function SensitivityResultsView({
     <section className="results-layout">
       {pageError && <p className="error-banner">{pageError}</p>}
 
-      <article className="results-card">
-        <h2>Sensitivity analysis</h2>
-        <p>
-          See how housing, mortgage, and rental outcomes respond as one policy instrument changes. Each tested value
-          is compared with the selected baseline policy.
-        </p>
-        <div className="summary-links">
-          <Link
-            className="summary-link-inline"
-            to={buildExperimentsPath({
-              ...DEFAULT_EXPERIMENT_ROUTE_STATE,
-              type: 'manual',
-              mode: 'view'
-            })}
-          >
-            Open Scenarios
-          </Link>
-          <Link
-            className="summary-link-inline"
-            to="/sensitivity/new"
-          >
-            New sensitivity analysis
-          </Link>
+      <article className="results-card sensitivity-summary-card">
+        <div className="results-card-head">
+          <h2>{selectedExperiment ? selectedExperiment.title || selectedExperiment.experimentId : 'Sensitivity run'}</h2>
+          {detail && (
+            !canDownloadResults ? (
+              authEnabled ? (
+                <Link className="summary-link-inline" to={loginPath}>
+                  Login to Download
+                </Link>
+              ) : (
+                <button type="button" className="summary-link-inline summary-button-inline" disabled>
+                  Download Unavailable
+                </button>
+              )
+            ) : (
+              <button
+                type="button"
+                className="summary-link-inline summary-button-inline"
+                disabled={isDownloadingExperiment}
+                onClick={() => void downloadSelectedExperiment()}
+              >
+                {isDownloadingExperiment ? 'Downloading...' : 'Download Results'}
+              </button>
+            )
+          )}
         </div>
-      </article>
 
-      <article className="results-card run-history-card sensitivity-run-history-card">
-        <div className="disclosure-preview-head">
-          <div className="disclosure-preview-title">
-            <h3>Run History</h3>
-            <p>{experiments.length} sensitivity {experiments.length === 1 ? 'run' : 'runs'}</p>
-          </div>
-          <button
-            type="button"
-            className="disclosure-preview-toggle"
-            disabled={isLoadingHistory || experiments.length === 0}
-            aria-haspopup="dialog"
-            aria-expanded={isRunPickerOpen}
-            onClick={() => setIsRunPickerOpen(true)}
-          >
-            Select run
-          </button>
+        <div className="comparison-run-pickers">
+          <label>
+            <span>Select run to view</span>
+            <select
+              value={selectedExperimentId}
+              disabled={isLoadingHistory || experiments.length === 0}
+              onChange={(event) => setSelectedExperimentId(event.target.value)}
+            >
+              {experiments.length === 0 && <option value="">No sensitivity analyses yet</option>}
+              {experiments.map((experiment) => (
+                <option key={experiment.experimentId} value={experiment.experimentId}>
+                  {formatExperimentOptionLabel(experiment)}
+                </option>
+              ))}
+            </select>
+            {selectedExperiment && (
+              <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
+            )}
+          </label>
         </div>
 
         {isLoadingHistory ? (
           <p className="loading-banner">Loading experiments...</p>
-        ) : selectedExperiment ? (
-          <button
-            type="button"
-            className="run-preview-card is-active"
-            aria-haspopup="dialog"
-            onClick={() => setIsRunPickerOpen(true)}
-          >
-            <span className="run-preview-title">{selectedExperiment.title || selectedExperiment.experimentId}</span>
-            <span className="run-preview-meta">
-              <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
-              <span>{selectedExperiment.parameter.title}</span>
-              <span className="run-preview-action">Change run</span>
-            </span>
-          </button>
+        ) : experiments.length === 0 ? (
+          <p className="info-banner">
+            No sensitivity analyses yet. <Link to="/sensitivity/new">Create one to begin.</Link>
+          </p>
+        ) : isLoadingDetail ? (
+          <p className="loading-banner">Loading experiment detail...</p>
+        ) : !detail ? (
+          <p className="info-banner">Select a sensitivity analysis to view its results.</p>
         ) : (
-          <p className="info-banner">No sensitivity analyses yet. Create one to begin.</p>
+          <>
+            {sweepSummary && (
+              <>
+                <p className="sensitivity-sweep-sentence">{sweepSummary.sentence}</p>
+                <dl className="sensitivity-summary-facts">
+                  <div>
+                    <dt>Instrument varied</dt>
+                    <dd>{sweepSummary.instrument}</dd>
+                  </div>
+                  <div>
+                    <dt>Baseline policy</dt>
+                    <dd>{sweepSummary.basePolicyTitle}</dd>
+                  </div>
+                  <div>
+                    <dt>Baseline policy values</dt>
+                    <dd>{sweepSummary.baselineValues}</dd>
+                  </div>
+                  <div>
+                    <dt>Values tested</dt>
+                    <dd>{sweepSummary.testedValues}</dd>
+                  </div>
+                  <div>
+                    <dt>Monte Carlo runs per point</dt>
+                    <dd>{sweepSummary.seedCount}</dd>
+                  </div>
+                  <div>
+                    <dt>Seeds per sampled point</dt>
+                    <dd>{sweepSummary.seeds}</dd>
+                  </div>
+                  <div>
+                    <dt>Model version</dt>
+                    <dd>{sweepSummary.modelVersion}</dd>
+                  </div>
+                  <div>
+                    <dt>Simulation duration</dt>
+                    <dd>{sweepSummary.duration}</dd>
+                  </div>
+                  <div>
+                    <dt>Workers parallelised across</dt>
+                    <dd>{sweepSummary.maxWorkers}</dd>
+                  </div>
+                </dl>
+              </>
+            )}
+            {detail.failureReason && <p className="error-banner">Failure reason: {detail.failureReason}</p>}
+
+            {sweptPolicy && (
+              <CollapsibleSection
+                title="Policy settings used"
+                summary={`${CENTRAL_BANK_POLICY_KEYS.length} Central Bank settings · ${sweptPolicy.sweptCount} varied`}
+                className="run-policy-disclosure sensitivity-policy-disclosure"
+              >
+                <div className="policy-settings-table-wrap">
+                  <table className="policy-settings-table">
+                    <thead>
+                      <tr>
+                        <th>Setting</th>
+                        <th>Value in this analysis</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sweptPolicy.rows.map((row) => (
+                        <tr key={row.key} className={row.swept ? 'policy-settings-row-changed' : undefined}>
+                          <th scope="row" title={row.key}>
+                            {row.label}
+                            {row.swept && <span className="policy-settings-changed-chip">varied</span>}
+                          </th>
+                          <td>
+                            {row.value}
+                            {row.baselineText && (
+                              <small className="policy-settings-baseline-note">
+                                baseline {row.baselineText}
+                              </small>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </CollapsibleSection>
+            )}
+          </>
         )}
       </article>
 
-      <div
-        hidden={!isRunPickerOpen}
-        className="scenario-create-modal-backdrop"
-        role="presentation"
-        onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setIsRunPickerOpen(false);
-          }
-        }}
-      >
-        <section
-          className="scenario-create-modal sensitivity-run-picker-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="sensitivity-run-picker-title"
-        >
-          <div className="scenario-create-modal-head">
-            <div>
-              <p className="trend-modal-eyebrow">Run history</p>
-              <h2 id="sensitivity-run-picker-title">Select a sensitivity run</h2>
-              <p>Choose one analysis to inspect. Sensitivity runs are viewed individually, not compared.</p>
-            </div>
-            <button
-              type="button"
-              className="trend-modal-close"
-              aria-label="Close sensitivity run selection"
-              onClick={() => setIsRunPickerOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-          <div className="scenario-create-modal-body">
-            <p className="sensitivity-run-picker-subtitle">{sidebarSubtitle}</p>
-            {experiments.length === 0 ? (
-              <p className="info-banner">No sensitivity analyses yet.</p>
-            ) : (
-              <ul className="run-list sensitivity-run-picker-list">
-                {experiments.map((experiment) => {
-                  const isSelected = selectedExperimentId === experiment.experimentId;
-                  const canDeleteExperiment = isFinishedStatus(experiment.status);
-                  return (
-                    <li
-                      key={experiment.experimentId}
-                      className={`run-item ${isSelected ? 'focused' : ''}`}
-                    >
-                      <div className="run-item-head">
-                        <strong>{experiment.title || experiment.experimentId}</strong>
-                        {isSelected && <span className="run-role-chip">Selected</span>}
-                      </div>
-                      <p>Instrument: {experiment.parameter.title}</p>
-                      <p>Baseline policy: {formatBasePolicyLabel(experiment.basePolicy)}</p>
-                      <p>
-                        <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
-                      </p>
-                      <div className="manual-run-action-row">
-                        <button
-                          type="button"
-                          className={`run-select-btn ${isSelected ? 'active' : ''}`}
-                          onClick={() => {
-                            setSelectedExperimentId(experiment.experimentId);
-                            setIsRunPickerOpen(false);
-                          }}
-                        >
-                          {isSelected ? 'Viewing this run' : 'View run'}
-                        </button>
-                        {canDeleteResults && (
-                          <button
-                            type="button"
-                            className="danger-button"
-                            disabled={isDeletingExperimentId === experiment.experimentId || !canDeleteExperiment}
-                            onClick={() => void deleteExperiment(experiment.experimentId)}
-                            title={!canDeleteExperiment ? 'Cancel or wait for this experiment to finish before deleting.' : undefined}
-                          >
-                            {isDeletingExperimentId === experiment.experimentId ? 'Deleting...' : 'Delete'}
-                          </button>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </section>
-      </div>
-
       <div className="results-main">
-          <article className="results-card">
-            <div className="results-card-head">
-              <h3>Analysis details</h3>
-              {detail && (
-                !canDownloadResults ? (
-                  authEnabled ? (
-                    <Link className="summary-link-inline" to={loginPath}>
-                      Login to Download
-                    </Link>
-                  ) : (
-                    <button type="button" className="summary-link-inline summary-button-inline" disabled>
-                      Download Unavailable
-                    </button>
-                  )
-                ) : (
-                  <button
-                    type="button"
-                    className="summary-link-inline summary-button-inline"
-                    disabled={isDownloadingExperiment}
-                    onClick={() => void downloadSelectedExperiment()}
-                  >
-                    {isDownloadingExperiment ? 'Downloading...' : 'Download Results'}
-                  </button>
-                )
-              )}
-            </div>
-            {isLoadingDetail ? (
-              <p className="loading-banner">Loading experiment detail...</p>
-            ) : !detail ? (
-              <p className="info-banner">Select a sensitivity analysis to view its results.</p>
-            ) : (
-              <div className="sensitivity-detail-grid">
-                <p>
-                  <strong>Experiment:</strong> {detail.title || detail.experimentId}
-                </p>
-                <p>
-                  <strong>Status:</strong> <span className={statusClass(detail.status)}>{formatStatus(detail.status)}</span>
-                </p>
-                <p>
-                  <strong>Calibration vintage:</strong> {detail.baseline}
-                </p>
-                <p>
-                  <strong>Baseline policy:</strong> {formatBasePolicyLabel(detail.basePolicy)}
-                </p>
-                <p>
-                  <strong>Instrument:</strong> {detail.parameter.title}
-                </p>
-                <p>
-                  <strong>Instrument description:</strong> {detail.parameter.description}
-                </p>
-                <p>
-                  <strong>Range:</strong> {detail.parameter.min} to {detail.parameter.max}
-                </p>
-                <p>
-                  <strong>Seeds:</strong> {detail.seeds?.join(', ') || detail.seedsPerPoint || 1}
-                </p>
-                <p>
-                  <strong>Max workers:</strong> {detail.maxWorkers ?? 1}
-                </p>
-                {detail.failureReason && <p className="error-banner">Failure reason: {detail.failureReason}</p>}
-              </div>
-            )}
-          </article>
-
           {charts && (
             <article className="results-card">
               <div className="sensitivity-trend-header">
@@ -753,6 +768,62 @@ export function SensitivityResultsView({
             </article>
           )}
       </div>
+
+      <article className="results-card run-history-card sensitivity-run-history-card">
+        <div className="disclosure-preview-head">
+          <div className="disclosure-preview-title">
+            <h3>Run History</h3>
+            <p>
+              {experiments.length} sensitivity {experiments.length === 1 ? 'run' : 'runs'} · {sidebarSubtitle}
+            </p>
+          </div>
+        </div>
+        {isLoadingHistory ? (
+          <p className="loading-banner">Loading experiments...</p>
+        ) : experiments.length === 0 ? (
+          <p className="info-banner">No sensitivity analyses yet. Create one to begin.</p>
+        ) : (
+          <ul className="run-list sensitivity-run-history-list">
+            {experiments.map((experiment) => {
+              const isSelected = selectedExperimentId === experiment.experimentId;
+              const canDeleteExperiment = isFinishedStatus(experiment.status);
+              return (
+                <li key={experiment.experimentId} className={`run-item ${isSelected ? 'focused' : ''}`}>
+                  <div className="run-item-head">
+                    <strong>{experiment.title || experiment.experimentId}</strong>
+                    {isSelected && <span className="run-role-chip">Viewing</span>}
+                  </div>
+                  <p>Instrument: {experiment.parameter.title}</p>
+                  <p>Baseline policy: {formatBasePolicyLabel(experiment.basePolicy)}</p>
+                  <p>
+                    <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
+                  </p>
+                  <div className="manual-run-action-row">
+                    <button
+                      type="button"
+                      className={`run-select-btn ${isSelected ? 'active' : ''}`}
+                      onClick={() => setSelectedExperimentId(experiment.experimentId)}
+                    >
+                      {isSelected ? 'Viewing this run' : 'View run'}
+                    </button>
+                    {canDeleteResults && (
+                      <button
+                        type="button"
+                        className="danger-button"
+                        disabled={isDeletingExperimentId === experiment.experimentId || !canDeleteExperiment}
+                        onClick={() => void deleteExperiment(experiment.experimentId)}
+                        title={!canDeleteExperiment ? 'Cancel or wait for this experiment to finish before deleting.' : undefined}
+                      >
+                        {isDeletingExperimentId === experiment.experimentId ? 'Deleting...' : 'Delete'}
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </article>
     </section>
   );
 }

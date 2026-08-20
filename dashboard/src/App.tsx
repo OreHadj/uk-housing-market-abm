@@ -8,30 +8,38 @@ import {
   setApiAuthToken,
   setApiViewMode
 } from './lib/api';
-import { ComparePage } from './pages/ComparePage';
+import { ExperimentsLandingPage } from './pages/ExperimentsLandingPage';
 import { ExperimentsPage } from './pages/ExperimentsPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
-import { ValidationPage } from './pages/ValidationPage';
+import { ModelEvidencePage } from './pages/ModelEvidencePage';
+import { ResultsPage } from './pages/ResultsPage';
 
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
-const EXPERIMENTS_VIEW_PATH = '/scenarios';
+const EXPERIMENTS_VIEW_PATH = '/experiments';
 
-type PrimaryDestination = 'home' | 'scenarios' | 'sensitivity' | 'calibration' | 'validation';
+type PrimaryDestination = 'home' | 'experiments' | 'results' | 'model-evidence';
 
-function getActivePrimaryDestination(pathname: string, search: string): PrimaryDestination | null {
+function getActivePrimaryDestination(pathname: string): PrimaryDestination | null {
   if (pathname === '/') return 'home';
-  if (pathname === '/calibration') return 'calibration';
-  if (pathname === '/validation') return 'validation';
+  if (pathname === '/experiments') return 'experiments';
+  if (pathname === '/results') return 'results';
+  if (pathname === '/model-evidence' || pathname === '/calibration' || pathname === '/validation') {
+    return 'model-evidence';
+  }
 
-  const params = new URLSearchParams(search);
-  const type = params.get('type');
-  if (pathname === '/scenarios' || pathname === '/scenarios/new' || pathname === '/runs' || pathname === '/new-scenario' || pathname === '/compare') return 'scenarios';
-  if (pathname === '/sensitivity' || pathname === '/sensitivity/new') return 'sensitivity';
-  if (pathname !== '/results') return null;
-  return type === 'sensitivity' ? 'sensitivity' : 'scenarios';
+  if (
+    pathname === '/scenarios' ||
+    pathname === '/scenarios/new' ||
+    pathname === '/sensitivity' ||
+    pathname === '/sensitivity/new' ||
+    pathname === '/runs' ||
+    pathname === '/new-scenario' ||
+    pathname === '/compare'
+  ) return 'experiments';
+  return null;
 }
 
 /**
@@ -44,16 +52,12 @@ function LegacyCompareRedirect() {
   return <Navigate to={`/scenarios${location.search}`} replace />;
 }
 
-function LegacyResultsRedirect() {
+/** Keep existing evidence links working while moving both views under one primary destination. */
+function LegacyEvidenceRedirect({ view }: { view: 'calibration' | 'validation' }) {
   const location = useLocation();
-  const params = new URLSearchParams(location.search);
-  const sensitivity = params.get('type') === 'sensitivity';
-  const viewingResults = params.get('mode') === 'view';
-  params.delete('type');
-  params.delete('mode');
-  if (viewingResults) params.set('view', 'results');
-  const query = params.toString();
-  return <Navigate to={`${sensitivity ? '/sensitivity' : '/scenarios'}${query ? `?${query}` : ''}`} replace />;
+  const searchParams = new URLSearchParams(location.search);
+  searchParams.set('view', view);
+  return <Navigate to={`/model-evidence?${searchParams.toString()}`} replace />;
 }
 
 const DEFAULT_AUTH_STATUS: AuthStatusPayload = {
@@ -151,12 +155,12 @@ export function App() {
   const [desktopActionError, setDesktopActionError] = useState('');
   const [desktopActionMessage, setDesktopActionMessage] = useState('');
   const experimentsVisible = true;
-  const validationVisible = true;
+  const modelEvidenceVisible = true;
   const browserAuthControlsVisible = !isDesktopRuntime && viewMode !== 'preview_desktop';
   const activeViewModeLabel = VIEW_MODE_OPTIONS.find((option) => option.value === viewMode)?.label ?? 'Dev mode';
 
   const loginPath = `/login?next=${encodeURIComponent(EXPERIMENTS_VIEW_PATH)}`;
-  const activePrimaryDestination = getActivePrimaryDestination(location.pathname, location.search);
+  const activePrimaryDestination = getActivePrimaryDestination(location.pathname);
 
   const refreshAuthStatus = useCallback(async () => {
     try {
@@ -286,18 +290,15 @@ export function App() {
             <NavLink className={activePrimaryDestination === 'home' ? 'active' : undefined} to="/" end>
               Home
             </NavLink>
-            <NavLink className={activePrimaryDestination === 'scenarios' ? 'active' : undefined} to="/scenarios">
-              Scenarios
+            <NavLink className={activePrimaryDestination === 'experiments' ? 'active' : undefined} to="/experiments">
+              Experiments
             </NavLink>
-            <NavLink className={activePrimaryDestination === 'sensitivity' ? 'active' : undefined} to="/sensitivity">
-              Sensitivity
+            <NavLink className={activePrimaryDestination === 'results' ? 'active' : undefined} to="/results">
+              Results
             </NavLink>
-            <NavLink className={activePrimaryDestination === 'calibration' ? 'active' : undefined} to="/calibration">
-              Calibration
-            </NavLink>
-            {validationVisible && (
-              <NavLink className={activePrimaryDestination === 'validation' ? 'active' : undefined} to="/validation">
-                Validation
+            {modelEvidenceVisible && (
+              <NavLink className={activePrimaryDestination === 'model-evidence' ? 'active' : undefined} to="/model-evidence">
+                Model Evidence
               </NavLink>
             )}
             {experimentsVisible && browserAuthControlsVisible && authStatus.authEnabled && !authStatus.canWrite && (
@@ -385,6 +386,7 @@ export function App() {
         ) : (
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/experiments" element={<ExperimentsLandingPage />} />
             <Route
               path="/scenarios"
               element={
@@ -442,12 +444,21 @@ export function App() {
               }
             />
             <Route path="/compare" element={<LegacyCompareRedirect />} />
-            <Route path="/calibration" element={<ComparePage />} />
-            {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
+            {modelEvidenceVisible && <Route path="/model-evidence" element={<ModelEvidencePage />} />}
+            <Route path="/calibration" element={<LegacyEvidenceRedirect view="calibration" />} />
+            <Route path="/validation" element={<LegacyEvidenceRedirect view="validation" />} />
             {experimentsVisible && (
               <Route
                 path="/results"
-                element={<LegacyResultsRedirect />}
+                element={
+                  <ResultsPage
+                    canWrite={authStatus.canWrite}
+                    canDownloadResults={authStatus.canDownloadResults}
+                    canDeleteResults={authStatus.canDeleteResults}
+                    deleteKeyRequired={authStatus.deleteKeyRequired}
+                    authEnabled={authStatus.authEnabled}
+                  />
+                }
               />
             )}
             {experimentsVisible && (

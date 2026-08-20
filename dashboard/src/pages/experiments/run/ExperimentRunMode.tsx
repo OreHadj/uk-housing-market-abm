@@ -25,6 +25,7 @@ interface ExperimentRunModeProps {
   draftId?: string;
   initialScenarioStep?: number;
   onManualRunAccepted?: () => void;
+  onSensitivityRunAccepted?: (experimentId: string) => void;
 }
 
 export function ExperimentRunMode({
@@ -42,7 +43,8 @@ export function ExperimentRunMode({
   showRunManagement = true,
   draftId = '',
   initialScenarioStep = 0,
-  onManualRunAccepted
+  onManualRunAccepted,
+  onSensitivityRunAccepted
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
     selectedJobRef,
@@ -51,7 +53,8 @@ export function ExperimentRunMode({
     onOpenSensitivityResults,
     followJobRef,
     draftId,
-    onManualRunAccepted
+    onManualRunAccepted,
+    onSensitivityRunAccepted
   });
   const [downloadingJobRef, setDownloadingJobRef] = useState<string>('');
   const [deletingJobRef, setDeletingJobRef] = useState<string>('');
