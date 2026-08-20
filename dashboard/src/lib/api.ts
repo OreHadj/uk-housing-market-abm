@@ -17,6 +17,8 @@ import type {
   ModelRunSubmitRequest,
   ModelRunSubmitResponse,
   ParameterCardMeta,
+  LendingDistributionComparePayload,
+  LendingDistributionPayload,
   ResultsComparePayload,
   ResultsCompareWindow,
   ResultsFileManifestEntry,
@@ -363,6 +365,32 @@ export async function fetchResultsSeries(
   return requestJson<ResultsSeriesPayload>(
     `${buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/series`)}?${params.toString()}`,
     'Failed to fetch series'
+  );
+}
+
+export async function fetchLendingDistribution(
+  runId: string,
+  window: ResultsCompareWindow
+): Promise<LendingDistributionPayload> {
+  const params = new URLSearchParams({ window });
+  return requestJson<LendingDistributionPayload>(
+    `${buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/lending`)}?${params.toString()}`,
+    'Failed to fetch new-lending distributions'
+  );
+}
+
+export async function fetchLendingDistributionCompare(
+  runIds: string[],
+  window: ResultsCompareWindow
+): Promise<LendingDistributionComparePayload> {
+  const params = new URLSearchParams();
+  for (const runId of runIds) {
+    params.append('runId', runId);
+  }
+  params.set('window', window);
+  return requestJson<LendingDistributionComparePayload>(
+    `${buildApiUrl('/api/results/lending/compare')}?${params.toString()}`,
+    'Failed to fetch new-lending comparison'
   );
 }
 

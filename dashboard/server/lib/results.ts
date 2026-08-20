@@ -313,8 +313,11 @@ const REQUIRED_PARSE_TARGET_COUNT = REQUIRED_CORE_FILES.size + 1;
 export const REQUIRED_RESULTS_PARSE_FILE_NAMES = [OUTPUT_FILE_NAME, ...REQUIRED_CORE_FILES];
 const EXPECTED_FULL_OUTPUT_ROW_COUNT = 2001;
 
+/** The loan-level sale file, parsed for the new-lending distributions (lendingDistribution.ts). */
+export const SALE_TRANSACTIONS_FILE_NAME = 'SaleTransactions-run1.csv';
+
 const TRANSACTION_FILES = new Set([
-  'SaleTransactions-run1.csv',
+  SALE_TRANSACTIONS_FILE_NAME,
   'RentalTransactions-run1.csv',
   'NBidUpFrequency-run1.csv'
 ]);
@@ -358,6 +361,11 @@ function setBoundedCacheValue<T>(cache: Map<string, CachedValue<T>>, key: string
     }
     cache.delete(oldestKey);
   }
+}
+
+/** Exported for lendingDistribution.ts, which resolves the same run folders. */
+export function resolveResultsRootPath(pathsInput: RuntimePathInput): string {
+  return resolveResultsRoot(pathsInput);
 }
 
 function resolveResultsRoot(pathsInput: RuntimePathInput): string {
@@ -714,6 +722,12 @@ function resolveFileCoverage(
     return { status: 'empty', note: 'File is empty.' };
   }
 
+  if (fileName === SALE_TRANSACTIONS_FILE_NAME) {
+    // Parsed for the new-lending distributions. Not parsed here: the manifest is built for
+    // every run on every listing, and this file is ~8 MB.
+    return { status: 'supported', note: 'Charted in New lending.' };
+  }
+
   if (fileType === 'transaction' || fileType === 'micro_snapshot') {
     return { status: 'unsupported', note: 'Manifest only (not charted).' };
   }
@@ -748,6 +762,11 @@ function listRunDirectories(resultsRoot: string): string[] {
     .readdirSync(resultsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== 'experiments')
     .map((entry) => entry.name);
+}
+
+/** Exported for lendingDistribution.ts; validates the run id and returns its folder. */
+export function ensureResultsRunPath(resultsRoot: string, runId: string): string {
+  return ensureRunExists(resultsRoot, runId);
 }
 
 function ensureRunExists(resultsRoot: string, runId: string): string {

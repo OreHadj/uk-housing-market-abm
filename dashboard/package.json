@@ -21,6 +21,7 @@
     "lint": "eslint .",
     "test:smoke": "node --import tsx/esm tests/smoke.test.ts",
     "test:experiment-smoke": "node --import tsx/esm tests/experiment-smoke.test.ts",
+    "test:lending": "node --import tsx/esm tests/lending-distribution.test.ts",
     "test:cloud-experiment-smoke:unit": "node tests/cloud-experiment-smoke.test.mjs",
     "test:cloud-experiment-smoke": "node tests/cloud-experiment-smoke.mjs",
     "test:release-launch": "node --import tsx/esm tests/model-launch-regression.test.ts",

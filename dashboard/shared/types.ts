@@ -582,6 +582,209 @@ export interface ResultsComparePayload {
   kpiSummaryByRun: ResultsCompareKpiSummary[];
 }
 
+/**
+ * New-lending distributions, derived from a completed run's SaleTransactions-run1.csv.
+ *
+ * The aggregate indicators above report monthly means; these report the shape of the
+ * loan-level distribution behind them, which is what a flow limit actually acts on.
+ */
+
+export type LendingBorrowerType = 'FTB' | 'HM' | 'BTL';
+
+export type LendingMetricId = 'ltv' | 'lti' | 'dsti' | 'priceToIncome' | 'buyerAge';
+
+export type LendingUnavailableReason =
+  | 'no_transaction_file'
+  | 'recording_disabled'
+  | 'empty_file'
+  | 'parse_error'
+  | 'no_rows_in_window';
+
+export interface LendingHistogramBin {
+  lowerEdge: number;
+  upperEdge: number;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingHistogramSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  /** Rows above the top edge, folded into the last bin. */
+  overflowCount: number;
+  bins: LendingHistogramBin[];
+}
+
+export interface LendingHistogram {
+  metric: LendingMetricId;
+  title: string;
+  units: string;
+  binWidth: number;
+  lowerEdge: number;
+  upperEdge: number;
+  seriesByBorrowerType: LendingHistogramSeries[];
+}
+
+export interface LendingBand {
+  id: string;
+  label: string;
+  lowerEdge: number;
+  /** null for the open-ended top band. */
+  upperEdge: number | null;
+}
+
+export interface LendingBandShare {
+  bandId: string;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingBandSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  bands: LendingBandShare[];
+}
+
+export interface LendingBandGroup {
+  metric: 'ltv' | 'lti';
+  title: string;
+  units: string;
+  bands: LendingBand[];
+  seriesByBorrowerType: LendingBandSeries[];
+}
+
+export interface LendingQuintileTypeCell {
+  borrowerType: LendingBorrowerType;
+  highLtvCount: number;
+  highLtiCount: number;
+  /** Share of all high-LTV lending in the pool, in percent. */
+  highLtvShareOfAll: number;
+  highLtiShareOfAll: number;
+}
+
+export interface LendingQuintile {
+  quintile: number;
+  transactionCount: number;
+  priceLowerBound: number | null;
+  priceUpperBound: number | null;
+  highLtvCount: number;
+  highLtiCount: number;
+  highLtvShareOfAll: number;
+  highLtiShareOfAll: number;
+  byBorrowerType: LendingQuintileTypeCell[];
+}
+
+export interface LendingQuintileMatrix {
+  /** The four cut points of transactionPrice over the owner-occupier mortgaged pool. */
+  cutPoints: number[];
+  poolCount: number;
+  /** High-LTV is tested inclusively (>=); high-LTI exclusively (>), matching the paper. */
+  highLtvThreshold: number;
+  highLtiThreshold: number;
+  totalHighLtvCount: number;
+  totalHighLtiCount: number;
+  quintiles: LendingQuintile[];
+}
+
+export interface LendingJointCell {
+  ltvBin: number;
+  ltiBin: number;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingJointSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  /** Sparse: only non-empty cells are emitted. */
+  cells: LendingJointCell[];
+}
+
+export interface LendingJointGrid {
+  ltvEdges: number[];
+  ltiEdges: number[];
+  seriesByBorrowerType: LendingJointSeries[];
+}
+
+export interface LendingBorrowerTypeCount {
+  borrowerType: LendingBorrowerType;
+  count: number;
+}
+
+export interface LendingCounts {
+  transactions: number;
+  mortgaged: number;
+  /** Cash purchases (no mortgage principal), excluded from every ratio below. */
+  cashExcluded: number;
+  byBorrowerType: LendingBorrowerTypeCount[];
+}
+
+export interface LendingSummaryStats {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  meanLtv: number | null;
+  medianLtv: number | null;
+  meanLti: number | null;
+  medianLti: number | null;
+  meanDsti: number | null;
+  /** BTL only; NaN for owner-occupiers in the source file. */
+  meanIcr: number | null;
+}
+
+export interface LendingWindowInfo {
+  requested: ResultsCompareWindow;
+  /** What was actually used: transactions are only recorded from a configured model time. */
+  effective: ResultsCompareWindow;
+  clamped: boolean;
+  startModelTime: number | null;
+  endModelTime: number | null;
+  /** TIME_TO_START_RECORDING_TRANSACTIONS, as read from the run's config.properties. */
+  recordingStartModelTime: number | null;
+  dataStartModelTime: number | null;
+  dataEndModelTime: number | null;
+}
+
+export interface LendingCap {
+  borrowerType: LendingBorrowerType;
+  metric: 'ltv' | 'lti' | 'dsti' | 'icr';
+  /** In the metric's own units: percent for LTV, a ratio otherwise. */
+  value: number;
+  units: string;
+  /** Which limit binds — the tighter of the Central Bank and the private bank limit. */
+  source: 'central_bank' | 'bank' | 'both';
+  /** Soft limits are flow limits: a capped share of new lending may exceed them. */
+  binding: 'hard' | 'soft';
+}
+
+export interface LendingDistributionPayload {
+  runId: string;
+  available: boolean;
+  unavailableReason?: LendingUnavailableReason;
+  note?: string;
+  window: LendingWindowInfo;
+  counts: LendingCounts;
+  /** Number of transaction files pooled; seedLabels is empty when read from the run root. */
+  seedCount: number;
+  seedLabels: string[];
+  caps: LendingCap[];
+  summaryByBorrowerType: LendingSummaryStats[];
+  histograms: LendingHistogram[];
+  bandGroups: LendingBandGroup[];
+  quintiles: LendingQuintileMatrix | null;
+  joint: LendingJointGrid | null;
+  /** Relative tolerance used when testing a value against a cap or bin edge. */
+  capTolerance: number;
+}
+
+export interface LendingDistributionComparePayload {
+  runIds: string[];
+  window: ResultsCompareWindow;
+  runs: LendingDistributionPayload[];
+}
+
 export interface ResultsStorageSummary {
   usedBytes: number;
   capBytes: number;

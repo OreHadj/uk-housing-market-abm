@@ -1132,12 +1132,16 @@ section.block:first-of-type { border-top: none; }
   order: 0;
 }
 
-.manual-results-layout .run-history-card {
+.manual-results-lending-card {
   order: 3;
 }
 
-.manual-results-files-card {
+.manual-results-layout .run-history-card {
   order: 4;
+}
+
+.manual-results-files-card {
+  order: 5;
 }
 
 .kpi-grid {
@@ -6351,5 +6355,144 @@ section.block:first-of-type { border-top: none; }
   .scenario-advanced-panel .run-param-grid,
   .policy-choice-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---- New lending card ---- */
+
+.manual-results-lending-card {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.lending-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.lending-provenance {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.lending-provenance > div {
+  background: var(--panel-muted);
+  border: 1px solid rgba(17, 32, 24, 0.08);
+  border-radius: 0.65rem;
+  padding: 0.5rem;
+  display: grid;
+  gap: 0.22rem;
+}
+
+.lending-provenance dt {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.lending-provenance dd {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.lending-view {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.lending-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  align-items: center;
+}
+
+.lending-control-group {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.lending-control-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--muted);
+}
+
+.lending-chart,
+.lending-chart-skeleton {
+  width: 100%;
+  height: min(46vh, 420px);
+  min-height: 320px;
+  border: 1px solid rgba(17, 32, 24, 0.08);
+  border-radius: 0.85rem;
+  background: #fff;
+  overflow: hidden;
+}
+
+.lending-chart-heatmap {
+  height: min(56vh, 520px);
+  min-height: 380px;
+}
+
+.lending-caption {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.lending-quintile-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.83rem;
+}
+
+.lending-quintile-table th,
+.lending-quintile-table td {
+  padding: 0.4rem;
+  border-bottom: 1px solid rgba(17, 32, 24, 0.08);
+  text-align: left;
+  vertical-align: top;
+}
+
+.lending-quintile-table tbody th {
+  font-weight: 700;
+}
+
+.lending-delta-up {
+  color: #c92a2a;
+  font-weight: 700;
+}
+
+.lending-delta-down {
+  color: #2b8a3e;
+  font-weight: 700;
+}
+
+.lending-delta-flat {
+  color: var(--muted);
+}
+
+.policy-row-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .lending-chart,
+  .lending-chart-skeleton {
+    min-height: 260px;
   }
 }

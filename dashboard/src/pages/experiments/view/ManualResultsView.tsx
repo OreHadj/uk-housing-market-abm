@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   KpiMetricSummary,
+  LendingDistributionPayload,
+  LendingMetricId,
   ModelRunJob,
   ModelRunJobStatus,
   ResultsCompareWindow,
@@ -19,6 +21,7 @@ import {
   API_RETRY_DELAY_MS,
   deleteResultsRun,
   downloadResultsRun,
+  fetchLendingDistributionCompare,
   fetchModelRunJobs,
   fetchResultsCompare,
   fetchResultsRunDetail,
@@ -40,6 +43,7 @@ import {
   sortKpis
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
+import { NewLendingCard, type LendingView } from './NewLendingCard';
 import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
@@ -184,6 +188,12 @@ export function ManualResultsView({
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
   const [runJobs, setRunJobs] = useState<ModelRunJob[]>([]);
+  const [lendingBaseline, setLendingBaseline] = useState<LendingDistributionPayload | null>(null);
+  const [lendingComparison, setLendingComparison] = useState<LendingDistributionPayload | null>(null);
+  const [isLoadingLending, setIsLoadingLending] = useState<boolean>(false);
+  const [lendingError, setLendingError] = useState<string>('');
+  const [lendingView, setLendingView] = useState<LendingView>('distribution');
+  const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
 
@@ -511,6 +521,48 @@ export function ManualResultsView({
     };
   }, [compareWindow, selectedIndicatorIds, selectedRunIds, smoothWindow]);
 
+  useEffect(() => {
+    if (selectedRunIds.length === 0) {
+      setLendingBaseline(null);
+      setLendingComparison(null);
+      setLendingError('');
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingLending(true);
+    setLendingError('');
+
+    void fetchLendingDistributionCompare(selectedRunIds, compareWindow)
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setLendingBaseline(payload.runs.find((run) => run.runId === selectedRunIds[0]) ?? null);
+        setLendingComparison(
+          selectedRunIds.length > 1
+            ? payload.runs.find((run) => run.runId === selectedRunIds[1]) ?? null
+            : null
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLendingBaseline(null);
+          setLendingComparison(null);
+          setLendingError((error as Error).message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingLending(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [compareWindow, selectedRunIds]);
+
   const runById = useMemo(() => new Map(historyRuns.map((run) => [run.runId, run])), [historyRuns]);
   // Runs are identified by an opaque timestamped id; the scenario name is what a reader recognises.
   // Fall back to the id whenever a run carries no title so nothing is ever unlabelled.
@@ -662,6 +714,26 @@ export function ManualResultsView({
     }
 
     updateSelection(baselineRunId, comparisonRunId === runId ? '' : runId);
+  };
+
+  // The KPI table reports a mean; the distribution is where a flow limit actually shows up. These
+  // two views sit in the same column and would otherwise never meet.
+  const LENDING_METRIC_BY_INDICATOR: Record<string, LendingMetricId> = {
+    core_ooLTV: 'ltv',
+    core_btlLTV: 'ltv',
+    core_ooLTI: 'lti'
+  };
+
+  const viewLendingDistribution = (indicatorId: string) => {
+    const metric = LENDING_METRIC_BY_INDICATOR[indicatorId];
+    if (!metric) {
+      return;
+    }
+    setLendingMetric(metric);
+    setLendingView('distribution');
+    window.requestAnimationFrame(() => {
+      document.getElementById('new-lending-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
 
   const viewIndicatorTrend = (indicatorId: string) => {
@@ -1373,13 +1445,24 @@ export function ManualResultsView({
                                       </td>
                                     )}
                                     <td>
-                                      <button
-                                        type="button"
-                                        className="policy-trend-link"
-                                        onClick={() => viewIndicatorTrend(kpi.indicatorId)}
-                                      >
-                                        View trend
-                                      </button>
+                                      <div className="policy-row-actions">
+                                        <button
+                                          type="button"
+                                          className="policy-trend-link"
+                                          onClick={() => viewIndicatorTrend(kpi.indicatorId)}
+                                        >
+                                          View trend
+                                        </button>
+                                        {LENDING_METRIC_BY_INDICATOR[kpi.indicatorId] && (
+                                          <button
+                                            type="button"
+                                            className="policy-trend-link"
+                                            onClick={() => viewLendingDistribution(kpi.indicatorId)}
+                                          >
+                                            Distribution
+                                          </button>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
@@ -1493,6 +1576,17 @@ export function ManualResultsView({
               </section>
             </div>
           )}
+
+          <NewLendingCard
+            baseline={lendingBaseline}
+            comparison={lendingComparison}
+            isLoading={isLoadingLending}
+            error={lendingError}
+            activeView={lendingView}
+            onViewChange={setLendingView}
+            activeMetric={lendingMetric}
+            onMetricChange={setLendingMetric}
+          />
 
           <article className="results-card manual-results-files-card">
             <CollapsibleSection
