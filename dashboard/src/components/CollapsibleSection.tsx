@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from 'react';
 
 interface CollapsibleSectionProps {
+  id?: string;
   title: ReactNode;
   description?: ReactNode;
   defaultOpen?: boolean;
@@ -13,6 +14,7 @@ interface CollapsibleSectionProps {
 }
 
 export function CollapsibleSection({
+  id,
   title,
   description,
   defaultOpen = false,
@@ -33,7 +35,7 @@ export function CollapsibleSection({
   const contentClassName = ['collapsible-section-body', bodyClassName].filter(Boolean).join(' ');
 
   return (
-    <section className={rootClassName}>
+    <section id={id} className={rootClassName}>
       <button
         type="button"
         className="collapsible-section-toggle"

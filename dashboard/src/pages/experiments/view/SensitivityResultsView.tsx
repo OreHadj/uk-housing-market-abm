@@ -652,7 +652,12 @@ export function SensitivityResultsView({
 
       <div className="results-main">
           {charts && (
-            <article className="results-card">
+            <CollapsibleSection
+              className="results-card sensitivity-response-card"
+              title="Outcome responses"
+              description="Which indicators respond most across the tested range, and how the selected one moves."
+              defaultOpen={false}
+            >
               <div className="sensitivity-trend-header">
                 <div>
                   <h3>Largest outcome responses</h3>
@@ -696,7 +701,7 @@ export function SensitivityResultsView({
 
               <div className="sensitivity-trend-header">
                 <div>
-                  <h4>Response across policy values</h4>
+                  <h3>Response across policy values</h3>
                   <p>Shows the direction and size of the selected outcome&apos;s difference from the baseline policy.</p>
                 </div>
                 <label>
@@ -722,12 +727,16 @@ export function SensitivityResultsView({
               ) : (
                 <p className="info-banner">No trend data available.</p>
               )}
-            </article>
+            </CollapsibleSection>
           )}
 
           {results && (
-            <article className="results-card">
-              <h3>Results by tested value {selectedIndicatorTitle ? `(${selectedIndicatorTitle})` : ''}</h3>
+            <CollapsibleSection
+              className="results-card sensitivity-tested-values-card"
+              title="Results by tested value"
+              summary={selectedIndicatorTitle}
+              defaultOpen={false}
+            >
               {selectedIndicatorMetricByPoint.length === 0 ? (
                 <p className="info-banner">No executed points yet.</p>
               ) : (
@@ -771,19 +780,17 @@ export function SensitivityResultsView({
                   </table>
                 </div>
               )}
-            </article>
+            </CollapsibleSection>
           )}
       </div>
 
-      <article className="results-card run-history-card sensitivity-run-history-card">
-        <div className="disclosure-preview-head">
-          <div className="disclosure-preview-title">
-            <h3>Run History</h3>
-            <p>
-              {experiments.length} sensitivity {experiments.length === 1 ? 'run' : 'runs'} · {sidebarSubtitle}
-            </p>
-          </div>
-        </div>
+      <CollapsibleSection
+        className="results-card run-history-card sensitivity-run-history-card"
+        title="Run History"
+        description={sidebarSubtitle}
+        summary={`${experiments.length} sensitivity ${experiments.length === 1 ? 'run' : 'runs'}`}
+        defaultOpen={false}
+      >
         {isLoadingHistory ? (
           <p className="loading-banner">Loading experiments...</p>
         ) : experiments.length === 0 ? (
@@ -829,7 +836,7 @@ export function SensitivityResultsView({
             })}
           </ul>
         )}
-      </article>
+      </CollapsibleSection>
     </section>
   );
 }

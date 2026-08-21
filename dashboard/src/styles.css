@@ -549,9 +549,14 @@ section.block:first-of-type { border-top: none; }
   margin: 0 auto;
 }
 
+/* Section spacing matches `.validation-layout`, so the results views and the model-evidence pages
+   separate their page-level sections by the same amount. `overflow-anchor` is off because scroll
+   anchoring reacts to a section growing by moving the viewport, which reads as a disclosure
+   opening upwards; without it the header stays put and the body unfolds below it. */
 .results-layout {
   display: grid;
-  gap: 0.8rem;
+  gap: 1rem;
+  overflow-anchor: none;
 }
 
 .results-grid {
@@ -895,7 +900,7 @@ section.block:first-of-type { border-top: none; }
 .results-main {
   display: grid;
   align-content: start;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
 .results-card {
@@ -1172,36 +1177,55 @@ section.block:first-of-type { border-top: none; }
   gap: 0.5rem;
 }
 
-/* Card order within the scenarios results layout. Scoped to `.manual-results-layout` because
-   `.results-layout` is also a grid: an unscoped `order` here silently reorders any other page that
-   reuses one of these cards. */
-.manual-results-layout .manual-results-aggregate-card {
-  order: 2;
+/* Scenario and sweep results read as one continuous surface, the same way the model-evidence
+   pages do: page-level sections drop their card chrome and are separated by hairlines instead of
+   boxes. Mirrors `.validation-layout > .results-card`. */
+.results-layout > .results-card,
+.results-layout > .results-main > .results-card {
+  padding: clamp(1rem, 1.8vw, 1.5rem) 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
 }
 
-.manual-results-layout .manual-results-summary-card {
-  order: 1;
+/* Sections that are disclosures drop the inset their card chrome used to need, so their contents
+   share the left edge with the sections that are not. */
+.results-layout > .collapsible-section.results-card > .collapsible-section-toggle,
+.results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle {
+  padding-inline: 0;
 }
 
-.manual-results-layout > .results-top-row,
-.manual-results-layout > .results-main {
-  display: contents;
+.results-layout > .collapsible-section.results-card > .collapsible-section-body,
+.results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-body {
+  padding: 0;
 }
 
-.manual-results-layout .run-queue-card {
-  order: 0;
+/* The first section sits directly under the results view switcher, so it takes no leading rule.
+   On the sweep view that is the run summary; on the scenarios view it is whichever section renders
+   first, which is the queue while a run is in flight and the run summary otherwise. */
+.results-layout > .sensitivity-summary-card,
+.manual-results-layout > .results-main > .results-card:first-child {
+  border-top: 0;
 }
 
-.manual-results-layout .manual-results-lending-card {
-  order: 3;
+/* The file manifest is the only thing in its section, so the section rule above it already does
+   the separating and the disclosure itself carries no chrome. */
+.manual-results-files-card > .manual-results-disclosure.collapsible-section {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 
-.manual-results-layout .run-history-card {
-  order: 4;
+.manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle {
+  padding: 0.35rem 0;
 }
 
-.manual-results-layout .manual-results-files-card {
-  order: 5;
+.manual-results-files-card > .manual-results-disclosure > .collapsible-section-body {
+  padding: 0;
 }
 
 .kpi-grid {
@@ -1361,23 +1385,13 @@ section.block:first-of-type { border-top: none; }
   margin-top: 1.35rem;
 }
 
+/* The section heading now lives in the disclosure header above, so this row carries only the
+   expand/collapse controls and sits against the right edge of the table below it. */
 .policy-results-sections-head {
-  border-top: 1px solid var(--rule);
-  padding: 1rem 0 0.8rem;
+  padding: 0 0 0.8rem;
   display: flex;
   align-items: end;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.policy-results-sections-head h3,
-.policy-results-sections-head p {
-  margin: 0;
-}
-
-.policy-results-sections-head p {
-  margin-top: 0.25rem;
-  color: var(--muted);
+  justify-content: flex-end;
 }
 
 .policy-results-expansion-controls {
@@ -1703,11 +1717,6 @@ section.block:first-of-type { border-top: none; }
 @media (max-width: 760px) {
   .comparison-run-pickers {
     grid-template-columns: 1fr;
-  }
-
-  .policy-results-sections-head {
-    align-items: start;
-    flex-direction: column;
   }
 
   .trend-modal-layout {
@@ -2725,6 +2734,13 @@ section.block:first-of-type { border-top: none; }
   padding: 0 0 0.85rem;
 }
 
+/* The first disclosure in a run summary follows the section's own heading, so it takes no rule of
+   its own; the one below it keeps its rule as the divider between the two. */
+.manual-results-summary-card > .run-policy-disclosure.collapsible-section,
+.sensitivity-run-summary-disclosure.collapsible-section {
+  border-top: 0;
+}
+
 .run-policy-provenance {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
@@ -2840,6 +2856,7 @@ section.block:first-of-type { border-top: none; }
   padding-inline: clamp(0.2rem, 0.8vw, 0.75rem);
   display: grid;
   gap: 1rem;
+  overflow-anchor: none;
 }
 
 /* Validation is an evidence workspace, so its page-level sections use the available canvas
@@ -4110,10 +4127,14 @@ section.block:first-of-type { border-top: none; }
 
 
 
-/* Match the top-level validation disclosures without changing shared nested disclosures. */
+/* Header format for page-level disclosures — the validation sections and, so the results views
+   read the same way, the scenario and sweep sections. Nested disclosures keep the base size. */
 .validation-summary-card > .collapsible-section-toggle .collapsible-section-title,
 .validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-title,
-.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-title {
+.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-title,
+.results-layout > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-title,
+.results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-title,
+.manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle .collapsible-section-title {
   font-size: 1.17em;
   font-weight: 700;
   line-height: normal;
@@ -4121,14 +4142,20 @@ section.block:first-of-type { border-top: none; }
 
 .validation-summary-card > .collapsible-section-toggle .collapsible-section-heading,
 .validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-heading,
-.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-heading {
+.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-heading,
+.results-layout > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-heading,
+.results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-heading,
+.manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle .collapsible-section-heading {
   align-items: flex-start;
   flex: 1 1 auto;
 }
 
 .validation-summary-card > .collapsible-section-toggle .collapsible-section-summary,
 .validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-summary,
-.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary {
+.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary,
+.results-layout > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-summary,
+.results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-summary,
+.manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle .collapsible-section-summary {
   line-height: 1.4;
 }
 
@@ -4145,7 +4172,10 @@ section.block:first-of-type { border-top: none; }
 @media (max-width: 760px) {
   .validation-summary-card > .collapsible-section-toggle,
   .validation-outcome-diagnostics > .collapsible-section-toggle,
-  .validation-audit-disclosure > .collapsible-section-toggle {
+  .validation-audit-disclosure > .collapsible-section-toggle,
+  .results-layout > .collapsible-section.results-card > .collapsible-section-toggle,
+  .results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle,
+  .manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle {
     align-items: stretch;
     flex-direction: column;
     gap: 0.35rem;
@@ -4153,7 +4183,10 @@ section.block:first-of-type { border-top: none; }
 
   .validation-summary-card > .collapsible-section-toggle .collapsible-section-summary,
   .validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-summary,
-  .validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary {
+  .validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary,
+  .results-layout > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-summary,
+  .results-layout > .results-main > .collapsible-section.results-card > .collapsible-section-toggle .collapsible-section-summary,
+  .manual-results-files-card > .manual-results-disclosure > .collapsible-section-toggle .collapsible-section-summary {
     margin-left: 0;
     padding-left: 1.4rem;
     text-align: left;
@@ -4669,24 +4702,6 @@ section.block:first-of-type { border-top: none; }
 .run-queue-failure {
   color: #b42318;
   font-size: 0.85rem;
-}
-
-/* Results top row: Run History (2/3) + Queue (1/3), each a preview + expandable list. */
-.results-top-row {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 0.8rem;
-  align-items: start;
-}
-
-.results-top-row-single {
-  grid-template-columns: 1fr;
-}
-
-@media (max-width: 820px) {
-  .results-top-row {
-    grid-template-columns: 1fr;
-  }
 }
 
 .disclosure-preview-head {

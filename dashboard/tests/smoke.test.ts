@@ -8506,7 +8506,7 @@ assert.ok(
 );
 assert.ok(
   manualResultsViewSource.includes('className={`policy-results-table') &&
-    manualResultsViewSource.includes('<h3>Policy results</h3>') &&
+    manualResultsViewSource.includes('title="Policy results"') &&
     !manualResultsViewSource.includes('<h3>All policy results</h3>') &&
     manualResultsViewSource.includes('<colgroup>') &&
     manualResultsViewSource.includes('policy-results-indicator-column') &&

@@ -5,6 +5,7 @@ import type {
   LendingMetricId,
   ResultsCompareWindow
 } from '../../../../shared/types';
+import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
 import { LoadingSkeleton } from '../../../components/LoadingSkeleton';
 import { jointHeatmapOption } from '../../../lib/jointHeatmapOption';
@@ -45,6 +46,8 @@ interface NewLendingCardProps {
   onViewChange: (view: LendingView) => void;
   activeMetric: LendingMetricId;
   onMetricChange: (metric: LendingMetricId) => void;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 function formatCount(value: number): string {
@@ -110,7 +113,9 @@ export function NewLendingCard({
   activeView,
   onViewChange,
   activeMetric,
-  onMetricChange
+  onMetricChange,
+  open,
+  onOpenChange
 }: NewLendingCardProps): JSX.Element {
   const [borrowerType, setBorrowerType] = useState<LendingBorrowerType>('FTB');
 
@@ -137,39 +142,37 @@ export function NewLendingCard({
     [baseline, borrowerType]
   );
 
+  const lendingSectionProps = {
+    id: 'new-lending-card',
+    className: 'results-card manual-results-lending-card',
+    title: 'New lending',
+    description:
+      'The shape of the loan-level distribution behind the monthly means above. A flow limit acts on the tail, not the average.',
+    open,
+    onOpenChange
+  } as const;
+
   if (isLoading) {
     return (
-      <article className="results-card manual-results-lending-card">
-        <div className="lending-card-head">
-          <h3>New lending</h3>
-        </div>
+      <CollapsibleSection {...lendingSectionProps}>
         <LoadingSkeleton className="lending-chart-skeleton" ariaLabel="Loading new-lending distributions" />
-      </article>
+      </CollapsibleSection>
     );
   }
 
   if (error) {
     return (
-      <article className="results-card manual-results-lending-card">
-        <div className="lending-card-head">
-          <h3>New lending</h3>
-        </div>
+      <CollapsibleSection {...lendingSectionProps}>
         <p className="error-banner">{error}</p>
-      </article>
+      </CollapsibleSection>
     );
   }
 
   if (!baseline || !baseline.available) {
     return (
-      <article className="results-card manual-results-lending-card">
-        <div className="lending-card-head">
-          <div>
-            <h3>New lending</h3>
-            <p>The shape of the loan-level distribution behind the monthly means above.</p>
-          </div>
-        </div>
+      <CollapsibleSection {...lendingSectionProps}>
         <p className="info-banner">{baseline ? unavailableMessage(baseline) : 'Select a run to see its new lending.'}</p>
-      </article>
+      </CollapsibleSection>
     );
   }
 
@@ -179,17 +182,7 @@ export function NewLendingCard({
       : `${baseline.seedCount} transaction file`;
 
   return (
-    <article className="results-card manual-results-lending-card" id="new-lending-card">
-      <div className="lending-card-head">
-        <div>
-          <h3>New lending</h3>
-          <p>
-            The shape of the loan-level distribution behind the monthly means above. A flow limit acts on the
-            tail, not the average.
-          </p>
-        </div>
-      </div>
-
+    <CollapsibleSection {...lendingSectionProps}>
       <dl className="lending-provenance">
         <div>
           <dt>Mortgaged transactions</dt>
@@ -408,6 +401,6 @@ export function NewLendingCard({
           </p>
         </div>
       )}
-    </article>
+    </CollapsibleSection>
   );
 }

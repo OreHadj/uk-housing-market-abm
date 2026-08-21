@@ -105,7 +105,7 @@ export function GeneralModelControl({
   onMaxWorkersChange,
   maxWorkersHint,
   showRecordSettings = true,
-  defaultOpen = true,
+  defaultOpen = false,
   includeFixedControls = false,
   embedded = false
 }: GeneralModelControlProps) {

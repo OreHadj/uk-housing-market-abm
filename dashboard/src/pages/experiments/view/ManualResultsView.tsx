@@ -168,9 +168,6 @@ export function ManualResultsView({
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
-  const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState<boolean>(
-    Boolean(requestedComparisonRunId)
-  );
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
@@ -195,6 +192,7 @@ export function ManualResultsView({
   const [lendingView, setLendingView] = useState<LendingView>('distribution');
   const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
+  const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
@@ -378,12 +376,6 @@ export function ManualResultsView({
       setManifestTarget('baseline');
     }
   }, [comparisonRunId, manifestTarget]);
-
-  useEffect(() => {
-    if (comparisonRunId) {
-      setIsComparisonPickerOpen(true);
-    }
-  }, [comparisonRunId]);
 
   useEffect(() => {
     // The comparison run's policy is fetched separately from its results so the policy block can
@@ -731,6 +723,8 @@ export function ManualResultsView({
     }
     setLendingMetric(metric);
     setLendingView('distribution');
+    // The section is collapsible, so opening it is part of jumping to it.
+    setIsLendingExpanded(true);
     window.requestAnimationFrame(() => {
       document.getElementById('new-lending-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -846,308 +840,60 @@ export function ManualResultsView({
   return (
     <section className="results-layout manual-results-layout">
       {loadError && <p className="error-banner">{loadError}</p>}
-
-      <div className={`results-top-row ${queueItems.length === 0 ? 'results-top-row-single' : ''}`}>
-        <article className="results-card run-history-card">
-          <div className="disclosure-preview-head">
-            <div className="disclosure-preview-title">
-              <h3>Run History</h3>
-              <p>{finishedRunCount} finished {finishedRunCount === 1 ? 'run' : 'runs'}</p>
-            </div>
-            <button
-              type="button"
-              className="disclosure-preview-toggle"
-              aria-expanded={isHistoryExpanded}
-              onClick={() => setIsHistoryExpanded((current) => !current)}
-            >
-              {isHistoryExpanded ? '▾ Hide' : '▸ All runs'}
-            </button>
-          </div>
-
-          {historyPreviewRun ? (
-            <button
-              type="button"
-              className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
-              onClick={() => setBaselineSelection(historyPreviewRun.runId)}
-            >
-              <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
-              <span className="run-preview-meta">
-                <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
-                <span className="run-preview-action">
-                  {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
-                </span>
-              </span>
-            </button>
-          ) : (
-            <p className="info-banner">No completed runs yet.</p>
-          )}
-
-          {isHistoryExpanded && (
-            <div className="disclosure-expanded-list">
-              <p>{sidebarSubtitle}</p>
-              {showRunsRefreshing && (
-                <LoadingSkeleton
-                  as="span"
-                  className="loading-skeleton-pill section-loading-row"
-                  ariaLabel="Refreshing runs"
-                />
-              )}
-              {showRunsSkeleton ? (
-                <LoadingSkeletonGroup
-                  className="run-list-skeleton"
-                  count={4}
-                  itemClassName="loading-skeleton-card run-item-skeleton"
-                  ariaLabel="Loading runs"
-                />
-              ) : (
-                <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
-                <ul className="run-list">
-                  {historyRuns.map((run) => {
-                    const isBaselineSelected = baselineRunId === run.runId;
-                    const isComparisonSelected = comparisonRunId === run.runId;
-                    return (
-                      <li
-                        key={run.runId}
-                        className={[
-                          'run-item',
-                          isBaselineSelected ? 'selected-baseline' : '',
-                          isComparisonSelected ? 'selected-comparison' : '',
-                          previewRunId === run.runId ? 'is-previewed' : ''
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onMouseEnter={() => setPreviewRunId(run.runId)}
-                        onFocus={() => setPreviewRunId(run.runId)}
-                      >
-                        <div className="run-item-head">
-                          <div className="run-item-name">
-                            {renamingRunId === run.runId ? (
-                              <form
-                                className="run-rename-form"
-                                onSubmit={(event) => {
-                                  event.preventDefault();
-                                  void submitRename(run.runId);
-                                }}
-                              >
-                                <input
-                                  type="text"
-                                  value={renameDraft}
-                                  maxLength={120}
-                                  autoFocus
-                                  aria-label={`Rename ${run.title ?? run.runId}`}
-                                  placeholder="Scenario name"
-                                  disabled={isSavingRename}
-                                  onChange={(event) => setRenameDraft(event.target.value)}
-                                />
-                                <button type="submit" className="run-select-btn" disabled={isSavingRename}>
-                                  {isSavingRename ? 'Saving...' : 'Save'}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="table-toggle"
-                                  disabled={isSavingRename}
-                                  onClick={() => {
-                                    setRenamingRunId('');
-                                    setRenameDraft('');
-                                  }}
-                                >
-                                  Cancel
-                                </button>
-                              </form>
-                            ) : (
-                              <strong>{getRunPrimaryLabel(run)}</strong>
-                            )}
-                          </div>
-                          <div className="run-role-chips">
-                            {isBaselineSelected && <span className="run-role-chip">Baseline</span>}
-                            {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
-                          </div>
-                        </div>
-
-                        <div className="manual-run-action-row">
-                          <button
-                            type="button"
-                            className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
-                            onClick={() => setBaselineSelection(run.runId)}
-                          >
-                            {isBaselineSelected ? 'Baseline selected' : 'Set baseline'}
-                          </button>
-                          <button
-                            type="button"
-                            className={`run-select-btn ${isComparisonSelected ? 'active' : ''}`}
-                            onClick={() => toggleComparisonSelection(run.runId)}
-                            disabled={!baselineRunId || isBaselineSelected}
-                          >
-                            {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
-                          </button>
-                          {canWrite && renamingRunId !== run.runId && (
-                            <button
-                              type="button"
-                              className="table-toggle"
-                              onClick={() => {
-                                setRenamingRunId(run.runId);
-                                setRenameDraft(run.title ?? '');
-                              }}
-                            >
-                              Rename
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="run-meta">
-                          <span className={statusClass(run.status)}>{run.status}</span>
-                        </div>
-                        {canDeleteResults && (
-                          <button
-                            type="button"
-                            className="danger-button"
-                            disabled={isDeletingRunId === run.runId || isProtectedResultsRun(run.runId)}
-                            onClick={() => void deleteRun(run.runId)}
-                            title={isProtectedResultsRun(run.runId) ? 'Protected run cannot be deleted.' : undefined}
-                          >
-                            {isProtectedResultsRun(run.runId)
-                              ? 'Protected'
-                              : isDeletingRunId === run.runId
-                                ? 'Deleting...'
-                                : 'Delete'}
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-                {(() => {
-                  const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
-                  if (!detailRun) {
-                    return null;
-                  }
-                  const policy = describeRunPolicy(detailRun);
-                  return (
-                    <div className="run-history-preview" aria-live="polite">
-                      <p className="run-history-preview-eyebrow">
-                        {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
-                      </p>
-                      <h4>{getRunPrimaryLabel(detailRun)}</h4>
-                      <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
-                      <div className="run-meta">
-                        <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
-                        <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
-                        <span>
-                          Coverage {detailRun.parseCoverage.supportedCount}/{detailRun.parseCoverage.requiredCount}
-                        </span>
-                      </div>
-                      {policy ? (
-                        <div className="run-item-policy">
-                          <p className="run-item-policy-head">{policy.heading}</p>
-                          <dl className="run-item-policy-list">
-                            {detailRun.policySettings.map((setting) => {
-                              const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
-                              const isChanged = policy.changedKeys.has(setting.key);
-                              return (
-                                <div
-                                  key={setting.key}
-                                  className={isChanged ? 'is-changed' : undefined}
-                                  title={setting.key}
-                                >
-                                  <dt>{display?.label ?? setting.key}</dt>
-                                  <dd>
-                                    {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
-                                  </dd>
-                                </div>
-                              );
-                            })}
-                          </dl>
-                        </div>
-                      ) : (
-                        <p className="info-banner">No policy settings recorded for this run.</p>
-                      )}
-                    </div>
-                  );
-                })()}
-                </div>
-              )}
-              {failedHistoryJobs.length > 0 && (
-                <ul className="run-list run-history-failed-list">
-                  {failedHistoryJobs.map((job) => (
-                    <li key={job.jobId} className="run-item run-item-failed">
-                      <div className="run-item-head">
-                        <strong>{job.title || job.runId || job.jobId}</strong>
-                        <span className={QUEUE_STATUS_META[job.status].className}>
-                          {QUEUE_STATUS_META[job.status].label}
-                        </span>
-                      </div>
-                      <p className="run-queue-failure">
-                        This run {job.status === 'canceled' ? 'was cancelled' : 'failed'} — no results.
-                        {job.signal
-                          ? ` Stopped by signal ${job.signal}.`
-                          : job.exitCode != null
-                            ? ` Exit code ${job.exitCode}.`
-                            : ''}
-                      </p>
-                      <p>{formatQueueTimestamp(job.createdAt)}</p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </article>
-
-        {queueItems.length > 0 && (
-        <article className="results-card run-queue-card">
-          <div className="disclosure-preview-head">
-            <div className="disclosure-preview-title">
-              <h3>Queue</h3>
-              <p>
-                {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
-              </p>
-            </div>
-            <button
-              type="button"
-              className="disclosure-preview-toggle"
-              aria-expanded={isQueueExpanded}
-              onClick={() => setIsQueueExpanded((current) => !current)}
-              disabled={remainingQueueItems.length === 0}
-            >
-              {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
-            </button>
-          </div>
-
-          {queuePreviewJob ? (
-            <div className="run-preview-card is-static">
-              <span className="run-preview-title">
-                {queuePreviewJob.title || queuePreviewJob.runId || queuePreviewJob.jobId}
-              </span>
-              <span className="run-preview-meta">
-                <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
-                  {QUEUE_STATUS_META[queuePreviewJob.status].label}
-                </span>
-                <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
-              </span>
-            </div>
-          ) : (
-            <p className="info-banner">No runs in progress.</p>
-          )}
-
-          {isQueueExpanded && remainingQueueItems.length > 0 && (
-            <ul className="job-list run-queue-list">
-              {remainingQueueItems.map((job) => (
-                <li key={job.jobId} className="job-item">
-                  <strong>{job.title || job.runId || job.jobId}</strong>
-                  <p>
-                    <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
-                  </p>
-                  {job.baseline && <p>Model {job.baseline}</p>}
-                  <p>{formatQueueTimestamp(job.createdAt)}</p>
-                </li>
-              ))}
-            </ul>
-          )}
-        </article>
-        )}
-      </div>
-
       <div className="results-main results-main-full">
+          {queueItems.length > 0 && (
+          <article className="results-card run-queue-card">
+            <div className="disclosure-preview-head">
+              <div className="disclosure-preview-title">
+                <h3>Queue</h3>
+                <p>
+                  {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
+                </p>
+              </div>
+              <button
+                type="button"
+                className="disclosure-preview-toggle"
+                aria-expanded={isQueueExpanded}
+                onClick={() => setIsQueueExpanded((current) => !current)}
+                disabled={remainingQueueItems.length === 0}
+              >
+                {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
+              </button>
+            </div>
+
+            {queuePreviewJob ? (
+              <div className="run-preview-card is-static">
+                <span className="run-preview-title">
+                  {queuePreviewJob.title || queuePreviewJob.runId || queuePreviewJob.jobId}
+                </span>
+                <span className="run-preview-meta">
+                  <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
+                    {QUEUE_STATUS_META[queuePreviewJob.status].label}
+                  </span>
+                  <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
+                </span>
+              </div>
+            ) : (
+              <p className="info-banner">No runs in progress.</p>
+            )}
+
+            {isQueueExpanded && remainingQueueItems.length > 0 && (
+              <ul className="job-list run-queue-list">
+                {remainingQueueItems.map((job) => (
+                  <li key={job.jobId} className="job-item">
+                    <strong>{job.title || job.runId || job.jobId}</strong>
+                    <p>
+                      <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
+                    </p>
+                    {job.baseline && <p>Model {job.baseline}</p>}
+                    <p>{formatQueueTimestamp(job.createdAt)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
+          )}
+
           <article className="results-card manual-results-summary-card">
             <div className="comparison-run-pickers">
               <label>
@@ -1170,49 +916,32 @@ export function ManualResultsView({
                   />
                 )}
               </label>
-              {isComparisonPickerOpen && (
-                <label>
-                  <span>Compare with</span>
-                  <select
-                    value={comparisonRunId}
-                    disabled={!baselineRunId || historyRuns.length < 2}
-                    onChange={(event) => updateSelection(baselineRunId, event.target.value)}
-                  >
-                    <option value="">Choose a run</option>
-                    {historyRuns
-                      .filter((run) => run.runId !== baselineRunId)
-                      .map((run) => (
-                        <option key={run.runId} value={run.runId}>
-                          {formatRunOptionLabel(run)}
-                        </option>
-                      ))}
-                  </select>
-                  {comparisonSummary ? (
-                    <ManualSelectionStatusPills
-                      status={comparisonSummary.status}
-                      versionLabelState={comparisonVersionLabelState}
-                    />
-                  ) : (
-                    <small>Select a run to compare values and graph lines.</small>
-                  )}
-                </label>
-              )}
+              <label>
+                <span>Compare with</span>
+                <select
+                  value={comparisonRunId}
+                  disabled={!baselineRunId || historyRuns.length < 2}
+                  onChange={(event) => updateSelection(baselineRunId, event.target.value)}
+                >
+                  <option value="">No comparison</option>
+                  {historyRuns
+                    .filter((run) => run.runId !== baselineRunId)
+                    .map((run) => (
+                      <option key={run.runId} value={run.runId}>
+                        {formatRunOptionLabel(run)}
+                      </option>
+                    ))}
+                </select>
+                {comparisonSummary ? (
+                  <ManualSelectionStatusPills
+                    status={comparisonSummary.status}
+                    versionLabelState={comparisonVersionLabelState}
+                  />
+                ) : (
+                  <small>Select a run to compare values and graph lines.</small>
+                )}
+              </label>
             </div>
-            <label className="comparison-enable-toggle">
-              <input
-                type="checkbox"
-                checked={isComparisonPickerOpen}
-                disabled={!baselineRunId || historyRuns.length < 2}
-                onChange={(event) => {
-                  const enabled = event.target.checked;
-                  setIsComparisonPickerOpen(enabled);
-                  if (!enabled && comparisonRunId) {
-                    updateSelection(baselineRunId, '');
-                  }
-                }}
-              />
-              <span>Compare with another run</span>
-            </label>
 
             {baselineDetail && policySettings.length > 0 && (
               <CollapsibleSection
@@ -1292,14 +1021,19 @@ export function ManualResultsView({
               >
                 Open Sensitivity analysis
               </Link>
-              {renderDownloadAction(baselineRunId, 'Download Baseline Results')}
-              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download Comparison Results')}
+              {renderDownloadAction(baselineRunId, 'Download primary')}
+              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison')}
             </div>
 
             <p>Analysis-window and smoothing controls are available when a trend chart is opened.</p>
           </article>
 
-          <article className="results-card manual-results-aggregate-card">
+          <CollapsibleSection
+            className="results-card manual-results-aggregate-card"
+            title="Policy results"
+            description="Monthly means over the selected analysis window. Open any series to inspect its path through time."
+            defaultOpen={false}
+          >
             {showKpiRefreshing && (
               <LoadingSkeleton
                 as="span"
@@ -1317,10 +1051,6 @@ export function ManualResultsView({
             ) : (
               <div className="policy-results-sections">
                 <div className="policy-results-sections-head">
-                  <div>
-                    <h3>Policy results</h3>
-                    <p>Monthly means over the selected analysis window. Open any series to inspect its path through time.</p>
-                  </div>
                   <div className="policy-results-expansion-controls" aria-label="Policy result section controls">
                     <button
                       type="button"
@@ -1442,7 +1172,7 @@ export function ManualResultsView({
                 </div>
               </div>
             )}
-          </article>
+          </CollapsibleSection>
 
           {isTrendModalOpen && (
             <div
@@ -1552,7 +1282,243 @@ export function ManualResultsView({
             onViewChange={setLendingView}
             activeMetric={lendingMetric}
             onMetricChange={setLendingMetric}
+            open={isLendingExpanded}
+            onOpenChange={setIsLendingExpanded}
           />
+
+          <CollapsibleSection
+            className="results-card run-history-card"
+            title="Run History"
+            description={sidebarSubtitle}
+            summary={`${finishedRunCount} finished ${finishedRunCount === 1 ? 'run' : 'runs'}`}
+            open={isHistoryExpanded}
+            onOpenChange={setIsHistoryExpanded}
+          >
+            {historyPreviewRun ? (
+              <button
+                type="button"
+                className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
+                onClick={() => setBaselineSelection(historyPreviewRun.runId)}
+              >
+                <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
+                <span className="run-preview-meta">
+                  <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
+                  <span className="run-preview-action">
+                    {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
+                  </span>
+                </span>
+              </button>
+            ) : (
+              <p className="info-banner">No completed runs yet.</p>
+            )}
+
+            <div className="disclosure-expanded-list">
+                {showRunsRefreshing && (
+                  <LoadingSkeleton
+                    as="span"
+                    className="loading-skeleton-pill section-loading-row"
+                    ariaLabel="Refreshing runs"
+                  />
+                )}
+                {showRunsSkeleton ? (
+                  <LoadingSkeletonGroup
+                    className="run-list-skeleton"
+                    count={4}
+                    itemClassName="loading-skeleton-card run-item-skeleton"
+                    ariaLabel="Loading runs"
+                  />
+                ) : (
+                  <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
+                  <ul className="run-list">
+                    {historyRuns.map((run) => {
+                      const isBaselineSelected = baselineRunId === run.runId;
+                      const isComparisonSelected = comparisonRunId === run.runId;
+                      return (
+                        <li
+                          key={run.runId}
+                          className={[
+                            'run-item',
+                            isBaselineSelected ? 'selected-baseline' : '',
+                            isComparisonSelected ? 'selected-comparison' : '',
+                            previewRunId === run.runId ? 'is-previewed' : ''
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onMouseEnter={() => setPreviewRunId(run.runId)}
+                          onFocus={() => setPreviewRunId(run.runId)}
+                        >
+                          <div className="run-item-head">
+                            <div className="run-item-name">
+                              {renamingRunId === run.runId ? (
+                                <form
+                                  className="run-rename-form"
+                                  onSubmit={(event) => {
+                                    event.preventDefault();
+                                    void submitRename(run.runId);
+                                  }}
+                                >
+                                  <input
+                                    type="text"
+                                    value={renameDraft}
+                                    maxLength={120}
+                                    autoFocus
+                                    aria-label={`Rename ${run.title ?? run.runId}`}
+                                    placeholder="Scenario name"
+                                    disabled={isSavingRename}
+                                    onChange={(event) => setRenameDraft(event.target.value)}
+                                  />
+                                  <button type="submit" className="run-select-btn" disabled={isSavingRename}>
+                                    {isSavingRename ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="table-toggle"
+                                    disabled={isSavingRename}
+                                    onClick={() => {
+                                      setRenamingRunId('');
+                                      setRenameDraft('');
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </form>
+                              ) : (
+                                <strong>{getRunPrimaryLabel(run)}</strong>
+                              )}
+                            </div>
+                            <div className="run-role-chips">
+                              {isBaselineSelected && <span className="run-role-chip">Primary</span>}
+                              {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
+                            </div>
+                          </div>
+
+                          <div className="manual-run-action-row">
+                            <button
+                              type="button"
+                              className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
+                              onClick={() => setBaselineSelection(run.runId)}
+                            >
+                              {isBaselineSelected ? 'Primary selected' : 'Set primary'}
+                            </button>
+                            <button
+                              type="button"
+                              className={`run-select-btn ${isComparisonSelected ? 'active' : ''}`}
+                              onClick={() => toggleComparisonSelection(run.runId)}
+                              disabled={!baselineRunId || isBaselineSelected}
+                            >
+                              {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
+                            </button>
+                            {canWrite && renamingRunId !== run.runId && (
+                              <button
+                                type="button"
+                                className="table-toggle"
+                                onClick={() => {
+                                  setRenamingRunId(run.runId);
+                                  setRenameDraft(run.title ?? '');
+                                }}
+                              >
+                                Rename
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="run-meta">
+                            <span className={statusClass(run.status)}>{run.status}</span>
+                          </div>
+                          {canDeleteResults && (
+                            <button
+                              type="button"
+                              className="danger-button"
+                              disabled={isDeletingRunId === run.runId || isProtectedResultsRun(run.runId)}
+                              onClick={() => void deleteRun(run.runId)}
+                              title={isProtectedResultsRun(run.runId) ? 'Protected run cannot be deleted.' : undefined}
+                            >
+                              {isProtectedResultsRun(run.runId)
+                                ? 'Protected'
+                                : isDeletingRunId === run.runId
+                                  ? 'Deleting...'
+                                  : 'Delete'}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {(() => {
+                    const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
+                    if (!detailRun) {
+                      return null;
+                    }
+                    const policy = describeRunPolicy(detailRun);
+                    return (
+                      <div className="run-history-preview" aria-live="polite">
+                        <p className="run-history-preview-eyebrow">
+                          {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
+                        </p>
+                        <h4>{getRunPrimaryLabel(detailRun)}</h4>
+                        <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
+                        <div className="run-meta">
+                          <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
+                          <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                          <span>
+                            Coverage {detailRun.parseCoverage.supportedCount}/{detailRun.parseCoverage.requiredCount}
+                          </span>
+                        </div>
+                        {policy ? (
+                          <div className="run-item-policy">
+                            <p className="run-item-policy-head">{policy.heading}</p>
+                            <dl className="run-item-policy-list">
+                              {detailRun.policySettings.map((setting) => {
+                                const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                                const isChanged = policy.changedKeys.has(setting.key);
+                                return (
+                                  <div
+                                    key={setting.key}
+                                    className={isChanged ? 'is-changed' : undefined}
+                                    title={setting.key}
+                                  >
+                                    <dt>{display?.label ?? setting.key}</dt>
+                                    <dd>
+                                      {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
+                                    </dd>
+                                  </div>
+                                );
+                              })}
+                            </dl>
+                          </div>
+                        ) : (
+                          <p className="info-banner">No policy settings recorded for this run.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  </div>
+                )}
+                {failedHistoryJobs.length > 0 && (
+                  <ul className="run-list run-history-failed-list">
+                    {failedHistoryJobs.map((job) => (
+                      <li key={job.jobId} className="run-item run-item-failed">
+                        <div className="run-item-head">
+                          <strong>{job.title || job.runId || job.jobId}</strong>
+                          <span className={QUEUE_STATUS_META[job.status].className}>
+                            {QUEUE_STATUS_META[job.status].label}
+                          </span>
+                        </div>
+                        <p className="run-queue-failure">
+                          This run {job.status === 'canceled' ? 'was cancelled' : 'failed'} — no results.
+                          {job.signal
+                            ? ` Stopped by signal ${job.signal}.`
+                            : job.exitCode != null
+                              ? ` Exit code ${job.exitCode}.`
+                              : ''}
+                        </p>
+                        <p>{formatQueueTimestamp(job.createdAt)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+          </CollapsibleSection>
 
           <article className="results-card manual-results-files-card">
             <CollapsibleSection
