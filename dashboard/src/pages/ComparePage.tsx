@@ -12,11 +12,112 @@ import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensit
 import { ValidationModelOptions } from './ValidationPage';
 
 type ViewMode = 'single' | 'compare';
+type RefittedCampaign = Extract<CalibrationModelOverview['campaign'], { kind: 'refitted' }>;
+type CalibrationValidationReturnContext = {
+  source: 'scenario' | 'sensitivity' | '';
+  draftId: string;
+  returnStep: string;
+};
 const FITTED_IDS = new Set(['rent_purchase_choice', 'btl_probability_multiplier', 'btl_choice_intensity', 'market_average_price_decay']);
 
 function fmt(value: number | null): string {
   if (value === null) return 'Not recorded';
   return new Intl.NumberFormat('en-GB', { maximumSignificantDigits: 6 }).format(value);
+}
+
+function fmtLoss(value: number): string {
+  return new Intl.NumberFormat('en-GB', { minimumFractionDigits: 4, maximumFractionDigits: 4 }).format(value);
+}
+
+/** Relative loss reduction in percent. Null protects zero, negative and non-finite baselines. */
+export function relativeLossImprovement(before: number, after: number): number | null {
+  if (!Number.isFinite(before) || !Number.isFinite(after) || before <= 0 || after < 0) return null;
+  return ((before - after) / before) * 100;
+}
+
+function lossChangeLabel(campaign: RefittedCampaign): string {
+  const relative = relativeLossImprovement(campaign.baselineLoss, campaign.selectedLoss);
+  const losses = `${fmtLoss(campaign.baselineLoss)} → ${fmtLoss(campaign.selectedLoss)}`;
+  if (relative === null) return losses;
+  if (relative > 0) return `${losses} · ${relative.toFixed(1)}% lower`;
+  if (relative < 0) return `${losses} · ${Math.abs(relative).toFixed(1)}% higher`;
+  return `${losses} · unchanged`;
+}
+
+function lossChangeSentence(campaign: RefittedCampaign): string {
+  const relative = relativeLossImprovement(campaign.baselineLoss, campaign.selectedLoss);
+  if (relative === null) return 'The recorded loss values do not support a safe relative comparison.';
+  if (relative > 0) return `Validation loss was ${relative.toFixed(1)}% lower.`;
+  if (relative < 0) return `Validation loss was ${Math.abs(relative).toFixed(1)}% higher.`;
+  return 'Validation loss was unchanged.';
+}
+
+function campaignDecision(campaign: RefittedCampaign): string {
+  if (campaign.selected && campaign.passedChecks) return 'Selected after passing the house-price guardrail';
+  if (campaign.selected) return 'Selected despite not passing every recorded check';
+  if (campaign.passedChecks) return 'Passed the required checks but was not selected';
+  return 'Not selected after failing the required checks';
+}
+
+function campaignDecisionSentence(campaign: RefittedCampaign): string {
+  if (campaign.selected && campaign.passedChecks) return 'The candidate passed the required house-price checks and was selected.';
+  if (campaign.selected) return 'The candidate did not pass every recorded check but was selected.';
+  if (campaign.passedChecks) return 'The candidate passed the required checks but was not selected.';
+  return 'The candidate did not pass the required checks and was not selected.';
+}
+
+function campaignOriginSummary(campaign: CalibrationModelOverview['campaign']): string {
+  switch (campaign.kind) {
+    case 'refitted': return `${campaign.evidenceYear} evidence · Refitted`;
+    case 'original': return campaign.status;
+    case 'inherited': return `Inherited unchanged from ${campaign.sourceVersion}`;
+    case 'unavailable': return 'Detailed record unavailable';
+  }
+}
+
+export function buildCalibrationValidationHref(
+  primaryVersion: string,
+  comparisonVersion = '',
+  returnContext: CalibrationValidationReturnContext = { source: '', draftId: '', returnStep: '' }
+): string | null {
+  const primary = primaryVersion.trim();
+  if (!primary) return null;
+
+  const query = new URLSearchParams();
+  query.set('view', 'validation');
+  query.set('version', primary);
+
+  const comparison = comparisonVersion.trim();
+  if (comparison && comparison !== primary) query.set('comparisonVersion', comparison);
+
+  const draftId = returnContext.draftId.trim();
+  if (returnContext.source && draftId) {
+    query.set('from', returnContext.source);
+    query.set('draft', draftId);
+    query.set(
+      returnContext.source === 'scenario' ? 'scenarioStep' : 'sensitivityStep',
+      returnContext.returnStep.trim() || (returnContext.source === 'scenario' ? 'model-version' : 'model-baseline')
+    );
+  }
+
+  return `/model-evidence?${query.toString()}`;
+}
+
+export function CalibrationValidationGuidance({
+  primaryVersion,
+  comparisonVersion = '',
+  returnContext = { source: '', draftId: '', returnStep: '' }
+}: {
+  primaryVersion: string;
+  comparisonVersion?: string;
+  returnContext?: CalibrationValidationReturnContext;
+}) {
+  const href = buildCalibrationValidationHref(primaryVersion, comparisonVersion, returnContext);
+
+  return <p className="validation-calibration-guidance calibration-validation-guidance">
+    If you want to see how well the model matches UK evidence, visit the{' '}
+    {href ? <Link to={href}>validation page</Link> : <span>validation page</span>}.
+  </p>;
 }
 
 function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode, meta: ParameterCardMeta) {
@@ -90,12 +191,14 @@ function derivationDescription(derivation: ParameterCardMeta['keyMetadata'][numb
 /** A page-level section that keeps a semantic heading while matching Validation's disclosures. */
 function CalibrationSection({
   title,
+  description,
   summary,
   defaultOpen,
   className,
   children
 }: {
   title: string;
+  description?: string;
   /** Stays visible when collapsed, so the fold never hides what is inside. */
   summary: string;
   defaultOpen: boolean;
@@ -111,7 +214,10 @@ function CalibrationSection({
         <h2>
           <button type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={() => setIsOpen((current) => !current)}>
             <span className="calibration-collapsible-indicator" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
-            {title}
+            <span className="calibration-collapsible-heading-copy">
+              <span className="calibration-collapsible-title">{title}</span>
+              {description && <span className="calibration-collapsible-description">{description}</span>}
+            </span>
           </button>
         </h2>
       </div>
@@ -119,6 +225,137 @@ function CalibrationSection({
     </div>
     <div id={contentId} className="calibration-collapsible-body" hidden={!isOpen}>{children}</div>
   </section>;
+}
+
+function ProvenanceDisclosure({ provenance }: { provenance: string[] }) {
+  if (provenance.length === 0) return null;
+  return <CollapsibleSection title="Technical provenance" defaultOpen={false} summary="Source records">
+    <ul className="campaign-provenance-list">
+      {provenance.map((record) => <li key={record}><span className="campaign-technical-path">{record}</span></li>)}
+    </ul>
+  </CollapsibleSection>;
+}
+
+function RefittedCampaignTechnicalDetails({ campaign }: { campaign: RefittedCampaign }) {
+  return <CollapsibleSection title="Technical campaign details" defaultOpen={false} summary="Optimiser settings and provenance">
+    <dl className="technical-details campaign-technical-details">
+      {campaign.optimisationSettings.length > 0 && <div>
+        <dt>Optimiser configuration</dt>
+        <dd><ul>{campaign.optimisationSettings.map((setting) => <li key={setting}>{setting}</li>)}</ul></dd>
+      </div>}
+      <div>
+        <dt>Calibration artifact</dt>
+        <dd><span className="campaign-technical-path">{campaign.artifactPath}</span></dd>
+      </div>
+      {campaign.provenance.length > 0 && <div>
+        <dt>Supporting provenance</dt>
+        <dd><ul>{campaign.provenance.map((record) => <li key={record}><span className="campaign-technical-path">{record}</span></li>)}</ul></dd>
+      </div>}
+    </dl>
+  </CollapsibleSection>;
+}
+
+export function BehaviouralParameterOriginSection({
+  model,
+  differentEvidenceProfile = false
+}: {
+  model: CalibrationModelOverview;
+  differentEvidenceProfile?: boolean;
+}) {
+  const campaign = model.campaign;
+
+  return <CalibrationSection
+    className={`calibration-campaign calibration-campaign-${campaign.kind}`}
+    title="How the behavioural parameters were obtained"
+    description="Where this model’s five fitted behavioural values came from."
+    summary={campaignOriginSummary(campaign)}
+    defaultOpen={false}
+  >
+    <div className="calibration-campaign-content">
+    {campaign.kind === 'refitted' && <>
+      <p className="calibration-campaign-explanation">
+        Starting from <strong>{campaign.startingVersion}</strong>, this model tuned {campaign.tunedParameterCount}
+        {' '}behavioural parameters against {campaign.evidenceYear} evidence using {campaign.targetOutcomeCount}
+        {' '}outcome targets and {campaign.method}. {lossChangeSentence(campaign)}{' '}
+        {campaignDecisionSentence(campaign)}
+      </p>
+      <dl className="campaign-grid">
+        <div><dt>Starting model</dt><dd>{campaign.startingVersion}</dd></div>
+        <div><dt>Method</dt><dd>{campaign.method}</dd></div>
+        <div><dt>Validation loss</dt><dd>{lossChangeLabel(campaign)}</dd></div>
+        <div><dt>Decision</dt><dd>{campaignDecision(campaign)}</dd></div>
+      </dl>
+      <RefittedCampaignTechnicalDetails campaign={campaign} />
+    </>}
+
+    {campaign.kind === 'original' && <>
+      <p className="calibration-campaign-explanation">
+        The five behavioural values in <strong>{model.identity.version}</strong> come from the original published
+        {' '}calibration rather than from a new optimisation campaign recorded by this dashboard.
+      </p>
+      <dl className="campaign-grid">
+        <div><dt>Evidence / fit year</dt><dd>{campaign.evidenceYear}</dd></div>
+        <div><dt>Original calibration method</dt><dd>{campaign.method}</dd></div>
+        <div><dt>Status</dt><dd>{campaign.status}</dd></div>
+        {campaign.provenance.length > 0 && <div>
+          <dt>Available provenance</dt>
+          <dd>{campaign.provenance.length} source {campaign.provenance.length === 1 ? 'record' : 'records'}</dd>
+        </div>}
+      </dl>
+      <ProvenanceDisclosure provenance={campaign.provenance} />
+    </>}
+
+    {campaign.kind === 'inherited' && <>
+      <p className="calibration-campaign-explanation">
+        No new behavioural calibration was run for this model. Its five behavioural parameters were supplied by
+        {' '}<strong>{campaign.sourceVersion}</strong>, where they were fitted against {campaign.evidenceYear} evidence,
+        {' '}and were inherited unchanged.
+      </p>
+      <dl className="campaign-grid">
+        <div><dt>Source model</dt><dd>{campaign.sourceVersion}</dd></div>
+        <div><dt>Evidence / fit year</dt><dd>{campaign.evidenceYear}</dd></div>
+        <div><dt>Status</dt><dd>Inherited unchanged</dd></div>
+      </dl>
+      <ProvenanceDisclosure provenance={campaign.provenance} />
+    </>}
+
+    {campaign.kind === 'unavailable' && <>
+      <p className="calibration-campaign-unavailable">
+        A detailed behavioural-calibration record is not available for this model version.
+      </p>
+      <ProvenanceDisclosure provenance={campaign.provenance} />
+    </>}
+
+    {differentEvidenceProfile && <p className="info-banner">
+      The selected models use different behavioural-fit evidence years, so their fit records should be interpreted
+      within their own evidence profiles.
+    </p>}
+    </div>
+  </CalibrationSection>;
+}
+
+/** A compact, independently expandable group within Other model assumptions. */
+export function AssumptionGroupDisclosure({
+  group,
+  assumptionCount,
+  children
+}: {
+  group: string;
+  assumptionCount: number;
+  children: ReactNode;
+}) {
+  const countLabel = `${assumptionCount} assumption${assumptionCount === 1 ? '' : 's'}`;
+
+  return <details className="assumption-group">
+    <summary className="assumption-group-summary">
+      <h3>
+        <span className="assumption-group-indicator" aria-hidden="true">▸</span>
+        <span className="assumption-group-title">{group}</span>
+        <span className="assumption-group-count">{countLabel}</span>
+      </h3>
+    </summary>
+    <div className="assumption-group-body">{children}</div>
+  </details>;
 }
 
 /** How many fitted parameters differ between the two models, or null when only one is selected. */
@@ -131,7 +368,7 @@ function countChangedParameters(overview: CalibrationOverviewResponse): number |
   }).length;
 }
 
-function FittedParameterCard({
+export function FittedParameterRow({
   parameter,
   compared,
   primaryVersion,
@@ -149,25 +386,46 @@ function FittedParameterCard({
     ? 'Not recorded'
     : `${fmt(parameter.lower)}–${fmt(parameter.upper)}`;
 
-  return <article className="calibration-parameter-row">
-    <div className="parameter-row-head">
-      <div><h3>{parameter.name}</h3><code>{parameter.key}</code></div>
+  return <details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>
+    <summary className="calibration-parameter-summary">
+      <span className="calibration-parameter-indicator" aria-hidden="true">▸</span>
+      <span className="parameter-row-head">
+        <strong>{parameter.name}</strong>
+        <code>{parameter.key}</code>
+      </span>
+      <span className="parameter-number-grid">
+        <span className="parameter-number-item">
+          <span>{mode === 'compare' ? `${primaryVersion} value` : 'Selected value'}</span>
+          <strong>{fmt(parameter.value)}</strong>
+        </span>
+        {mode === 'compare' && compared && comparisonVersion && (
+          <span className="parameter-number-item">
+            <span>{comparisonVersion} value</span>
+            <strong>{fmt(compared.value)}</strong>
+          </span>
+        )}
+        {mode === 'compare' && compared && (
+          <span className="parameter-number-item">
+            <span>Absolute difference</span>
+            <strong>{fmt(parameter.value - compared.value)}</strong>
+            <small className={changed ? 'changed' : 'unchanged'}>{changed ? 'Changed' : 'Unchanged'}</small>
+          </span>
+        )}
+        <span className="parameter-number-item">
+          <span>Range tested</span>
+          <strong>{testedRange}</strong>
+        </span>
+      </span>
+    </summary>
+    <div className="calibration-parameter-body">
+      <div className="parameter-explanation-grid">
+        <p><b>Behavioural meaning</b>{parameter.meaning}</p>
+        <p><b>Why calibrate it</b>{parameter.calibrationReason}</p>
+        <p><b>If increased</b>{parameter.increaseEffect}</p>
+        <p><b>If decreased</b>{parameter.decreaseEffect}</p>
+      </div>
     </div>
-    <div className="parameter-number-grid">
-      {mode === 'compare' && compared && comparisonVersion &&
-        <div><span>{comparisonVersion} value</span><strong>{fmt(compared.value)}</strong></div>}
-      <div><span>{mode === 'compare' ? `${primaryVersion} value` : 'Selected value'}</span><strong>{fmt(parameter.value)}</strong></div>
-      {mode === 'compare' && compared &&
-        <div><span>Absolute difference</span><strong>{fmt(parameter.value - compared.value)}</strong><small className={changed ? 'changed' : 'unchanged'}>{changed ? 'Changed' : 'Unchanged'}</small></div>}
-      <div><span>Range tested</span><strong>{testedRange}</strong></div>
-    </div>
-    <div className="parameter-explanation-grid">
-      <p><b>Behavioural meaning</b>{parameter.meaning}</p>
-      <p><b>Why calibrate it</b>{parameter.calibrationReason}</p>
-      <p><b>If increased</b>{parameter.increaseEffect}</p>
-      <p><b>If decreased</b>{parameter.decreaseEffect}</p>
-    </div>
-  </article>;
+  </details>;
 }
 
 export function ComparePage() {
@@ -181,7 +439,6 @@ export function ComparePage() {
   const [overview, setOverview] = useState<CalibrationOverviewResponse | null>(null);
   const [comparison, setComparison] = useState<CompareResponse | null>(null);
   const [inspectionItem, setInspectionItem] = useState<CompareResponse['items'][number] | null>(null);
-  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState('');
@@ -262,27 +519,31 @@ export function ComparePage() {
   }, [comparisonEnabled, mode, selected, left, catalog]);
 
   const referenceGroups = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id))
-      .filter((item) => !term || [item.title, item.id, ...item.sourceInfo.configKeys].some((value) => value.toLowerCase().includes(term)));
+    const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id));
     const grouped = new Map<ParameterGroup, CompareResponse['items']>();
     for (const item of rows) grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
     return grouped;
-  }, [comparison, mode, search]);
-  // Header counts for the collapsible sections, taken before the search filter so a collapsed
-  // section still reports the whole model rather than the current query.
+  }, [comparison]);
+  // Header counts for the collapsible sections report the whole selected model.
   const referenceItems = useMemo(() => (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id)), [comparison]);
   const optionSet = useMemo(() => new Set(inProgress), [inProgress]);
   const pickerVersions = useMemo(() => {
     const offered = buildModelOptions(versions, selected, optionSet).map((option) => option.version);
     return left && versions.includes(left) && !offered.includes(left) ? [...offered, left] : offered;
   }, [left, optionSet, selected, versions]);
-  const validationYear = overview?.primary.campaign.evidenceYear ?? 2024;
-  const evidenceContext = hasScenarioContext
-    ? `&from=scenario&draft=${encodeURIComponent(evidenceDraftId)}&scenarioStep=model-version`
+  const validationReturnContext: CalibrationValidationReturnContext = hasScenarioContext
+    ? {
+        source: 'scenario',
+        draftId: evidenceDraftId,
+        returnStep: params.get('scenarioStep')?.trim() || 'model-version'
+      }
     : hasSensitivityContext
-      ? `&from=sensitivity&draft=${encodeURIComponent(evidenceDraftId)}&sensitivityStep=model-baseline`
-      : '';
+      ? {
+          source: 'sensitivity',
+          draftId: evidenceDraftId,
+          returnStep: params.get('sensitivityStep')?.trim() || 'model-baseline'
+        }
+      : { source: '', draftId: '', returnStep: '' };
   const returnHref = hasScenarioContext
     ? `/scenarios/new?draft=${encodeURIComponent(evidenceDraftId)}&step=model-version`
     : `/sensitivity/new?draft=${encodeURIComponent(evidenceDraftId)}&step=model-baseline`;
@@ -383,16 +644,19 @@ export function ComparePage() {
           </section>
         </div>
       </div>
+      <CalibrationValidationGuidance
+        primaryVersion={selected}
+        comparisonVersion={mode === 'compare' ? left : ''}
+        returnContext={validationReturnContext}
+      />
     </section>
     {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
     {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <>
       <main className="calibration-main">
-        <section className="results-card calibration-campaign"><div className="section-heading-row"><div><p className="eyebrow">Calibration campaign</p><h2>Why output calibration is necessary</h2></div><Link className="secondary-button" to={`/validation?version=${encodeURIComponent(overview.primary.identity.version)}&evidenceYear=${validationYear}${evidenceContext}`}>View indicator-level fit</Link></div><p>The five behavioural parameters below describe latent choices and model memory; they cannot be measured directly. Output calibration searches for values whose simulated outcomes collectively reproduce documented evidence.</p>{overview.primary.identity.inheritance && <p className="inheritance-note">{overview.primary.identity.inheritance}</p>}
-          <div className="campaign-grid"><div><span>Evidence / fit year</span><strong>{overview.primary.campaign.evidenceYear ?? 'Not recorded'}</strong></div><div><span>Method</span><strong>{overview.primary.campaign.method}</strong></div><div className="wide"><span>Objective</span><strong>{overview.primary.campaign.objective}</strong></div><div><span>Before loss</span><strong>{fmt(overview.primary.campaign.baselineLoss)}</strong></div><div><span>After loss</span><strong>{fmt(overview.primary.campaign.selectedLoss)}</strong></div><div><span>Improvement</span><strong>{fmt(overview.primary.campaign.improvement)}</strong></div><div><span>Promotion</span><strong>{overview.primary.campaign.promotion}</strong></div><div className="wide"><span>Guardrail result</span><strong>{overview.primary.campaign.guardrail}</strong></div></div>
-          {overview.primary.campaign.targetGroups.length > 0 ? <div className="target-groups"><h3>Target indicators</h3>{overview.primary.campaign.targetGroups.map((group) => <span key={group.name} title={group.indicators.join(', ')}>{group.name} <b>{group.count}</b></span>)}</div> : <p>Target indicators: <strong>Not recorded</strong></p>}
-          {mode === 'compare' && !overview.sameEvidenceProfile && <p className="info-banner">The models use different evidence profiles. Loss values are shown only within each campaign and are not compared across evidence years.</p>}
-          <CollapsibleSection title="Technical campaign details" defaultOpen={false} summary="Seeds, run length, bounds and provenance"><dl className="technical-details"><div><dt>Seeds</dt><dd>{overview.primary.campaign.seeds?.join(', ') ?? 'Not recorded'}</dd></div><div><dt>Simulation length</dt><dd>{overview.primary.campaign.simulationSteps ?? 'Not recorded'}</dd></div><div><dt>Analysis window</dt><dd>{overview.primary.campaign.analysisWindow ? `${overview.primary.campaign.analysisWindow.start}–${overview.primary.campaign.analysisWindow.end}` : 'Not recorded'}</dd></div><div><dt>Optimisation</dt><dd>{overview.primary.campaign.optimisationSettings.join(' · ') || 'Not recorded'}</dd></div><div><dt>Provenance</dt><dd>{overview.primary.campaign.provenance.join(' · ') || 'Not recorded'}</dd></div></dl></CollapsibleSection>
-        </section>
+        <BehaviouralParameterOriginSection
+          model={overview.primary}
+          differentEvidenceProfile={mode === 'compare' && !overview.sameEvidenceProfile}
+        />
         <CalibrationSection
           className="calibration-parameters"
           title="Five fitted behavioural parameters"
@@ -402,7 +666,7 @@ export function ComparePage() {
           defaultOpen
         >
           {overview.primary.parameters.map((parameter) =>
-            <FittedParameterCard
+            <FittedParameterRow
               key={parameter.key}
               parameter={parameter}
               compared={overview.comparison?.parameters.find((candidate) => candidate.key === parameter.key)}
@@ -428,9 +692,32 @@ export function ComparePage() {
         whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
         Source/evidence records the specific evidence it came from.
       </p>
-      <input className="assumption-search" aria-label="Search model assumptions" placeholder="Search assumptions or config keys" value={search} onChange={(event) => setSearch(event.target.value)} />
-      {[...referenceGroups.entries()].map(([group, items]) => <section className="assumption-group" key={group as ParameterGroup}><h3>{group} <span>{items.length}</span></h3><div className="assumption-table" role="table"><div className="assumption-table-head" role="row"><span>Assumption and config key</span><span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span><span>Basis for assumption</span><span>Source / evidence</span></div>{items.map((item) => { const meta = catalog.find((entry) => entry.id === item.id)!; const complex = item.visualPayload.type !== 'scalar'; const derivation = meta.keyMetadata[0]?.derivation; return <div className="assumption-table-row" role="row" key={item.id}><div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div><div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div><div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div><div><SourceSummary item={item} mode={mode} meta={meta} /></div></div>; })}</div></section>)}
-      {referenceGroups.size === 0 && <p className="info-banner">No assumptions match the current filters.</p>}
+      <div className="assumption-groups">
+        {[...referenceGroups.entries()].map(([group, items]) =>
+          <AssumptionGroupDisclosure key={group as ParameterGroup} group={group} assumptionCount={items.length}>
+            <div className="assumption-table" role="table">
+              <div className="assumption-table-head" role="row">
+                <span>Assumption and config key</span>
+                <span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span>
+                <span>Basis for assumption</span>
+                <span>Source / evidence</span>
+              </div>
+              {items.map((item) => {
+                const meta = catalog.find((entry) => entry.id === item.id)!;
+                const complex = item.visualPayload.type !== 'scalar';
+                const derivation = meta.keyMetadata[0]?.derivation;
+                return <div className="assumption-table-row" role="row" key={item.id}>
+                  <div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div>
+                  <div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div>
+                  <div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div>
+                  <div><SourceSummary item={item} mode={mode} meta={meta} /></div>
+                </div>;
+              })}
+            </div>
+          </AssumptionGroupDisclosure>
+        )}
+      </div>
+      {referenceGroups.size === 0 && <p className="info-banner">No model assumptions are available.</p>}
     </CalibrationSection>
     </>}
     {inspectionItem && <div

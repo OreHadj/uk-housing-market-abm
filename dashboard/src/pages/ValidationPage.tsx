@@ -615,7 +615,7 @@ function ValidationStatusLegend() {
  * The collapsed summary for a theme: what its metrics scored, most severe first. This is what makes
  * a collapsed theme worth reading rather than just something to click open.
  */
-function describeThemeStatuses(metrics: ValidationMetricSummary[]): string {
+export function describeThemeStatuses(metrics: Pick<ValidationMetricSummary, 'status'>[]): string {
   if (metrics.length === 0) {
     return 'No metrics';
   }
@@ -623,8 +623,14 @@ function describeThemeStatuses(metrics: ValidationMetricSummary[]): string {
   return order
     .map((status) => ({ status, count: metrics.filter((metric) => metric.status === status).length }))
     .filter((entry) => entry.count > 0)
-    .map((entry) => `${entry.count} ${entry.status}`)
+    .map((entry) => `${entry.count}/${metrics.length} ${entry.status}`)
     .join(' \u00b7 ');
+}
+
+export function findValidationThemeId(metricId: string): string | null {
+  return VALIDATION_POLICY_THEMES.find((theme) =>
+    theme.metricIds.some((themeMetricId) => themeMetricId === metricId)
+  )?.id ?? null;
 }
 
 function MetricRow({
@@ -753,6 +759,9 @@ export function ValidationPage() {
   const [comparisonVersion, setComparisonVersion] = useState(searchParams.get('comparisonVersion')?.trim() ?? '');
   const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState(Boolean(comparisonVersion));
   const [sortMetricId, setSortMetricId] = useState('');
+  const [isOutcomeComparisonsOpen, setIsOutcomeComparisonsOpen] = useState(false);
+  const [openValidationThemeIds, setOpenValidationThemeIds] = useState<Set<string>>(() => new Set());
+  const [pendingMetricDiagnosticId, setPendingMetricDiagnosticId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -813,6 +822,19 @@ export function ValidationPage() {
     else next.delete('comparisonVersion');
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
   }, [comparisonVersion, overview, searchParams, selectedValidationTargetYear, selectedVersion, setSearchParams]);
+
+  useEffect(() => {
+    if (!pendingMetricDiagnosticId || !isOutcomeComparisonsOpen) return;
+    const themeId = findValidationThemeId(pendingMetricDiagnosticId);
+    if (!themeId || !openValidationThemeIds.has(themeId)) return;
+
+    const row = document.getElementById(`validation-metric-${pendingMetricDiagnosticId}`);
+    setPendingMetricDiagnosticId(null);
+    if (!(row instanceof HTMLDetailsElement)) return;
+    row.open = true;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+  }, [isOutcomeComparisonsOpen, openValidationThemeIds, pendingMetricDiagnosticId]);
 
   const summary = overview?.selectedSummary ?? null;
   const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
@@ -898,11 +920,20 @@ export function ValidationPage() {
   //   if (point?.name) selectVersionAndValidationYear(point.name, year);
   // };
   const openMetricDiagnostic = (metricId: string) => {
-    const row = document.getElementById(`validation-metric-${metricId}`);
-    if (!(row instanceof HTMLDetailsElement)) return;
-    row.open = true;
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row.querySelector('summary')?.focus({ preventScroll: true });
+    const themeId = findValidationThemeId(metricId);
+    if (!themeId) return;
+    setIsOutcomeComparisonsOpen(true);
+    setOpenValidationThemeIds((current) => current.has(themeId) ? current : new Set(current).add(themeId));
+    setPendingMetricDiagnosticId(metricId);
+  };
+  const handleValidationThemeOpenChange = (themeId: string, open: boolean) => {
+    setOpenValidationThemeIds((current) => {
+      if (current.has(themeId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(themeId);
+      else next.delete(themeId);
+      return next;
+    });
   };
 
   return (
@@ -931,10 +962,6 @@ export function ValidationPage() {
             </p>
             <p className="validation-evidence-statement">
               The evidence used to validate this model was from <strong>{selectedValidationTargetYear}</strong>.
-            </p>
-            <p className="validation-calibration-guidance">
-              If you want to understand the difference between two models, visit the{' '}
-              <Link to={calibrationPageHref}>calibration page</Link>.
             </p>
           </div>
           <ValidationStatusLegend />
@@ -1013,6 +1040,10 @@ export function ValidationPage() {
             </section>
           </div>
         </div>
+        <p className="validation-calibration-guidance">
+          If you want to understand the difference between two models, visit the{' '}
+          <Link to={calibrationPageHref}>calibration page</Link>.
+        </p>
       </article>
 
       {selectionNotice && <p className="info-banner">{selectionNotice}</p>}
@@ -1025,6 +1056,7 @@ export function ValidationPage() {
           <CollapsibleSection
             className="results-card validation-summary-card"
             title="Summary card"
+            description="Overall validation results, strongest areas, and the largest gaps."
             summary={comparisonSummary
               ? `${summary.version} compared with ${comparisonSummary.version}`
               : `${versionLabel(summary.version)} · ${summary.validationTargetYear} evidence`}
@@ -1178,9 +1210,11 @@ export function ValidationPage() {
 
           <CollapsibleSection
             className="results-card validation-outcome-diagnostics"
-            title="Outcome diagnostics"
+            title="Outcome comparisons"
+            description="A closer look at how each model outcome compares with UK evidence."
             summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}
-            defaultOpen={false}
+            open={isOutcomeComparisonsOpen}
+            onOpenChange={setIsOutcomeComparisonsOpen}
           >
             <div className="validation-overview-header">
               <div>
@@ -1211,7 +1245,8 @@ export function ValidationPage() {
                   className="validation-theme"
                   title={theme.title}
                   summary={describeThemeStatuses(metrics)}
-                  defaultOpen={false}
+                  open={openValidationThemeIds.has(theme.id)}
+                  onOpenChange={(open) => handleValidationThemeOpenChange(theme.id, open)}
                 >
                   {metrics.length === 0 && <p className="info-banner">No metrics available for this theme.</p>}
                   {isShapeTheme && (
@@ -1236,15 +1271,14 @@ export function ValidationPage() {
           <CollapsibleSection
             className="results-card validation-audit-disclosure"
             title="Validation methodology"
+            description="How the model is tested, which evidence is used, and how results are scored."
             summary="Protocol, evidence, and loss calculation"
             defaultOpen={false}
           >
             <p>Validation asks how far the multi-seed model summary sits from an empirical target and whether seed outcomes consistently fall inside its target band.</p>
-            <details className="validation-loss-method">
-              <summary>How validation loss is calculated</summary>
-              <p>Positive levels use log-ratio distance; signed metrics use robust additive distance; tenure shares use bounded-domain-normalised percentage-point distance; and JSD uses bounded low-is-better scoring. Spread and seeds outside the band also contribute. Target bands determine pass, warning, and fail status.</p>
-              <p>The weighted composite aggregates metric losses for comparative ranking. Its family-specific scales, transforms, distance, spread, and inside-band components are retained in the payload and metric audit detail; it is not a probability, confidence interval, or hypothesis-test statistic.</p>
-            </details>
+            <h3>How validation loss is calculated</h3>
+            <p>Positive levels use log-ratio distance; signed metrics use robust additive distance; tenure shares use bounded-domain-normalised percentage-point distance; and JSD uses bounded low-is-better scoring. Spread and seeds outside the band also contribute. Target bands determine pass, warning, and fail status.</p>
+            <p>The weighted composite aggregates metric losses for comparative ranking. Its family-specific scales, transforms, distance, spread, and inside-band components are retained in the payload and metric audit detail; it is not a probability, confidence interval, or hypothesis-test statistic.</p>
           </CollapsibleSection>
         </>
       )}

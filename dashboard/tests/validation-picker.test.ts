@@ -2,12 +2,56 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { CollapsibleSection } from '../src/components/CollapsibleSection.js';
 import { MODEL_ANCHORS } from '../src/lib/modelAnchors.js';
 import {
+  describeThemeStatuses,
+  findValidationThemeId,
   formatValidationScorecardValue,
   ValidationModelOptions,
   ValidationPage
 } from '../src/pages/ValidationPage.js';
+
+assert.equal(
+  describeThemeStatuses(Array.from({ length: 5 }, () => ({ status: 'fail' as const }))),
+  '5/5 fail',
+  'Theme summaries should show the failing count over the total metric count'
+);
+assert.equal(
+  describeThemeStatuses([
+    { status: 'pass' },
+    { status: 'fail' },
+    { status: 'warn' },
+    { status: 'pass' },
+    { status: 'fail' }
+  ]),
+  '2/5 fail · 1/5 warn · 2/5 pass',
+  'Mixed theme summaries should use the same total for every status'
+);
+assert.equal(findValidationThemeId('core_advancesToBTL'), 'activity');
+assert.equal(findValidationThemeId('housing_wealth_distribution_jsd'), 'distribution');
+assert.equal(findValidationThemeId('core_housingTransactions'), 'activity');
+
+const describedDisclosureMarkup = renderToStaticMarkup(
+  createElement(
+    CollapsibleSection,
+    {
+      title: 'Summary card',
+      description: 'Description beside the title block.',
+      summary: 'Original summary at the row end',
+      children: createElement('p', null, 'Disclosure content')
+    }
+  )
+);
+assert.match(
+  describedDisclosureMarkup,
+  /collapsible-section-title[^>]*>Summary card<\/span>[\s\S]*?collapsible-section-description[^>]*>Description beside the title block\.<\/span>[\s\S]*?collapsible-section-summary[^>]*>Original summary at the row end<\/span>/,
+  'Described disclosures should stack title then description, with the summary at the far right of the row'
+);
+assert.ok(
+  describedDisclosureMarkup.includes('collapsible-section-heading-copy'),
+  'Described disclosures should stack the description directly beneath the title'
+);
 
 function renderValidation(entry: string): string {
   return renderToStaticMarkup(
@@ -28,7 +72,17 @@ assert.equal(singleMarkup.includes('>Evidence year</span>'), false, 'Evidence ye
 assert.ok(
   singleMarkup.includes('If you want to understand the difference between two models, visit the') &&
     singleMarkup.includes('>calibration page</a>'),
-  'The validation description should always direct users to calibration for model differences'
+  'Validation should always direct users to calibration for model differences'
+);
+assert.ok(
+  singleMarkup.indexOf('If you want to understand the difference between two models, visit the') >
+    singleMarkup.indexOf('Check Compare to enable this column.'),
+  'The calibration guidance should appear below the complete model selection interface'
+);
+assert.match(
+  singleMarkup,
+  /visit the <a href="[^"]+">calibration page<\/a>\./,
+  'Only “calibration page” should be linked in the guidance sentence'
 );
 assert.ok(
   singleMarkup.includes('/model-evidence?view=calibration&amp;mode=single&amp;version=v5o3'),

@@ -48,18 +48,75 @@ const PARAMETER_COPY: Record<string, Omit<CalibrationParameterRecord, 'value' | 
 };
 
 const PARAMETER_KEYS = Object.keys(PARAMETER_COPY);
-const ANCHORS: Record<string, { name: string; data: string; fit: string; method: string; inheritance: string | null }> = {
-  v0: { name: 'Original 2011 model', data: '2011', fit: '2011', method: 'Original documented output calibration', inheritance: null },
-  v0o7: { name: 'Refitted 2011 model', data: '2011', fit: '2011', method: 'TuRBO-1 with snapped local refinement', inheritance: 'Refitted from v0 against the 2011 evidence profile.' },
-  'v4.26': { name: '2024 data model', data: '2024', fit: '2011', method: 'Inherited original behavioural fit', inheritance: 'Uses updated 2024 empirical inputs but inherits the behavioural values fitted for v0 to 2011 evidence.' },
-  v5o3: { name: 'Refitted 2024 model', data: '2024', fit: '2024', method: 'TuRBO-1 with snapped local refinement', inheritance: 'Refitted from v4.26 against the 2024 evidence profile.' }
+const CHANGELOG_PATH = 'CALIBRATION_PARAMETER_CHANGELOG.md';
+const TURBO_METHOD = 'TuRBO-1 Bayesian optimisation with snapped local refinement';
+
+type CampaignDefinition =
+  | { kind: 'refitted'; evidenceYear: number; startingVersion: string; artifactDirectory: string }
+  | { kind: 'original'; evidenceYear: number; method: string; provenance: string[] }
+  | { kind: 'inherited'; evidenceYear: number; sourceVersion: string; provenance: string[] };
+
+interface ModelProvenanceDefinition {
+  name: string;
+  dataVintage: string;
+  fitVintage: string;
+  method: string;
+  inheritance: string | null;
+  campaign: CampaignDefinition;
+}
+
+const MODEL_PROVENANCE: Record<string, ModelProvenanceDefinition> = {
+  v0: {
+    name: 'Original 2011 model', dataVintage: '2011', fitVintage: '2011',
+    method: 'Published simulated method of moments (SMM) calibration', inheritance: null,
+    campaign: {
+      kind: 'original', evidenceYear: 2011,
+      method: 'Published simulated method of moments (SMM) calibration',
+      provenance: [
+        'v0/config.properties',
+        'calibration-evidence/output-grid-smm-v0-2011-carro-3level/OutputGridSmmMetadata.json'
+      ]
+    }
+  },
+  v0o7: {
+    name: 'Refitted 2011 model', dataVintage: '2011', fitVintage: '2011',
+    method: TURBO_METHOD, inheritance: 'Refitted from v0 against the 2011 evidence profile.',
+    campaign: {
+      kind: 'refitted', evidenceYear: 2011, startingVersion: 'v0',
+      artifactDirectory: 'calibration-evidence/output-five-parameter-turbo-v0o7'
+    }
+  },
+  'v4.26': {
+    name: '2024 data model', dataVintage: '2024', fitVintage: '2011',
+    method: 'Inherited original behavioural fit',
+    inheritance: 'Uses updated 2024 empirical inputs but inherits the behavioural values fitted for v0 to 2011 evidence.',
+    campaign: {
+      kind: 'inherited', evidenceYear: 2011, sourceVersion: 'v0',
+      provenance: ['v0/config.properties', 'v4.26/config.properties', CHANGELOG_PATH]
+    }
+  },
+  v5o3: {
+    name: 'Refitted 2024 model', dataVintage: '2024', fitVintage: '2024',
+    method: TURBO_METHOD, inheritance: 'Refitted from v4.26 against the 2024 evidence profile.',
+    campaign: {
+      kind: 'refitted', evidenceYear: 2024, startingVersion: 'v4.26',
+      artifactDirectory: 'calibration-evidence/output-five-parameter-turbo-v5o3'
+    }
+  }
 };
 
 interface TurboSummary {
+  workflow?: string;
+  sourceVersion?: string;
   validationProfile?: { validationTargetYear?: number };
   validationObjective?: string;
   baseline?: { overallCompositeLoss?: number };
-  selected?: { overallCompositeLoss?: number };
+  selected?: {
+    overallCompositeLoss?: number;
+    improvesTotalLoss?: boolean;
+    hpiConstrainedEligible?: boolean;
+    hpiMetricLossRegressions?: string[];
+  };
   parameterSpecs?: { name: string; lower: number; upper: number; prior_lower: number; prior_upper: number }[];
   observations?: { metric_id: string }[];
   seeds?: number[];
@@ -91,41 +148,107 @@ function groupsFor(observations: { metric_id: string }[] = []) {
   return [...grouped].map(([name, indicators]) => ({ name, indicators, count: indicators.length }));
 }
 
-function emptyCampaign(method: string, evidenceYear: number | null, provenance: string[]): CalibrationCampaign {
+function existingProvenance(dataRoot: string, candidates: string[]): string[] {
+  return candidates.filter((candidate) => fs.existsSync(path.join(dataRoot, candidate)));
+}
+
+function unavailableCampaign(dataRoot: string, version: string, evidenceYear: number | null, provenance: string[] = []): CalibrationCampaign {
   return {
-    evidenceYear, method, objective: 'Not recorded', targetGroups: [], baselineLoss: null,
-    selectedLoss: null, improvement: null, promotion: 'Not recorded', guardrail: 'Not recorded',
-    seeds: null, simulationSteps: null, analysisWindow: null, optimisationSettings: [], provenance
+    kind: 'unavailable',
+    evidenceYear,
+    provenance: existingProvenance(dataRoot, [`${version}/config.properties`, ...provenance, CHANGELOG_PATH])
   };
 }
 
-function turboCampaign(dataRoot: string, version: 'v0o7' | 'v5o3'): { campaign: CalibrationCampaign; specs: TurboSummary['parameterSpecs'] } | null {
-  const artifact = path.join(dataRoot, 'calibration-evidence', `output-five-parameter-turbo-${version}`, 'OutputParameterTurboCalibrationSummary.json');
-  if (!fs.existsSync(artifact)) return null;
-  const summary = JSON.parse(fs.readFileSync(artifact, 'utf8')) as TurboSummary;
-  const baseline = summary.baseline?.overallCompositeLoss ?? null;
-  const selected = summary.selected?.overallCompositeLoss ?? null;
+function optionalSetting(label: string, value: number | undefined): string | null {
+  return typeof value === 'number' && Number.isFinite(value) ? `${label}: ${value}` : null;
+}
+
+function turboCampaign(
+  dataRoot: string,
+  version: string,
+  definition: Extract<CampaignDefinition, { kind: 'refitted' }>
+): { campaign: CalibrationCampaign; specs: TurboSummary['parameterSpecs'] } {
+  const summaryPath = `${definition.artifactDirectory}/OutputParameterTurboCalibrationSummary.json`;
+  const artifact = path.join(dataRoot, summaryPath);
+  const supportingProvenance = [
+    `${definition.artifactDirectory}/OutputParameterTurboMetadata.json`,
+    `${definition.artifactDirectory}/README.md`
+  ];
+  if (!fs.existsSync(artifact)) {
+    return {
+      campaign: unavailableCampaign(dataRoot, version, definition.evidenceYear, supportingProvenance),
+      specs: []
+    };
+  }
+
+  let summary: TurboSummary;
+  try {
+    summary = JSON.parse(fs.readFileSync(artifact, 'utf8')) as TurboSummary;
+  } catch {
+    return {
+      campaign: unavailableCampaign(dataRoot, version, definition.evidenceYear, supportingProvenance),
+      specs: []
+    };
+  }
+
+  const baseline = summary.baseline?.overallCompositeLoss;
+  const selected = summary.selected?.overallCompositeLoss;
+  const evidenceYear = summary.validationProfile?.validationTargetYear;
+  const sourceVersion = summary.sourceVersion?.trim();
+  const targetGroups = groupsFor(summary.observations);
+  const targetOutcomeCount = summary.observations?.length ?? 0;
+  const tunedParameterCount = summary.parameterSpecs?.length ?? 0;
+  const promotionAccepted = summary.localRefinement?.promotionAccepted;
+  const improvesTotalLoss = summary.selected?.improvesTotalLoss;
+  const hpiConstrainedEligible = summary.selected?.hpiConstrainedEligible;
+  const complete = summary.workflow === 'five-parameter-turbo'
+    && sourceVersion === definition.startingVersion
+    && evidenceYear === definition.evidenceYear
+    && typeof baseline === 'number' && Number.isFinite(baseline)
+    && typeof selected === 'number' && Number.isFinite(selected)
+    && tunedParameterCount === PARAMETER_KEYS.length
+    && targetOutcomeCount > 0
+    && typeof promotionAccepted === 'boolean'
+    && typeof improvesTotalLoss === 'boolean'
+    && typeof hpiConstrainedEligible === 'boolean';
+
+  if (!complete) {
+    return {
+      campaign: unavailableCampaign(dataRoot, version, definition.evidenceYear, [summaryPath, ...supportingProvenance]),
+      specs: summary.parameterSpecs ?? []
+    };
+  }
+
+  const optimisationSettings = [
+    optionalSetting('Initial points', summary.initialPoints),
+    optionalSetting('Maximum evaluations', summary.maxEvaluations),
+    optionalSetting('Candidate batch', summary.candidateBatchSize),
+    optionalSetting('Workers', summary.workers),
+    optionalSetting('RNG seed', summary.rngSeed),
+    optionalSetting('Local candidates evaluated', summary.localRefinement?.evaluatedCandidateCount)
+  ].filter((setting): setting is string => setting !== null);
+
   return {
     specs: summary.parameterSpecs,
     campaign: {
-      evidenceYear: summary.validationProfile?.validationTargetYear ?? null,
-      method: 'TuRBO-1 Bayesian optimisation with snapped local refinement',
-      objective: summary.validationObjective === 'family_aware_metric_loss' ? 'Minimise family-aware composite validation loss' : summary.validationObjective ?? 'Not recorded',
-      targetGroups: groupsFor(summary.observations), baselineLoss: baseline, selectedLoss: selected,
-      improvement: baseline === null || selected === null ? null : baseline - selected,
-      promotion: summary.localRefinement?.promotionAccepted ? 'Promoted' : 'Not promoted',
-      guardrail: summary.finalValidationNote ?? 'Not recorded', seeds: summary.seeds ?? null,
+      kind: 'refitted', evidenceYear, startingVersion: sourceVersion,
+      method: TURBO_METHOD, tunedParameterCount, targetOutcomeCount,
+      objective: summary.validationObjective === 'family_aware_metric_loss'
+        ? 'Minimise family-aware composite validation loss'
+        : summary.validationObjective ?? null,
+      targetGroups, baselineLoss: baseline, selectedLoss: selected,
+      absoluteImprovement: baseline - selected,
+      passedChecks: improvesTotalLoss && hpiConstrainedEligible
+        && (summary.selected?.hpiMetricLossRegressions?.length ?? 0) === 0,
+      selected: promotionAccepted,
+      guardrail: summary.finalValidationNote?.trim() || null,
+      seeds: summary.seeds ?? null,
       simulationSteps: summary.nSteps ?? null,
       analysisWindow: summary.validationWindow ? { start: summary.validationWindow.startIndex, end: summary.validationWindow.endIndex } : null,
-      optimisationSettings: [
-        `Initial points: ${summary.initialPoints ?? 'Not recorded'}`,
-        `Maximum evaluations: ${summary.maxEvaluations ?? 'Not recorded'}`,
-        `Candidate batch: ${summary.candidateBatchSize ?? 'Not recorded'}`,
-        `Workers: ${summary.workers ?? 'Not recorded'}`,
-        `RNG seed: ${summary.rngSeed ?? 'Not recorded'}`,
-        `Local candidates evaluated: ${summary.localRefinement?.evaluatedCandidateCount ?? 'Not recorded'}`
-      ],
-      provenance: [path.relative(dataRoot, artifact)]
+      optimisationSettings,
+      artifactPath: summaryPath,
+      provenance: existingProvenance(dataRoot, [...supportingProvenance, CHANGELOG_PATH])
     }
   };
 }
@@ -133,12 +256,30 @@ function turboCampaign(dataRoot: string, version: 'v0o7' | 'v5o3'): { campaign: 
 function modelOverview(pathsInput: RuntimePathInput, version: string): CalibrationModelOverview {
   const paths = resolveRuntimePaths(pathsInput);
   const config = parseConfigFile(getConfigPath(paths, version));
-  const anchor = ANCHORS[version];
-  const turbo = version === 'v0o7' || version === 'v5o3' ? turboCampaign(paths.dataRoot, version) : null;
-  let campaign = turbo?.campaign ?? emptyCampaign(anchor?.method ?? 'Not recorded', anchor ? Number(anchor.fit) : null, ['CALIBRATION_PARAMETER_CHANGELOG.md']);
-  if (version === 'v0') campaign = { ...campaign, objective: 'Fit unobservable behavioural assumptions to the original 2011 model evidence', promotion: 'Original published configuration' };
-  if (version === 'v4.26') campaign = { ...campaign, objective: 'No new behavioural campaign; values inherited from v0', promotion: 'Inherited unchanged' };
-  const specs = new Map((turbo?.specs ?? []).map((spec) => [spec.name, spec]));
+  const provenance = MODEL_PROVENANCE[version];
+  let campaign: CalibrationCampaign;
+  let campaignSpecs: TurboSummary['parameterSpecs'] = [];
+  if (!provenance) {
+    campaign = unavailableCampaign(paths.dataRoot, version, null);
+  } else if (provenance.campaign.kind === 'refitted') {
+    const turbo = turboCampaign(paths.dataRoot, version, provenance.campaign);
+    campaign = turbo.campaign;
+    campaignSpecs = turbo.specs;
+  } else if (provenance.campaign.kind === 'original') {
+    campaign = {
+      kind: 'original', evidenceYear: provenance.campaign.evidenceYear,
+      method: provenance.campaign.method, status: 'Original published configuration',
+      provenance: existingProvenance(paths.dataRoot, provenance.campaign.provenance)
+    };
+  } else {
+    campaign = {
+      kind: 'inherited', evidenceYear: provenance.campaign.evidenceYear,
+      sourceVersion: provenance.campaign.sourceVersion, parametersUnchanged: true,
+      provenance: existingProvenance(paths.dataRoot, provenance.campaign.provenance)
+    };
+  }
+
+  const specs = new Map((campaignSpecs ?? []).map((spec) => [spec.name, spec]));
   const parameters = PARAMETER_KEYS.map((key) => {
     const value = Number(config.get(key));
     if (!Number.isFinite(value)) throw new Error(`Missing numeric calibration parameter ${key} in ${version}`);
@@ -147,9 +288,9 @@ function modelOverview(pathsInput: RuntimePathInput, version: string): Calibrati
   });
   return {
     identity: {
-      version, name: anchor?.name ?? `${version} historical calibration step`,
-      dataVintage: anchor?.data ?? 'Not recorded', fitVintage: anchor?.fit ?? 'Not recorded',
-      method: anchor?.method ?? 'Not recorded', inheritance: anchor?.inheritance ?? null
+      version, name: provenance?.name ?? `${version} historical calibration step`,
+      dataVintage: provenance?.dataVintage ?? 'Not recorded', fitVintage: provenance?.fitVintage ?? 'Not recorded',
+      method: provenance?.method ?? 'Not recorded', inheritance: provenance?.inheritance ?? null
     }, campaign, parameters
   };
 }

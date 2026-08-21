@@ -8790,6 +8790,7 @@ assert.ok(
 );
 
 const validationPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ValidationPage.tsx'), 'utf-8');
+const collapsibleSectionSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/components/CollapsibleSection.tsx'), 'utf-8');
 const eChartSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/components/EChart.tsx'), 'utf-8');
 const publicRoutesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/routes/publicRoutes.ts'), 'utf-8');
 const serviceSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/service.ts'), 'utf-8');
@@ -9044,6 +9045,17 @@ assert.ok(
   'Validation page should wire chart point clicks to 2024 and 2011 version-year selection'
 );
 }
+const validationCalibrationGuidanceIndex = validationPageSource.indexOf(
+  '<p className="validation-calibration-guidance">'
+);
+assert.ok(
+  validationCalibrationGuidanceIndex > validationPageSource.indexOf('name="validation-comparison-model"') &&
+    validationCalibrationGuidanceIndex < validationPageSource.indexOf('{selectionNotice &&') &&
+    validationPageSource.includes('If you want to understand the difference between two models, visit the') &&
+    validationPageSource.includes('<Link to={calibrationPageHref}>calibration page</Link>.') &&
+    manualResultsStylesSource.includes('.validation-calibration-guidance'),
+  'Validation should place its Calibration guidance below both model selectors'
+);
 assert.ok(
   validationPageSource.includes('Comparative validation loss — lower is better') &&
     validationPageSource.includes('Unweighted mean of {summary.metrics.length} metric losses.') &&
@@ -9079,10 +9091,12 @@ assert.ok(
 assert.ok(
   validationPageSource.includes('className="results-card validation-summary-card"') &&
     validationPageSource.includes('title="Summary card"') &&
+    validationPageSource.includes('description="Overall validation results, strongest areas, and the largest gaps."') &&
+    validationPageSource.includes('summary={comparisonSummary') &&
     validationPageSource.includes('`${summary.version} compared with ${comparisonSummary.version}`') &&
     validationPageSource.includes('defaultOpen={false}') &&
     manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-title'),
-  'The complete validation scorecard should sit inside a collapsed Summary card disclosure'
+  'The collapsed Summary card should show its model summary below the title and its description alongside'
 );
 assert.ok(
   validationPageSource.includes('Models tested against 2024 UK evidence') &&
@@ -9129,30 +9143,63 @@ assert.ok(
 assert.ok(
   validationPageSource.includes('describeThemeStatuses') &&
     validationPageSource.includes('<CollapsibleSection') &&
-    /className="validation-theme"[\s\S]*?summary=\{describeThemeStatuses\(metrics\)\}[\s\S]*?defaultOpen=\{false\}/.test(validationPageSource) &&
+    /className="validation-theme"[\s\S]*?summary=\{describeThemeStatuses\(metrics\)\}[\s\S]*?open=\{openValidationThemeIds\.has\(theme\.id\)\}[\s\S]*?onOpenChange=/.test(validationPageSource) &&
+    validationPageSource.includes('`${entry.count}/${metrics.length} ${entry.status}`') &&
     !validationPageSource.includes("metrics.some((metric) => metric.status === 'fail')") &&
     validationPageSource.includes('Seeds in band'),
-  'Outcome diagnostics should group themes into sections that are all collapsed by default'
+  'Outcome comparison themes should be controllable and show status counts over each theme total'
 );
 assert.ok(
   validationPageSource.includes('className="results-card validation-outcome-diagnostics"') &&
-    validationPageSource.includes('title="Outcome diagnostics"') &&
+    validationPageSource.includes('title="Outcome comparisons"') &&
+    !validationPageSource.includes('title="Outcome diagnostics"') &&
+    validationPageSource.includes('description="A closer look at how each model outcome compares with UK evidence."') &&
     validationPageSource.includes('summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}') &&
-    validationPageSource.includes('defaultOpen={false}'),
-  'Outcome diagnostics should itself be a collapsed disclosure with a useful metric summary'
+    validationPageSource.includes('open={isOutcomeComparisonsOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsOutcomeComparisonsOpen}'),
+  'Outcome comparisons should show its metric summary below the title and remain programmatically openable'
 );
 assert.ok(
   manualResultsStylesSource.includes('.validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-title') &&
     manualResultsStylesSource.includes('.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-title') &&
     manualResultsStylesSource.includes('font-size: 1.17em;'),
-  'Outcome diagnostics should match the Validation methodology heading typography'
+  'Outcome comparisons should match the Validation methodology heading typography'
 );
 assert.ok(
   validationPageSource.includes('className="results-card validation-audit-disclosure"') &&
     validationPageSource.includes('title="Validation methodology"') &&
+    validationPageSource.includes('description="How the model is tested, which evidence is used, and how results are scored."') &&
     validationPageSource.includes('summary="Protocol, evidence, and loss calculation"') &&
     validationPageSource.includes('defaultOpen={false}'),
-  'Validation methodology should use the shared disclosure with a left-side state arrow'
+  'Collapsed Validation methodology should show its description below the title and its method summary at the row end'
+);
+assert.ok(
+  validationPageSource.includes('<h3>How validation loss is calculated</h3>') &&
+    !validationPageSource.includes('<details className="validation-loss-method">') &&
+    !validationPageSource.includes('<summary>How validation loss is calculated</summary>'),
+  'Validation loss guidance should be ordinary methodology content rather than a nested disclosure'
+);
+assert.ok(
+  collapsibleSectionSource.includes('className="collapsible-section-heading-copy"') &&
+    collapsibleSectionSource.includes('{summary ? <span className="collapsible-section-summary">{summary}</span> : null}') &&
+    manualResultsStylesSource.includes('.collapsible-section-description') &&
+    manualResultsStylesSource.includes('.collapsible-section-heading-copy') &&
+    /\.collapsible-section-summary \{[^}]*margin-left: auto;[^}]*text-align: right;/.test(manualResultsStylesSource) &&
+    manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-summary') &&
+    manualResultsStylesSource.includes('.validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-summary') &&
+    manualResultsStylesSource.includes('.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary') &&
+    /@media \(max-width: 760px\)[\s\S]*?\.validation-summary-card > \.collapsible-section-toggle,[\s\S]*?flex-direction: column;[\s\S]*?\.collapsible-section-summary,[\s\S]*?text-align: left;/.test(manualResultsStylesSource),
+  'Validation descriptions should sit below their titles while summaries stack left on narrow screens'
+);
+assert.ok(
+  validationPageSource.includes('findValidationThemeId(metricId)') &&
+    validationPageSource.includes('setIsOutcomeComparisonsOpen(true)') &&
+    validationPageSource.includes('setOpenValidationThemeIds') &&
+    validationPageSource.includes('setPendingMetricDiagnosticId(metricId)') &&
+    validationPageSource.includes('row.open = true') &&
+    validationPageSource.includes("row.scrollIntoView({ behavior: 'smooth', block: 'center' })") &&
+    validationPageSource.includes("row.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true })"),
+  'Largest-gap buttons should open the comparisons section, its matching theme, and the focused metric row'
 );
 assert.ok(
   validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
@@ -9188,6 +9235,8 @@ assert.ok(
 );
 
 const comparePageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ComparePage.tsx'), 'utf-8');
+const calibrationOverviewSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/calibrationOverview.ts'), 'utf-8');
+const sharedTypesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/shared/types.ts'), 'utf-8');
 assert.ok(
     comparePageSource.includes('className="results-card calibration-evidence-introduction"') &&
     comparePageSource.includes('className="validation-introduction-copy"') &&
@@ -9221,11 +9270,93 @@ assert.ok(
     manualResultsStylesSource.includes('.calibration-model-picker { min-width: 0; }'),
   'Calibration should reuse Validation model cards and enable the visible comparison column with a checkbox'
 );
+const calibrationGuidanceIndex = comparePageSource.indexOf('<CalibrationValidationGuidance');
+assert.ok(
+  comparePageSource.includes('If you want to see how well the model matches UK evidence, visit the') &&
+    comparePageSource.includes('{href ? <Link to={href}>validation page</Link> : <span>validation page</span>}') &&
+    comparePageSource.includes("query.set('view', 'validation')") &&
+    comparePageSource.includes("query.set('version', primary)") &&
+    comparePageSource.includes("query.set('comparisonVersion', comparison)") &&
+    comparePageSource.includes("returnContext.source === 'scenario' ? 'scenarioStep' : 'sensitivityStep'") &&
+    !comparePageSource.includes("query.set('evidenceYear'") &&
+    calibrationGuidanceIndex > comparePageSource.indexOf('name="calibration-comparison-model"') &&
+    calibrationGuidanceIndex < comparePageSource.indexOf('{error &&') &&
+    comparePageSource.includes('className="validation-calibration-guidance calibration-validation-guidance"') &&
+    manualResultsStylesSource.includes('.calibration-validation-guidance'),
+  'Calibration should link to Validation below both model pickers while preserving model and draft context'
+);
 assert.ok(
   !comparePageSource.includes('calibration-selected-model-summary') &&
     !comparePageSource.includes("title={mode === 'compare' ? 'Selected models' : 'Selected model'}") &&
     !manualResultsStylesSource.includes('.calibration-selected-model-summary'),
   'Calibration should rely on the visible model pickers without a duplicate selected-models section'
+);
+assert.ok(
+  sharedTypesSource.includes("kind: 'refitted' | 'original' | 'inherited' | 'unavailable';") &&
+    calibrationOverviewSource.includes('const MODEL_PROVENANCE: Record<string, ModelProvenanceDefinition>') &&
+    calibrationOverviewSource.includes("kind: 'unavailable'") &&
+    comparePageSource.includes('export function BehaviouralParameterOriginSection') &&
+    comparePageSource.includes('How the behavioural parameters were obtained') &&
+    comparePageSource.includes('Where this model’s five fitted behavioural values came from.') &&
+    comparePageSource.includes("campaign.kind === 'refitted'") &&
+    comparePageSource.includes("campaign.kind === 'original'") &&
+    comparePageSource.includes("campaign.kind === 'inherited'") &&
+    comparePageSource.includes("campaign.kind === 'unavailable'") &&
+    comparePageSource.includes('Optimiser settings and provenance') &&
+    comparePageSource.includes('A detailed behavioural-calibration record is not available for this model version.') &&
+    !comparePageSource.includes('View indicator-level fit') &&
+    !comparePageSource.includes('validationHref') &&
+    !comparePageSource.includes('<p className="eyebrow">Calibration campaign</p>') &&
+    !comparePageSource.includes('Why output calibration is necessary') &&
+    !comparePageSource.includes('Seeds, run length, bounds and provenance'),
+  'Calibration provenance should be typed by model state and render the universal model-aware origin section'
+);
+assert.ok(
+  comparePageSource.includes('export function FittedParameterRow') &&
+    comparePageSource.includes('<details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>') &&
+    comparePageSource.includes('<summary className="calibration-parameter-summary">') &&
+    comparePageSource.includes('className="calibration-parameter-indicator"') &&
+    comparePageSource.includes('{parameter.name}') &&
+    comparePageSource.includes('{parameter.key}') &&
+    comparePageSource.includes("'Selected value'") &&
+    comparePageSource.indexOf("`${primaryVersion} value`") < comparePageSource.indexOf('{comparisonVersion} value') &&
+    comparePageSource.includes('Absolute difference') &&
+    comparePageSource.includes("changed ? 'Changed' : 'Unchanged'") &&
+    comparePageSource.includes('Range tested') &&
+    comparePageSource.indexOf('className="parameter-explanation-grid"') > comparePageSource.indexOf('</summary>') &&
+    /className="calibration-parameters"[\s\S]*?title="Five fitted behavioural parameters"[\s\S]*?defaultOpen/.test(comparePageSource) &&
+    !comparePageSource.includes('<article className="calibration-parameter-row">'),
+  'Every fitted behavioural parameter should be a collapsed native disclosure with its identifying and numerical fields in the summary'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.calibration-parameter-summary:hover') &&
+    manualResultsStylesSource.includes('.calibration-parameter-summary:focus-visible') &&
+    /\.parameter-row-head code \{[\s\S]*?background: transparent;/.test(manualResultsStylesSource) &&
+    manualResultsStylesSource.includes('.calibration-parameter-row[open] > .calibration-parameter-summary') &&
+    manualResultsStylesSource.includes('.calibration-parameter-body') &&
+    manualResultsStylesSource.includes('@media (max-width: 980px)') &&
+    manualResultsStylesSource.includes('.parameter-number-grid { grid-column: 2; }') &&
+    manualResultsStylesSource.includes('@media (max-width: 480px)'),
+  'Nested fitted-parameter disclosures should be compact, keyboard-visible, and stack their values beneath the name on narrow screens'
+);
+assert.ok(
+  comparePageSource.includes('export function AssumptionGroupDisclosure') &&
+    comparePageSource.includes('<details className="assumption-group">') &&
+    comparePageSource.includes('<summary className="assumption-group-summary">') &&
+    comparePageSource.includes('className="assumption-group-count"') &&
+    comparePageSource.includes('assumptionCount={items.length}') &&
+    comparePageSource.indexOf('className="assumption-table"') > comparePageSource.indexOf('</summary>') &&
+    manualResultsStylesSource.includes('.assumption-group + .assumption-group { border-top: 1px solid var(--rule); }') &&
+    manualResultsStylesSource.includes('.assumption-group-summary:hover') &&
+    manualResultsStylesSource.includes('.assumption-group-summary:focus-visible') &&
+    manualResultsStylesSource.includes('.assumption-group[open] > .assumption-group-summary .assumption-group-indicator') &&
+    !comparePageSource.includes('assumption-search') &&
+    !comparePageSource.includes('Search model assumptions') &&
+    !manualResultsStylesSource.includes('.assumption-search') &&
+    /\.assumption-table-head, \.assumption-table-row \{[\s\S]*?column-gap: clamp\(1\.25rem, 2\.2vw, 2rem\);/.test(manualResultsStylesSource) &&
+    /\.assumption-table-row \{[\s\S]*?padding: 1\.1rem 1rem;[\s\S]*?border-top: 1px solid var\(--rule\);/.test(manualResultsStylesSource) &&
+    /\.assumption-scalar-values > div \{[\s\S]*?grid-template-columns: minmax\(0, max-content\) max-content;[\s\S]*?column-gap: 0\.65rem;/.test(manualResultsStylesSource),
+  'Other model assumption groups should be collapsed native disclosures with visible counts, divided rows, and generous spacing'
 );
 assert.ok(
   comparePageSource.includes("const DEFAULT_OPEN_COMPARE_CARD_IDS = new Set<string>([") &&

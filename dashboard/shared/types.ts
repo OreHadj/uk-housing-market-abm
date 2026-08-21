@@ -79,22 +79,55 @@ export interface CalibrationParameterRecord {
   decreaseEffect: string;
 }
 
-export interface CalibrationCampaign {
+interface CalibrationCampaignBase {
+  kind: 'refitted' | 'original' | 'inherited' | 'unavailable';
   evidenceYear: number | null;
+  provenance: string[];
+}
+
+export interface RefittedCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'refitted';
+  evidenceYear: number;
+  startingVersion: string;
   method: string;
-  objective: string;
+  tunedParameterCount: number;
+  targetOutcomeCount: number;
+  objective: string | null;
   targetGroups: { name: string; indicators: string[]; count: number }[];
-  baselineLoss: number | null;
-  selectedLoss: number | null;
-  improvement: number | null;
-  promotion: string;
-  guardrail: string;
+  baselineLoss: number;
+  selectedLoss: number;
+  absoluteImprovement: number;
+  passedChecks: boolean;
+  selected: boolean;
+  guardrail: string | null;
   seeds: number[] | null;
   simulationSteps: number | null;
   analysisWindow: { start: number; end: number } | null;
   optimisationSettings: string[];
-  provenance: string[];
+  artifactPath: string;
 }
+
+export interface OriginalCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'original';
+  method: string;
+  status: 'Original published configuration';
+}
+
+export interface InheritedCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'inherited';
+  sourceVersion: string;
+  parametersUnchanged: true;
+}
+
+export interface UnavailableCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'unavailable';
+}
+
+export type CalibrationCampaign =
+  | RefittedCalibrationCampaign
+  | OriginalCalibrationCampaign
+  | InheritedCalibrationCampaign
+  | UnavailableCalibrationCampaign;
 
 export interface CalibrationModelOverview {
   identity: CalibrationModelIdentity;
