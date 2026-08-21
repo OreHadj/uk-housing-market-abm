@@ -9,6 +9,8 @@ import { SensitivityResultsView } from './view/SensitivityResultsView';
 export interface ExperimentRunRendererProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
+  initialScenarioStep?: number;
+  initialSensitivityStep?: number;
 }
 
 export interface ExperimentViewRendererProps {
@@ -80,14 +82,14 @@ const SensitivityViewRenderer: ComponentType<ExperimentViewRendererProps> = ({
 
 export const experimentTypeRegistry: Record<ExperimentType, ExperimentTypeDefinition> = {
   manual: {
-    label: 'Manual Parameters',
-    viewSidebarSubtitle: 'Baseline required, comparison optional.',
+    label: 'Scenario',
+    viewSidebarSubtitle: 'Selected run required, comparison optional.',
     RunSetupComponent: ManualRunSetupPanel,
     ViewComponent: ManualViewRenderer
   },
   sensitivity: {
-    label: 'Sensitivity',
-    viewSidebarSubtitle: 'Experiments',
+    label: 'Sensitivity analysis',
+    viewSidebarSubtitle: 'Completed and in-progress sensitivity analyses.',
     RunSetupComponent: SensitivityRunSetupPanel,
     ViewComponent: SensitivityViewRenderer
   }

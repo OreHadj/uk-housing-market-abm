@@ -1,14 +1,8 @@
 import type express from 'express';
-import { compareParameters, getHomePreview, getInProgressVersions, getParameterCatalog, getValidationOverview, getVersions } from '../lib/service';
+import { compareParameters, getInProgressVersions, getParameterCatalog, getValidationOverview, getVersions } from '../lib/service';
 import { resolveDashboardWriteAccess } from '../lib/writeAuth';
+import { getCalibrationOverview } from '../lib/calibrationOverview';
 import type { RouteContext } from './routeContext';
-
-const HOME_PREVIEW_PARAMETER_IDS = [
-  'wealth_given_income_joint',
-  'house_price_lognormal',
-  'downpayment_oo_lognormal',
-  'btl_probability_bins'
-];
 
 export function registerPublicRoutes(app: express.Express, context: RouteContext): void {
   app.get('/healthz', (_req, res) => {
@@ -91,7 +85,15 @@ export function registerPublicRoutes(app: express.Express, context: RouteContext
       const version = String(req.query.version ?? '').trim();
       const targetYearParam = Number.parseInt(String(req.query.validationTargetYear ?? '').trim(), 10);
       const validationTargetYear = [2011, 2024].includes(targetYearParam) ? targetYearParam : undefined;
-      res.json(getValidationOverview(context.runtimePaths, version || undefined, validationTargetYear));
+      const comparisonVersion = String(req.query.comparisonVersion ?? '').trim();
+      res.json(
+        getValidationOverview(
+          context.runtimePaths,
+          version || undefined,
+          validationTargetYear,
+          comparisonVersion || undefined
+        )
+      );
     } catch (error) {
       res.status(500).json({ error: (error as Error).message });
     }
@@ -101,15 +103,15 @@ export function registerPublicRoutes(app: express.Express, context: RouteContext
     res.json({ items: getParameterCatalog() });
   }));
 
-  app.get('/api/home-preview', context.withMemoryLogging('home-preview', (req, res) => {
-    const version = String(req.query.version ?? '').trim();
-    if (!version) {
-      res.status(400).json({ error: 'version query parameter is required' });
+  app.get('/api/calibration-overview', context.withMemoryLogging('calibration-overview', (req, res) => {
+    const primary = String(req.query.primary ?? '').trim();
+    const comparison = String(req.query.comparison ?? '').trim();
+    if (!primary) {
+      res.status(400).json({ error: 'primary query parameter is required' });
       return;
     }
-
     try {
-      res.json(getHomePreview(context.runtimePaths, version, HOME_PREVIEW_PARAMETER_IDS));
+      res.json(getCalibrationOverview(context.runtimePaths, primary, comparison || undefined));
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }

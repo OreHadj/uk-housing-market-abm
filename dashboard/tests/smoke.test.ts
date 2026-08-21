@@ -11,7 +11,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import {
   compareParameters,
-  getHomePreview,
   getInProgressVersions,
   getParameterCatalog,
   getValidationOverview,
@@ -104,6 +103,7 @@ import { compareVersions, listVersions, parseVersionParts } from '../server/lib/
 import { assertAxisSpecComplete, getAxisSpec } from '../src/lib/chartAxes.js';
 import { binnedOption } from '../src/lib/compareChartOptions.js';
 import {
+  buildExperimentsPath,
   buildExperimentSearchParams,
   normaliseExperimentRouteState,
   parseExperimentRouteState
@@ -115,16 +115,27 @@ import {
   validateTrustedDesktopIpcSender,
   type DesktopFrameLike
 } from '../shared/desktopSecurity.js';
-import { DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../shared/policyCatalogue.js';
+import { CENTRAL_BANK_POLICY_KEYS, DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../shared/policyCatalogue.js';
+import { CENTRAL_BANK_POLICY_DISPLAY } from '../shared/policyDisplay.js';
+import {
+  INSTRUMENT_POLICY_KEYS,
+  POLICY_INSTRUMENTS,
+  deriveChangedPolicyKeys,
+  deriveVisibleInstruments,
+  describeScenarioPolicy,
+  instrumentForPolicyKey
+} from '../src/lib/manualScenarioPolicy.js';
 import {
   KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
   computeKpiPercentDelta,
+  formatKpiComparisonDelta,
   formatKpiDeltaValue,
   formatKpiValue,
+  getKpiComparisonDeltaLabel,
   getKpiMetricValue,
   getKpiDeltaLabel,
-  groupIndicatorsBySource,
+  groupIndicatorsByPolicyQuestion,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -135,23 +146,31 @@ import { buildManualOverlayOption } from '../src/lib/manualOverlayChartOption.js
 import {
   buildResultsRunVersionLabelState,
   buildVersionLabelState,
-  extractVersionFromResultsRunId,
-  formatCalibrationVersionTitleLabel,
-  formatVersionOptionLabel,
-  getLatestStableVersion
+  extractVersionFromResultsRunId
 } from '../src/lib/versionLabels.js';
 import {
+  buildModelOptions,
+  formatModelName,
+  formatModelOptionLabel,
+  formatModelSubtitle,
+  getDefaultModelVersion
+} from '../src/lib/modelAnchors.js';
+import {
+  formatEvidenceNote,
   formatExperimentModelOption,
   orderExperimentModelOptions
 } from '../src/lib/experimentVersionOptions.js';
 import { buildResultsCompareSearchParams } from '../src/lib/api.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
+import { restoreScenarioDraft, type ScenarioDraftV1 } from '../src/lib/scenarioDraft.js';
 import { SensitivitySetupCard } from '../src/pages/run-experiments/SensitivitySetupCard.js';
+import { ExperimentsLandingPage } from '../src/pages/ExperimentsLandingPage.js';
 import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.js';
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
-  buildSensitivityGeneralOverridesFromForm,
+  buildGeneralModelControlOverridesFromForm,
+  normalizeManualScenarioFormValues,
   toInitialFormValues
 } from '../src/lib/experimentRunDefaults.js';
 import { buildDeltaTrendOption } from '../src/lib/sensitivityChartOptions.js';
@@ -193,6 +212,21 @@ function sumBinnedDensityMass(rows: number[][]): number {
 
 function assertClose(actual: number, expected: number, tolerance: number, message: string): void {
   assert.ok(Math.abs(actual - expected) <= tolerance, `${message}: expected ${expected}, got ${actual}`);
+}
+
+/**
+ * Mirrors applyBasePolicyToFormValues in useExperimentRunController: switching the baseline policy
+ * rewrites every known policy key to the new regime's value.
+ */
+function applyBasePolicyToFormValuesForTest(
+  currentValues: Record<string, string>,
+  baseValues: Record<string, number>
+): Record<string, string> {
+  const next = { ...currentValues };
+  for (const [key, value] of Object.entries(baseValues)) {
+    next[key] = String(value);
+  }
+  return next;
 }
 
 function visibleText(markup: string): string {
@@ -361,20 +395,20 @@ assert.deepEqual(
   'Expected post-200 KPI selection to discard values before model time 200'
 );
 
-const groupedIndicators = groupIndicatorsBySource([
+const groupedIndicators = groupIndicatorsByPolicyQuestion([
   {
-    id: 'core-price',
-    title: 'Core price',
-    units: 'GBP',
+    id: 'core_mortgageApprovals',
+    title: 'Mortgage approvals',
+    units: 'count/month',
     description: '',
     source: 'core_indicator',
     available: true,
     coverageStatus: 'supported'
   },
   {
-    id: 'output-sales',
-    title: 'Output sales',
-    units: 'count',
+    id: 'output_rentalAvSalePrice',
+    title: 'Average rent',
+    units: 'GBP',
     description: '',
     source: 'output',
     available: true,
@@ -384,10 +418,10 @@ const groupedIndicators = groupIndicatorsBySource([
 assert.deepEqual(
   groupedIndicators.map((group) => ({ id: group.id, ids: group.items.map((item) => item.id) })),
   [
-    { id: 'core_indicator', ids: ['core-price'] },
-    { id: 'output', ids: ['output-sales'] }
+    { id: 'credit_access', ids: ['core_mortgageApprovals'] },
+    { id: 'rental_spillovers', ids: ['output_rentalAvSalePrice'] }
   ],
-  'Expected manual results indicators to group by core_indicator and output'
+  'Expected manual results indicators to group by policy question'
 );
 
 const resolvedDefaultIndicators = resolveSelectedIndicatorIds(
@@ -567,6 +601,8 @@ const manualSelectionRuns = [
     createdAt: '2026-03-09T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -583,6 +619,8 @@ const manualSelectionRuns = [
     createdAt: '2026-03-08T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -599,6 +637,8 @@ const manualSelectionRuns = [
     createdAt: '2026-03-07T00:00:00.000Z',
     sizeBytes: 1,
     fileCount: 1,
+    title: null,
+    policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
     parseCoverage: {
@@ -614,9 +654,9 @@ assert.deepEqual(
   resolveManualRunSelection(manualSelectionRuns, '', ''),
   {
     baselineRunId: 'v0-output',
-    comparisonRunId: 'v4.0-output'
+    comparisonRunId: ''
   },
-  'Expected manual results default selection to prefer v0-output baseline and v4.0-output comparison'
+  'Expected manual results to open with the preferred baseline and no automatic cross-era comparison'
 );
 
 assert.deepEqual(
@@ -654,18 +694,8 @@ const originalRunLabelState = buildResultsRunVersionLabelState(
   manualRunVersions,
   manualRunInProgressVersions
 );
-assert.equal(originalRunLabelState?.isOriginal, true, 'Expected v0-output to resolve to the Original label state');
-
-const latestRunLabelState = buildResultsRunVersionLabelState(
-  'v4.0-output',
-  manualRunVersions,
-  manualRunInProgressVersions
-);
-assert.equal(
-  latestRunLabelState?.isLatest,
-  true,
-  'Expected v4.0-output to resolve to Latest when the newer v4.1 snapshot is still in progress'
-);
+assert.equal(originalRunLabelState?.version, 'v0', 'Expected v0-output to resolve to the v0 snapshot');
+assert.equal(originalRunLabelState?.isInProgress, false, 'Expected a completed snapshot not to be flagged in progress');
 
 const inProgressRunLabelState = buildResultsRunVersionLabelState(
   'v4.1-output',
@@ -673,15 +703,15 @@ const inProgressRunLabelState = buildResultsRunVersionLabelState(
   manualRunInProgressVersions
 );
 assert.equal(
-  inProgressRunLabelState?.isLatest,
-  false,
-  'Expected in-progress v4.1-output not to resolve to the Latest label state'
+  inProgressRunLabelState?.isInProgress,
+  true,
+  'Expected v4.1-output to inherit the in-progress state of its snapshot'
 );
 
 assert.equal(
   buildResultsRunVersionLabelState('fixture-complete-output', manualRunVersions, manualRunInProgressVersions),
   null,
-  'Expected custom run ids not to render Original/Latest labels'
+  'Expected custom run ids not to resolve to a snapshot label state'
 );
 
 const singleOverlayOption = buildManualOverlayOption(
@@ -816,21 +846,21 @@ assert.ok(
   'Expected delta trend y axis to span positive data without forcing zero'
 );
 
-const latestManualStatusMarkup = renderToStaticMarkup(
+const inProgressManualStatusMarkup = renderToStaticMarkup(
   createElement(ManualSelectionStatusPills, {
     status: 'complete',
-    versionLabelState: latestRunLabelState
+    versionLabelState: inProgressRunLabelState
   })
 );
 
 assert.ok(
-  latestManualStatusMarkup.includes('manual-selection-status-pills'),
+  inProgressManualStatusMarkup.includes('manual-selection-status-pills'),
   'Expected manual results summary status pills to render in a grouped container'
 );
 
 assert.ok(
-  latestManualStatusMarkup.includes('>complete<') && latestManualStatusMarkup.includes('>Latest<'),
-  'Expected the manual results summary status pills to render the Latest tag alongside the completion status'
+  inProgressManualStatusMarkup.includes('>complete<') && inProgressManualStatusMarkup.includes('>In progress<'),
+  'Expected the status pills to render the in-progress tag alongside the completion status'
 );
 
 const originalManualStatusMarkup = renderToStaticMarkup(
@@ -840,9 +870,13 @@ const originalManualStatusMarkup = renderToStaticMarkup(
   })
 );
 
+// "Latest" and "Original" pills were removed: both were derived from position in the version list
+// rather than from anything true about the model.
 assert.ok(
-  originalManualStatusMarkup.includes('>complete<') && originalManualStatusMarkup.includes('>Original<'),
-  'Expected the manual results summary status pills to render the Original tag alongside the completion status'
+  originalManualStatusMarkup.includes('>complete<') &&
+    !originalManualStatusMarkup.includes('>Latest<') &&
+    !originalManualStatusMarkup.includes('>Original<'),
+  'Expected a completed snapshot run to render only its completion status'
 );
 
 assert.equal(
@@ -920,6 +954,30 @@ assert.equal(
   'Expected non-percent KPI deltas to keep percent formatting'
 );
 
+assert.equal(
+  formatKpiComparisonDelta(100_000, 105_000, 'GBP'),
+  '+£5,000 (+5.00%)',
+  'Expected price comparisons to show both pound and relative changes'
+);
+
+assert.equal(
+  formatKpiComparisonDelta(4.5, 4.7, 'ratio'),
+  '+0.20x (+4.44%)',
+  'Expected ratio comparisons to show both ratio-point and relative changes'
+);
+
+assert.equal(
+  formatKpiComparisonDelta(2.7, 2.5, 'percentage points'),
+  '-0.20 pp',
+  'Expected interest-rate spread comparisons to use percentage-point changes'
+);
+
+assert.equal(
+  getKpiComparisonDeltaLabel('count/month'),
+  'count change',
+  'Expected count indicators to use an absolute-count change label'
+);
+
 const defaultExperimentRouteState = parseExperimentRouteState(new URLSearchParams(''));
 assert.deepEqual(
   defaultExperimentRouteState,
@@ -929,7 +987,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected empty experiment query params to default to sensitivity run setup.'
 );
@@ -945,7 +1004,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: 'manual:job-1'
+    jobRef: 'manual:job-1',
+    follow: false
   },
   'Expected invalid route selectors to fall back to sensitivity run setup while preserving run-mode job focus.'
 );
@@ -966,7 +1026,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: 'exp:42',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected sensitivity view state to keep only experimentId.'
 );
@@ -987,7 +1048,8 @@ assert.deepEqual(
     baselineRunId: 'v0-output',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected manual view state to drop duplicate comparison ids and incompatible params.'
 );
@@ -1003,7 +1065,8 @@ assert.deepEqual(
     baselineRunId: '',
     comparisonRunId: '',
     experimentId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   },
   'Expected legacy default manual run ids to normalize to an unset manual selection.'
 );
@@ -1030,7 +1093,8 @@ const encodedManualExperimentQuery = buildExperimentSearchParams({
   baselineRunId: 'v0-output',
   comparisonRunId: 'v4.0-output',
   experimentId: '',
-  jobRef: ''
+  jobRef: '',
+  follow: false
 }).toString();
 assert.equal(
   encodedManualExperimentQuery,
@@ -1044,12 +1108,41 @@ const encodedDefaultManualExperimentQuery = buildExperimentSearchParams({
   baselineRunId: 'default',
   comparisonRunId: '',
   experimentId: '',
-  jobRef: ''
+  jobRef: '',
+  follow: false
 }).toString();
 assert.equal(
   encodedDefaultManualExperimentQuery,
   'type=manual&mode=view',
   'Expected regenerated manual links to omit legacy default run ids.'
+);
+
+assert.equal(
+  buildExperimentsPath({
+    type: 'sensitivity',
+    mode: 'view',
+    baselineRunId: '',
+    comparisonRunId: '',
+    experimentId: '',
+    jobRef: '',
+    follow: false
+  }),
+  '/sensitivity?view=results',
+  'Expected sensitivity-result links without a selected experiment to open the results workspace.'
+);
+
+assert.equal(
+  buildExperimentsPath({
+    type: 'manual',
+    mode: 'view',
+    baselineRunId: '',
+    comparisonRunId: '',
+    experimentId: '',
+    jobRef: '',
+    follow: false
+  }),
+  '/scenarios?view=results',
+  'Expected manual-result links without a selected run to open the results workspace.'
 );
 
 const commaContainingManualRunId = 'Optimised 2011 model, default, 20-seed v0o7';
@@ -1820,7 +1913,7 @@ DATA_INCOME_GIVEN_AGE = "src/main/resources/Income.csv"
 
 function writeModelRunFixtureInputData(inputDataRoot: string): void {
   fs.mkdirSync(inputDataRoot, { recursive: true });
-  const baselines = ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v5o3'];
+  const baselines = ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v4.26', 'v5o3'];
   baselines.forEach((baseline, index) => {
     const baselinePath = path.join(inputDataRoot, baseline);
     fs.mkdirSync(baselinePath, { recursive: true });
@@ -3092,107 +3185,79 @@ assert.ok(
 );
 assert.ok(!inProgressVersions.includes('v4.0'), 'Expected v4.0 to be reported as a stable snapshot');
 assert.ok(!inProgressVersions.includes('v4.1'), 'Expected v4.1 to be reported as a stable snapshot after validation refresh');
-const latestStableVersion = getLatestStableVersion(versions, inProgressVersions);
-const expectedLatestStableVersion = [...versions].reverse().find((version) => !inProgressVersions.includes(version)) ?? '';
-assert.equal(latestStableVersion, expectedLatestStableVersion, 'Expected latest stable version helper to return newest non-progress snapshot');
-assert.notEqual(latestStableVersion, '', 'Expected at least one stable version to exist');
-const originalVersionState = buildVersionLabelState('v0', latestStableVersion, new Set(inProgressVersions));
-assert.ok(originalVersionState.isOriginal, 'Expected v0 to be labelled as original');
-assert.equal(
-  formatVersionOptionLabel('v0', originalVersionState),
-  'Original 2011 model (Original)',
-  'Expected v0 select label to use the standard original model name'
+const defaultModelVersion = getDefaultModelVersion(versions, inProgressVersions);
+assert.equal(defaultModelVersion, 'v5o3', 'Expected the newest anchor present to be the default model');
+
+// Only the four named models are offered for selection; the other ~54 snapshot folders remain on
+// disk as provenance and stay reachable by URL, not through a dropdown.
+const anchorOptions = buildModelOptions(versions, '');
+assert.deepEqual(
+  anchorOptions.map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3'],
+  'Expected the model selector to offer only the four anchors, in analytical order'
 );
-const combinedLabelState = buildVersionLabelState('v0', 'v0', new Set<string>());
-assert.equal(
-  formatVersionOptionLabel('v0', combinedLabelState),
-  'Original 2011 model (Latest, Original)',
-  'Expected combined labels to preserve Latest then Original ordering'
+assert.ok(
+  anchorOptions.every((option) => option.isAnchor),
+  'Expected every default option to be an anchor'
 );
-assert.equal(
-  formatVersionOptionLabel('v0o', buildVersionLabelState('v0o', latestStableVersion, new Set(inProgressVersions))),
-  'v0o',
-  'Expected v0o select labels to remain a raw legacy version label'
-);
-assert.equal(
-  formatVersionOptionLabel('v0o2', buildVersionLabelState('v0o2', latestStableVersion, new Set(inProgressVersions))),
-  'v0o2',
-  'Expected v0o2 select labels to remain a raw historical 2011 branch'
+assert.deepEqual(
+  anchorOptions.map((option) => option.label),
+  [
+    'Original 2011 model (v0)',
+    'Refitted 2011 model (v0o7)',
+    '2024 data model (v4.26)',
+    'Refitted 2024 model (v5o3)'
+  ],
+  'Expected anchor labels to lead with the name and keep the version id for reproducibility'
 );
 assert.equal(
-  formatVersionOptionLabel('v0o7', buildVersionLabelState('v0o7', latestStableVersion, new Set(inProgressVersions))),
-  'Optimised 2011 model',
-  'Expected v0o7 select labels to use the standard optimised model name'
+  formatModelSubtitle('v5o3'),
+  '2024 data \u00b7 behaviour refitted to 2024 evidence (TuRBO)',
+  'Expected the subtitle to state both the data era and the era the behaviour was fitted to'
 );
 assert.equal(
-  formatVersionOptionLabel('v0oo', buildVersionLabelState('v0oo', latestStableVersion, new Set(inProgressVersions))),
-  'v0oo',
-  'Expected v0oo select labels to remain a raw historical 2011 branch'
+  formatModelSubtitle('v4.26'),
+  '2024 data \u00b7 behaviour still fitted to 2011 evidence',
+  'Expected the 2024 data model to disclose that its behavioural fit is still the 2011 one'
+);
+
+// A deep link to an intermediate calibration step must keep working, so the selected version is
+// appended as an extra option rather than silently resetting to an anchor.
+const deepLinkOptions = buildModelOptions(versions, 'v4.19');
+assert.deepEqual(
+  deepLinkOptions.map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3', 'v4.19'],
+  'Expected an off-anchor selection to be appended to the anchor list'
 );
 assert.equal(
-  formatVersionOptionLabel('v0o6', buildVersionLabelState('v0o6', latestStableVersion, new Set(inProgressVersions))),
-  'v0o6',
-  'Expected v0o6 select labels to remain a raw historical 2011 branch'
+  deepLinkOptions[4]?.label,
+  'v4.19 \u2014 historical calibration step',
+  'Expected off-anchor options to stay a bare version id marked as provenance'
 );
+assert.equal(deepLinkOptions[4]?.isAnchor, false, 'Expected the deep-linked step not to be treated as an anchor');
 assert.equal(
-  formatVersionOptionLabel('v1.0', buildVersionLabelState('v1.0', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v1.0',
-  'Expected v1.0 select labels to identify the 2024 model family'
+  formatModelName('v4.19'),
+  'v4.19',
+  'Expected versions without an anchor name to fall back to the bare id on charts and titles'
 );
-assert.equal(
-  formatVersionOptionLabel('v4.4', buildVersionLabelState('v4.4', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v4.4',
-  'Expected v4.4 select labels to remain a standard 2024 model'
+assert.deepEqual(
+  buildModelOptions(versions, 'v0o7').map((option) => option.version),
+  ['v0', 'v0o7', 'v4.26', 'v5o3'],
+  'Expected selecting an anchor not to duplicate it'
 );
-assert.equal(
-  formatVersionOptionLabel('v5o3', buildVersionLabelState('v5o3', latestStableVersion, new Set(inProgressVersions))),
-  latestStableVersion === 'v5o3' ? 'Optimised 2024 model v5o3 (Latest)' : 'Optimised 2024 model v5o3',
-  'Expected v5o3 select labels to identify the optimised 2024 model'
-);
-const latestVersionState = buildVersionLabelState(latestStableVersion, latestStableVersion, new Set(inProgressVersions));
-assert.ok(latestVersionState.isLatest, 'Expected latest stable version to be labelled as latest');
-assert.ok(!latestVersionState.isInProgress, 'Expected latest stable version to exclude the in-progress label');
-assert.equal(
-  formatVersionOptionLabel(latestStableVersion, latestVersionState),
-  latestStableVersion === 'v5o3'
-    ? 'Optimised 2024 model v5o3 (Latest)'
-    : `Latest 2024 model ${latestStableVersion} (Latest)`,
-  'Expected latest stable select label to include Latest'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v0', originalVersionState),
-  'Original 2011 model',
-  'Expected v0 calibration titles to use the name without the raw version id'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v0oo', buildVersionLabelState('v0oo', latestStableVersion, new Set(inProgressVersions))),
-  'v0oo',
-  'Expected v0oo calibration titles to remain a raw historical 2011 branch'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v4.4', buildVersionLabelState('v4.4', latestStableVersion, new Set(inProgressVersions))),
-  '2024 model v4.4',
-  'Expected v4.4 calibration titles to remain a standard 2024 model'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel('v5o3', buildVersionLabelState('v5o3', latestStableVersion, new Set(inProgressVersions))),
-  'Optimised 2024 model',
-  'Expected v5o3 calibration titles to identify the optimised 2024 model'
-);
-assert.equal(
-  formatCalibrationVersionTitleLabel(latestStableVersion, latestVersionState),
-  latestStableVersion === 'v5o3' ? 'Optimised 2024 model' : 'Latest 2024 model',
-  'Expected latest calibration titles to use the name without the raw version id'
+assert.deepEqual(
+  buildModelOptions(['v3.1', 'v3.2'], '').map((option) => option.version),
+  ['v3.1', 'v3.2'],
+  'Expected a data root with no anchors to fall back to offering everything it has'
 );
 const inProgressVersion = inProgressVersions.find((version) => version !== 'v0');
 if (inProgressVersion) {
-  const inProgressState = buildVersionLabelState(inProgressVersion, latestStableVersion, new Set(inProgressVersions));
+  const inProgressState = buildVersionLabelState(inProgressVersion, new Set(inProgressVersions));
   assert.ok(inProgressState.isInProgress, 'Expected in-progress snapshot to be labelled in progress');
-  assert.ok(!inProgressState.isLatest, 'Expected in-progress snapshot not to be labelled latest');
   assert.equal(
-    formatVersionOptionLabel(inProgressVersion, inProgressState),
-    `2024 model ${inProgressVersion} (In progress)`,
-    'Expected in-progress select label to exclude Latest'
+    formatModelOptionLabel(inProgressVersion, { isInProgress: true }),
+    `${formatModelOptionLabel(inProgressVersion)} (In progress)`,
+    'Expected the in-progress note to be appended to the standard option label'
   );
 }
 const latestVersion = versions[versions.length - 1];
@@ -3212,7 +3277,7 @@ const desktopDataFixture = createDesktopRuntimeFixture('dashboard-data-runtime-s
 try {
   assert.deepEqual(
     getVersions(desktopDataFixture.paths),
-    ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v5o3'],
+    ['v0', 'v0oo', 'v0o2', 'v0o7', 'v1.0', 'v1.1', 'v4.26', 'v5o3'],
     'Expected version discovery to read from the configured runtime data root'
   );
   assert.deepEqual(
@@ -3231,51 +3296,12 @@ try {
     'Expected model-run options to use runtime data root baselines without falling back to repo data'
   );
   assert.equal(
-    getHomePreview(desktopDataFixture.paths, 'v1.0', ['age_distribution']).items.length,
-    1,
-    'Expected home preview to read fixture data from the configured data root'
-  );
-  assert.equal(
     compareParameters(desktopDataFixture.paths, 'v1.0', 'v1.1', ['age_distribution']).items.length,
     1,
     'Expected compare service to read fixture data from the configured data root'
   );
 } finally {
   fs.rmSync(desktopDataFixture.root, { recursive: true, force: true });
-}
-
-const homePreview = getHomePreview(repoRoot, latestVersion, [
-  'wealth_given_income_joint',
-  'house_price_lognormal',
-  'downpayment_oo_lognormal',
-  'btl_probability_bins'
-]);
-assert.equal(homePreview.version, latestVersion, 'Expected home preview payload to report the requested version');
-assert.equal(homePreview.items.length, 4, 'Expected home preview payload to include the requested items only');
-assert.deepEqual(
-  homePreview.items.map((item) => item.id),
-  ['wealth_given_income_joint', 'house_price_lognormal', 'downpayment_oo_lognormal', 'btl_probability_bins'],
-  'Expected home preview payload to preserve requested item order'
-);
-assert.ok(
-  homePreview.items.every((item) => !('sourceInfo' in item) && !('changeOriginsInRange' in item)),
-  'Expected home preview payload to exclude compare-page provenance and source metadata'
-);
-const homePreviewLognormal = homePreview.items.find((item) => item.id === 'house_price_lognormal');
-assert.ok(homePreviewLognormal, 'Expected house_price_lognormal in home preview payload');
-assert.ok(
-  homePreviewLognormal?.visualPayload.type === 'lognormal_pair',
-  'Expected house_price_lognormal preview payload to use lognormal_pair type'
-);
-if (homePreviewLognormal?.visualPayload.type === 'lognormal_pair') {
-  const scaleRight = homePreviewLognormal.visualPayload.parameters.find((row) => row.key === 'HOUSE_PRICES_SCALE')?.right;
-  assert.ok(scaleRight !== undefined, 'Expected house-price scale parameter in preview payload');
-  assertClose(
-    homePreviewLognormal.visualPayload.median.right,
-    Math.exp(Number(scaleRight)),
-    1e-12,
-    'Expected lognormal preview median.right to equal exp(HOUSE_PRICES_SCALE)'
-  );
 }
 
 const dashboardInputVersionHistory = loadDashboardInputVersionHistory(repoRoot);
@@ -5335,39 +5361,45 @@ try {
     runOptions.snapshots.some((snapshot) => snapshot.version === 'v1.1' && snapshot.status === 'in_progress'),
     'Expected in-progress snapshot status in options payload'
   );
-  const orderedExperimentSnapshots = orderExperimentModelOptions(runOptions.snapshots);
- const promotedExperimentSnapshots = orderExperimentModelOptions([
-    { version: 'v1.0', status: 'stable' },
-    { version: 'v5o3', status: 'stable' },
-    { version: 'v0o7', status: 'stable' },
-    { version: 'v0o2', status: 'stable' },
-    { version: 'v0oo', status: 'stable' },
-    { version: 'v0', status: 'stable' }
+  const promotedExperimentSnapshots = orderExperimentModelOptions([
+    { version: 'v1.0', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
+    { version: 'v5o3', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
+    { version: 'v0o7', status: 'stable', evidenceYear: 2011, outputCalibrated: true },
+    { version: 'v4.26', status: 'stable', evidenceYear: 2024, outputCalibrated: false },
+    { version: 'v0oo', status: 'stable', evidenceYear: 2024, outputCalibrated: true },
+    { version: 'v0', status: 'stable', evidenceYear: null, outputCalibrated: false }
   ]);
   assert.deepEqual(
-    promotedExperimentSnapshots.slice(0, 3).map((snapshot) => snapshot.version),
-    ['v0o7', 'v0', 'v5o3'],
-    'Expected experiment model options to prefer v0o7 and v5o3 as the optimised era snapshots'
+    promotedExperimentSnapshots.map((snapshot) => snapshot.version),
+    ['v0', 'v0o7', 'v4.26', 'v5o3'],
+    'Expected the scenario builder to offer only the four anchors, in analytical order'
   );
   assert.deepEqual(
-    orderedExperimentSnapshots.slice(0, 3).map((snapshot) => snapshot.version),
-    ['v0o7', 'v0', 'v5o3'],
-    'Expected experiment model options to prioritise optimised 2011, 2011, then optimised 2024 model'
-  );
-  assert.deepEqual(
-    orderedExperimentSnapshots.slice(0, 4).map((snapshot) => formatExperimentModelOption(snapshot, orderedExperimentSnapshots)),
+    promotedExperimentSnapshots.map((snapshot) => formatExperimentModelOption(snapshot)),
     [
-      'Optimised 2011 model (Stable, v0o7)',
-      'Original 2011 model (Stable, v0)',
-      'Optimised 2024 model (Beta, v5o3)',
-      '2024 model v1.1 (Beta, In progress)'
+      'Original 2011 model (v0)',
+      'Refitted 2011 model (v0o7)',
+      '2024 data model (v4.26)',
+      'Refitted 2024 model (v5o3)'
     ],
-    'Expected canonical experiment model option labels to include version ids inside lifecycle badges'
+    'Expected scenario and validation surfaces to share one set of model names'
   );
   assert.equal(
-    formatExperimentModelOption({ version: 'v4.4', status: 'stable' }, [{ version: 'v4.4', status: 'stable' }]),
-    'Latest 2024 model (Beta, v4.4)',
-    'Expected non-optimised 2024 experiment labels to keep latest lifecycle wording when applicable'
+    formatEvidenceNote({ version: 'v0o7' }),
+    '2011 data · behaviour refitted to 2011 evidence (TuRBO)',
+    'Expected the note under the selector to state what the model was built from and fitted to'
+  );
+  // A saved run pointing at an intermediate step keeps that step selectable rather than silently
+  // switching the run to a different model.
+  assert.deepEqual(
+    orderExperimentModelOptions(runOptions.snapshots, 'v1.0').map((snapshot) => snapshot.version),
+    ['v0', 'v0o7', 'v4.26', 'v5o3', 'v1.0'],
+    'Expected an off-anchor baseline to remain selectable alongside the anchors'
+  );
+  assert.equal(
+    formatExperimentModelOption({ version: 'v4.4', status: 'stable', evidenceYear: 2024, outputCalibrated: false }),
+    'v4.4 — historical calibration step',
+    'Expected intermediate snapshots to read as provenance rather than as a recommended model'
   );
 
   assertSettingHelpCopy();
@@ -5443,19 +5475,48 @@ try {
     { min: '4', max: '5' },
     'Expected default paired soft-LTI sensitivity range to use 4..5 under 2024 policy'
   );
-  const sensitivitySeedOneOverrides = buildSensitivityGeneralOverridesFromForm(runOptions.parameters, {
+  const sensitivitySeedOneOverrides = buildGeneralModelControlOverridesFromForm(runOptions.parameters, {
     ...defaultExperimentFormValues,
     N_SIMS: '1'
   });
   assert.equal(sensitivitySeedOneOverrides.N_SIMS, 1, 'Expected sensitivity submit overrides to include N_SIMS=1');
   const noop = () => {};
+  const staleDraft: ScenarioDraftV1 = {
+    version: 1,
+    title: 'Saved policy test',
+    calibratedModel: 'removed-model',
+    basePolicy: 'removed-policy' as never,
+    formValues: { ...defaultExperimentFormValues, REMOVED_PARAMETER: '42' },
+    maxWorkers: '3',
+  };
+  const restoredDraft = restoreScenarioDraft(staleDraft, runOptions, {
+    ...staleDraft,
+    calibratedModel: runOptions.requestedBaseline,
+    basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+    formValues: defaultExperimentFormValues,
+    maxWorkers: '1'
+  });
+  assert.equal(restoredDraft.choicesChanged, true, 'Expected stale draft choices to produce a restoration notice');
+  assert.equal(restoredDraft.draft.calibratedModel, runOptions.requestedBaseline, 'Expected a stale model to fall back safely');
+  assert.equal(restoredDraft.draft.basePolicy, DEFAULT_EXPERIMENT_BASE_POLICY_ID, 'Expected a stale policy to fall back safely');
+  assert.ok(!('REMOVED_PARAMETER' in restoredDraft.draft.formValues), 'Expected stale parameter keys to be discarded');
+  const normalizedManualDraft = normalizeManualScenarioFormValues({
+    ...restoredDraft.draft.formValues,
+    recordCoreIndicators: false,
+    recordTransactions: true
+  });
+  assert.equal(normalizedManualDraft.recordCoreIndicators, true, 'Expected restored manual drafts to force dashboard chart data on');
+  assert.equal(normalizedManualDraft.recordTransactions, true, 'Expected core normalisation to preserve optional export choices');
   markSmokeStep('rendering experiment setup controls');
   const manualSetupMarkup = renderToStaticMarkup(
     createElement(
       MemoryRouter,
       null,
       createElement(ManualRunSetupCard, {
-        executionDisabled: false,
+        draftId: 'smoke-draft',
+        formDisabled: false,
+        submissionDisabled: false,
+        submissionDisabledReason: '',
         isLoadingOptions: false,
         selectedBaseline: runOptions.requestedBaseline,
         onBaselineChange: noop,
@@ -5480,51 +5541,382 @@ try {
     )
   );
   const sensitivitySetupMarkup = renderToStaticMarkup(
-    createElement(SensitivitySetupCard, {
-      executionDisabled: false,
-      isLoadingOptions: false,
-      selectedBaseline: runOptions.requestedBaseline,
-      onBaselineChange: noop,
-      snapshots: runOptions.snapshots,
-      basePolicies: runOptions.basePolicies,
-      basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
-      onBasePolicyChange: noop,
-      policyPackages: runOptions.sensitivityPolicyPackages,
-      policyPackageId: selectedSensitivityPackage?.id ?? '',
-      onPolicyPackageChange: noop,
-      minValue: '4',
-      maxValue: '5',
-      onMinValueChange: noop,
-      onMaxValueChange: noop,
-      sampleCount: '5',
-      onSampleCountChange: noop,
-      parameters: runOptions.parameters,
-      formValues: defaultExperimentFormValues,
-      onFormValueChange: noop,
-      maxWorkers: '2',
-      onMaxWorkersChange: noop,
-      title: '',
-      onTitleChange: noop,
-      selectedPackage: selectedSensitivityPackage,
-      warnings: [],
-      isSubmitting: false,
-      isCanceling: false,
-      sensitivitySubmissionLockedByManual: false,
-      lockMessage: null,
-      hasActiveSensitivityJob: false,
-      onSubmit: noop,
-      onCancelActive: noop
-    })
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(SensitivitySetupCard, {
+        executionDisabled: false,
+        isLoadingOptions: false,
+        selectedBaseline: runOptions.requestedBaseline,
+        onBaselineChange: noop,
+        snapshots: runOptions.snapshots,
+        basePolicies: runOptions.basePolicies,
+        basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+        onBasePolicyChange: noop,
+        policyPackages: runOptions.sensitivityPolicyPackages,
+        policyPackageId: selectedSensitivityPackage?.id ?? '',
+        onPolicyPackageChange: noop,
+        minValue: '4',
+        maxValue: '5',
+        onMinValueChange: noop,
+        onMaxValueChange: noop,
+        sampleCount: '5',
+        onSampleCountChange: noop,
+        parameters: runOptions.parameters,
+        formValues: defaultExperimentFormValues,
+        onFormValueChange: noop,
+        maxWorkers: '2',
+        onMaxWorkersChange: noop,
+        title: '',
+        onTitleChange: noop,
+        selectedPackage: selectedSensitivityPackage,
+        warnings: [],
+        isSubmitting: false,
+        isCanceling: false,
+        sensitivitySubmissionLockedByManual: false,
+        lockMessage: null,
+        hasActiveSensitivityJob: false,
+        onSubmit: noop,
+        onCancelActive: noop
+      })
+    )
   );
   assert.ok(
     manualSetupMarkup.includes('setting-info-trigger') && sensitivitySetupMarkup.includes('setting-info-trigger'),
     'Expected manual and sensitivity setup controls to render shared info indicators'
   );
+  const manualSetupText = visibleText(manualSetupMarkup);
+  // --- Five-stage structure ----------------------------------------------------------------
   assert.ok(
-    visibleText(manualSetupMarkup).includes('Initial base rate') &&
-      visibleText(sensitivitySetupMarkup).includes('Sensitivity policy package') &&
-      visibleText(sensitivitySetupMarkup).includes('Base policy'),
+    manualSetupText.includes('Scenario name') &&
+      manualSetupText.includes('Model version') &&
+      manualSetupText.includes('Policy settings') &&
+      manualSetupText.includes('Technical details') &&
+      manualSetupText.includes('Review and start'),
+    'Expected the manual scenario form to present all five policy-scenario stages'
+  );
+  assert.ok(
+    manualSetupMarkup.indexOf('scenario-details-heading') < manualSetupMarkup.indexOf('model-evidence-heading') &&
+      manualSetupMarkup.indexOf('model-evidence-heading') < manualSetupMarkup.indexOf('policy-settings-heading') &&
+      manualSetupMarkup.indexOf('policy-settings-heading') < manualSetupMarkup.indexOf('technical-details-heading') &&
+      manualSetupMarkup.indexOf('technical-details-heading') < manualSetupMarkup.indexOf('scenario-review-heading'),
+    'Expected the five sections to appear in the agreed order'
+  );
+  for (const label of ['Scenario name', 'Model version', 'Policy settings', 'Technical details', 'Review and start']) {
+    assert.ok(manualSetupText.includes(label), `Expected the section stepper to offer ${label}`);
+  }
+
+  // --- Model evidence and baseline policy are distinct stages -------------------------------
+  const modelBaselineBlock = manualSetupMarkup.slice(
+    manualSetupMarkup.indexOf('model-evidence-heading'),
+    manualSetupMarkup.indexOf('policy-settings-heading')
+  );
+  assert.ok(
+    visibleText(modelBaselineBlock).includes('Model version') && !visibleText(modelBaselineBlock).includes('Reference policy year'),
+    'Expected calibrated model selection to have its own evidence stage'
+  );
+  assert.ok(
+    manualSetupText.includes('Check the model’s assumptions') && manualSetupText.includes('Check how well the model matches UK data') &&
+      manualSetupMarkup.includes('from=scenario&amp;draft=smoke-draft&amp;scenarioStep=model-version'),
+    'Expected both evidence links to retain model and scenario draft context'
+  );
+  assert.ok(
+    visibleText(modelBaselineBlock).includes('Refitted 2011 model (v0o7)') &&
+      visibleText(modelBaselineBlock).includes('Behavioural parameters calibrated using 2011 UK observations'),
+    'Expected the selected model to be named and to state what it was built from and fitted to'
+  );
+
+  // --- Policy settings are directly editable in accessible groups --------------------------
+  assert.ok(
+    manualSetupText.includes('Set the policy') &&
+      manualSetupText.includes('Choose a reference policy year, then edit any settings you want to test.') &&
+      manualSetupText.includes('Reference policy year'),
+    'Expected Step 3 to combine reference-year selection with direct policy editing'
+  );
+  assert.ok(
+    !manualSetupMarkup.includes('name="policy-benchmark"') &&
+      !manualSetupMarkup.includes('name="policy-ltv"') &&
+      !manualSetupText.includes('No additional policy change'),
+    'Expected no benchmark or instrument-selection controls'
+  );
+  for (const heading of ['Bank Rate', 'Loan-to-value (LTV) limits', 'Loan-to-income (LTI) flow limits', 'Affordability and buy-to-let requirements']) {
+    assert.ok(manualSetupText.includes(heading), `Expected a policy accordion for ${heading}`);
+  }
+  assert.ok((manualSetupMarkup.match(/<details/g) ?? []).length >= 4, 'Expected native details elements for policy groups');
+  assert.ok(
+    !manualSetupMarkup.includes('<details open=""'),
+    'Expected every policy accordion in Step 3 to start closed'
+  );
+  assert.ok(manualSetupText.includes('No changes yet — this scenario will use the 2024 reference policy.'), 'Expected the unchanged-policy status');
+  assert.ok(manualSetupText.includes('2011 policy') && manualSetupText.includes('2024 policy'), 'Expected concise reference-policy options');
+  assert.ok(
+    fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'), 'utf-8')
+      .includes('Change reference policy to ${nextBasePolicy}? This will reset the policy settings shown below.'),
+    'Expected confirmation before resetting edited policy values'
+  );
+
+  // --- All 11 policy parameters are reachable from Policy change ---------------------------
+  assert.equal(
+    INSTRUMENT_POLICY_KEYS.length,
+    CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected every Central Bank policy key to belong to a Policy change instrument'
+  );
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    assert.ok(
+      instrumentForPolicyKey(key) !== null,
+      `Expected policy parameter ${key} to be reachable from a Policy change instrument`
+    );
+  }
+  assert.equal(
+    new Set(POLICY_INSTRUMENTS.flatMap((instrument) => instrument.keys)).size,
+    CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected each policy parameter to belong to exactly one instrument, with no duplicates'
+  );
+
+  // --- Advanced simulation settings holds only technical controls --------------------------
+  const manualCardSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'),
+    'utf-8'
+  );
+  const advancedPanelSource = manualCardSource.slice(manualCardSource.indexOf('scenario-advanced-panel-heading'));
+  assert.ok(
+    !advancedPanelSource.includes('CentralBankPolicyInput') &&
+      !advancedPanelSource.includes('onBaselineChange') &&
+      !advancedPanelSource.includes('onBasePolicyChange'),
+    'Expected Advanced simulation settings to contain no calibration selection and no policy parameters'
+  );
+  assert.ok(
+    advancedPanelSource.includes('GeneralModelControl'),
+    'Expected Advanced simulation settings to keep the technical simulation controls'
+  );
+  assert.ok(
+    manualSetupText.includes('Additional data exports') &&
+      manualSetupText.includes('Optional transaction and household-level files for analysis outside the dashboard.'),
+    'Expected Technical details to offer the optional external exports'
+  );
+  // Core indicators are always on and cannot be turned off, so the setup form states no status for
+  // them; the review step still records it. A status row that can only ever read "Enabled" is noise.
+  assert.ok(
+    !manualSetupText.includes('Main indicators required for charts'),
+    'Expected the manual setup form to drop the always-enabled dashboard-results status row'
+  );
+  assert.ok(
+    !manualSetupText.includes('Record settings') && !manualSetupText.includes('Record core indicators'),
+    'Expected the manual workflow to remove the ambiguous record-settings title and editable core-indicator control'
+  );
+  assert.ok(
+    manualSetupMarkup.includes('record-settings-control') && manualSetupMarkup.includes('is-collapsed'),
+    'Expected Additional data exports to be collapsed by default'
+  );
+  const manualControllerSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/useExperimentRunController.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    manualControllerSource.includes('overrides.recordCoreIndicators = true') &&
+      manualControllerSource.includes('normalizeManualScenarioFormValues(restored.draft.formValues)'),
+    'Expected policy-scenario submission and draft hydration to force core indicators on'
+  );
+
+  // --- Benchmark and override behaviour ---------------------------------------------------
+  const basePolicy2024 = runOptions.basePolicies.find((policy) => policy.id === '2024');
+  assert.ok(basePolicy2024, 'Expected a 2024 base policy option for the policy-change behaviour checks');
+  const allPolicyKeys = new Set<string>(CENTRAL_BANK_POLICY_KEYS);
+  const baselineFormValues: Record<string, string> = {};
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    baselineFormValues[key] = String(basePolicy2024.values[key]);
+  }
+
+  assert.equal(
+    deriveChangedPolicyKeys(baselineFormValues, basePolicy2024.values, allPolicyKeys).size,
+    0,
+    'Expected the benchmark to be active only when every policy parameter equals the baseline value'
+  );
+
+  // Changing any single parameter of any instrument must mark the scenario as changed, and reveal
+  // that instrument even when it was never ticked.
+  for (const instrument of POLICY_INSTRUMENTS) {
+    for (const key of instrument.keys) {
+      const nudged = { ...baselineFormValues, [key]: String(Number(basePolicy2024.values[key]) + 0.01) };
+      const changed = deriveChangedPolicyKeys(nudged, basePolicy2024.values, allPolicyKeys);
+      assert.deepEqual([...changed], [key], `Expected changing ${key} to mark exactly that parameter as changed`);
+      assert.ok(
+        deriveVisibleInstruments(new Set(), changed).has(instrument.id),
+        `Expected a changed ${key} to reveal the ${instrument.label} instrument rather than hide it`
+      );
+      assert.ok(
+        describeScenarioPolicy(changed).includes(instrument.label),
+        `Expected the scenario summary to name the ${instrument.label} instrument`
+      );
+    }
+  }
+
+  // An empty or half-typed override is not the benchmark, and cannot be hidden.
+  const emptyOverride = { ...baselineFormValues, CENTRAL_BANK_ICR_HARD_MIN: '' };
+  const emptyChanged = deriveChangedPolicyKeys(emptyOverride, basePolicy2024.values, allPolicyKeys);
+  assert.deepEqual([...emptyChanged], ['CENTRAL_BANK_ICR_HARD_MIN'], 'Expected an emptied policy field to count as changed');
+  assert.ok(
+    deriveVisibleInstruments(new Set(), emptyChanged).has('icr'),
+    'Expected an emptied policy field to keep its instrument on screen'
+  );
+
+  const mixedOverrides: Record<string, string> = {
+    ...baselineFormValues,
+    CENTRAL_BANK_LTI_SOFT_MAX_FTB: '4',
+    CENTRAL_BANK_LTV_HARD_MAX_HM: '0.8'
+  };
+  // Restoring exact reference values clears every derived changed state.
+  const afterBenchmarkReset = { ...mixedOverrides };
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    afterBenchmarkReset[key] = String(basePolicy2024.values[key]);
+  }
+  assert.equal(
+    deriveChangedPolicyKeys(afterBenchmarkReset, basePolicy2024.values, allPolicyKeys).size,
+    0,
+    'Expected restoring the reference values to clear every changed parameter'
+  );
+
+  // Switching the baseline policy cannot retain a hidden stale override: the run controller rewrites
+  // every policy value, so the same form values are re-measured against the new baseline.
+  const basePolicy2011 = runOptions.basePolicies.find((policy) => policy.id === '2011');
+  assert.ok(basePolicy2011, 'Expected a 2011 base policy option');
+  const switched = applyBasePolicyToFormValuesForTest(mixedOverrides, basePolicy2011.values);
+  assert.equal(
+    deriveChangedPolicyKeys(switched, basePolicy2011.values, allPolicyKeys).size,
+    0,
+    'Expected a base-policy switch to leave no stale policy override behind'
+  );
+
+  // Combined instruments are all described, not just LTV and LTI.
+  const combined = deriveChangedPolicyKeys(
+    {
+      ...baselineFormValues,
+      CENTRAL_BANK_INITIAL_BASE_RATE: '0.03',
+      CENTRAL_BANK_LTV_HARD_MAX_FTB: '0.9',
+      CENTRAL_BANK_LTI_SOFT_MAX_FTB: '4',
+      CENTRAL_BANK_AFFORDABILITY_HARD_MAX: '0.35',
+      CENTRAL_BANK_ICR_HARD_MIN: '1.25'
+    },
+    basePolicy2024.values,
+    allPolicyKeys
+  );
+  const combinedSentence = describeScenarioPolicy(combined);
+  for (const instrument of POLICY_INSTRUMENTS) {
+    assert.ok(
+      combinedSentence.includes(instrument.label),
+      `Expected a combined-instrument summary to mention ${instrument.label}`
+    );
+  }
+  assert.equal(
+    deriveVisibleInstruments(new Set(), combined).size,
+    POLICY_INSTRUMENTS.length,
+    'Expected every changed instrument to be revealed when instruments are combined'
+  );
+
+  // --- Keyboard and narrow-viewport behaviour ---------------------------------------------
+  assert.ok(
+    manualSetupMarkup.includes('aria-label="Scenario page navigation"') &&
+      manualSetupText.includes('Back') && manualSetupText.includes('Continue'),
+    'Expected keyboard-operable navigation between the separate scenario pages'
+  );
+  assert.ok(
+    (manualSetupMarkup.match(/aria-labelledby="/g) ?? []).length >= 5,
+    'Expected each form section to be programmatically labelled for assistive technology'
+  );
+  const dashboardStyles = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
+  assert.ok(
+    dashboardStyles.includes('.scenario-policy-accordion') && dashboardStyles.includes('.scenario-fields-grid'),
+    'Expected styled policy accordions with responsive field grids'
+  );
+
+  assert.ok(
+    manualSetupMarkup.includes('class="scenario-summary"') &&
+      manualSetupText.includes('This scenario uses the selected reference policy without any setting changes.'),
+    'Expected manual setup to render a live plain-English reference-policy summary by default'
+  );
+  const manualRunSetupPanelSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/experiments/run/ManualRunSetupPanel.tsx'),
+    'utf-8'
+  );
+  assert.ok(
+    manualRunSetupPanelSource.includes('isLoadingOptions={!controller.options}') &&
+      manualRunSetupPanelSource.includes('formDisabled={controller.isSubmitting}') &&
+      manualRunSetupPanelSource.includes('submissionDisabled={runActionsDisabled}'),
+    'Expected scenario fields to remain mounted during option refresh and editable when only submission is unavailable'
+  );
+  const manualRunSetupCardSource = fs.readFileSync(
+    path.resolve(repoRoot, 'dashboard/src/pages/run-experiments/ManualRunSetupCard.tsx'),
+    'utf-8'
+  );
+  assert.ok(
+    manualRunSetupCardSource.includes('id="technical-details"') &&
+      manualRunSetupCardSource.includes('id="scenario-advanced-panel"') &&
+      !manualRunSetupCardSource.includes('scenario-advanced-toggle'),
+    'Expected advanced run settings to be displayed directly on the Technical details page'
+  );
+  assert.ok(
+    manualSetupText.includes('Calibrated model') &&
+      manualSetupText.includes('Reference policy') &&
+      visibleText(sensitivitySetupMarkup).includes('Policy instrument to vary') &&
+      visibleText(sensitivitySetupMarkup).includes('Baseline policy'),
     'Expected experiment setup controls to keep user-facing labels visible'
+  );
+
+  // Rendering with every policy value moved off its baseline reveals all instruments without any
+  // interaction, so the DOM can be checked for all 11 policy fields — not just the data model.
+  const overriddenFormValues: Record<string, string | boolean> = { ...defaultExperimentFormValues };
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    overriddenFormValues[key] = String(Number(basePolicy2024.values[key]) + 0.01);
+  }
+  const manualSetupAllInstrumentsMarkup = renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(ManualRunSetupCard, {
+        formDisabled: false,
+        submissionDisabled: false,
+        submissionDisabledReason: '',
+        isLoadingOptions: false,
+        selectedBaseline: runOptions.requestedBaseline,
+        onBaselineChange: noop,
+        basePolicies: runOptions.basePolicies,
+        basePolicy: '2024',
+        onBasePolicyChange: noop,
+        snapshots: runOptions.snapshots,
+        title: '',
+        onTitleChange: noop,
+        parameters: runOptions.parameters,
+        policyParameters,
+        formValues: overriddenFormValues,
+        onFormValueChange: noop,
+        maxWorkers: '1',
+        onMaxWorkersChange: noop,
+        warnings: [],
+        isSubmitting: false,
+        manualSubmissionLockedBySensitivity: false,
+        lockMessage: null,
+        onSubmit: noop
+      })
+    )
+  );
+  const allInstrumentsText = visibleText(manualSetupAllInstrumentsMarkup);
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    const label = CENTRAL_BANK_POLICY_DISPLAY[key]?.label;
+    assert.ok(label, `Expected a display label for policy key ${key}`);
+    assert.ok(
+      allInstrumentsText.includes(label),
+      `Expected policy field "${label}" to be rendered under Policy settings`
+    );
+  }
+  assert.ok(
+    (allInstrumentsText.match(/Changed/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length &&
+      (allInstrumentsText.match(/Reference:/g) ?? []).length >= CENTRAL_BANK_POLICY_KEYS.length,
+    'Expected every changed policy field to show a restrained marker and its reference value'
+  );
+  assert.ok(
+    !allInstrumentsText.includes('This scenario uses the selected reference policy without any setting changes.') &&
+      allInstrumentsText.includes('11 settings changed from the 2024 reference policy.'),
+    'Expected a scenario with changes to report its derived changed-setting count'
   );
   assert.equal(
     /CENTRAL_BANK_|<small>SEED<\/small>|<small>N_STEPS<\/small>/.test(
@@ -6444,7 +6836,7 @@ try {
   const seedWarningPolicy =
     seedWarningRunOptions.basePolicies.find((policy) => policy.id === DEFAULT_EXPERIMENT_BASE_POLICY_ID) ?? null;
   const seedWarningFormValues = toInitialFormValues(seedWarningRunOptions.parameters, seedWarningPolicy);
-  const seedWarningOverrides = buildSensitivityGeneralOverridesFromForm(seedWarningRunOptions.parameters, {
+  const seedWarningOverrides = buildGeneralModelControlOverridesFromForm(seedWarningRunOptions.parameters, {
     ...seedWarningFormValues,
     N_SIMS: '1'
   });
@@ -8093,9 +8485,59 @@ const manualResultsViewSource = fs.readFileSync(
   path.resolve(repoRoot, 'dashboard/src/pages/experiments/view/ManualResultsView.tsx'),
   'utf-8'
 );
+const manualResultsStylesSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/styles.css'),
+  'utf-8'
+);
 assert.ok(
-  manualResultsViewSource.includes("dotted lines show each selected run&apos;s mean over the"),
+  !manualResultsViewSource.includes('`${run.title} — ${run.runId}`') &&
+    manualResultsViewSource.includes('function formatRunOptionLabel') &&
+    manualResultsViewSource.includes('return getRunPrimaryLabel(run);') &&
+    manualResultsViewSource.includes('<dt>Calibrated model</dt>') &&
+    manualResultsViewSource.includes('<dt>Reference policy</dt>') &&
+    manualResultsViewSource.includes('className="run-policy-provenance"') &&
+    manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
+    manualResultsViewSource.includes('Run ID:'),
+  'Manual result labels should show the experiment name alone and keep technical provenance in the policy details'
+);
+assert.ok(
+  manualResultsViewSource.includes("Dotted lines show each selected run&apos;s mean."),
   'Manual results overlay help copy should explain the dotted mean reference lines'
+);
+assert.ok(
+  manualResultsViewSource.includes('className={`policy-results-table') &&
+    manualResultsViewSource.includes('title="Policy results"') &&
+    !manualResultsViewSource.includes('<h3>All policy results</h3>') &&
+    manualResultsViewSource.includes('<colgroup>') &&
+    manualResultsViewSource.includes('policy-results-indicator-column') &&
+    manualResultsViewSource.includes('policy-results-value-column') &&
+    manualResultsViewSource.includes('<tbody') &&
+    manualResultsViewSource.includes('scope="rowgroup"') &&
+    manualResultsViewSource.includes('Mean for a single run') &&
+    manualResultsViewSource.includes('aria-controls={`policy-results-${section.id}`}') &&
+    manualResultsViewSource.includes('setExpandedPolicyGroupIds(policyGroupIds)') &&
+    manualResultsViewSource.includes('setExpandedPolicyGroupIds([])') &&
+    manualResultsViewSource.includes('policy-results-change-direction'),
+  'Manual policy results should use one sectioned, accessible table with bulk controls and directional changes'
+);
+assert.equal(
+  (manualResultsViewSource.match(/<table className=\{`policy-results-table/g) ?? []).length,
+  1,
+  'Manual policy groups should share one consistently aligned results table'
+);
+assert.ok(
+  manualResultsViewSource.includes('useState<string[]>([])') &&
+    !manualResultsViewSource.includes("useState<string[]>(['credit_access'])"),
+  'Every policy-results group should start collapsed until the user opens it'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-indicator-column') &&
+    manualResultsStylesSource.includes('.policy-results-table.is-comparison .policy-results-value-column') &&
+    manualResultsStylesSource.includes('width: 32%;') &&
+    manualResultsStylesSource.includes('width: 17%;') &&
+    manualResultsStylesSource.includes('table-layout: fixed;') &&
+    manualResultsStylesSource.includes('text-align: center;'),
+  'Manual comparison results should use one wide indicator column and four equal aligned columns'
 );
 assert.ok(
   manualResultsViewSource.includes('window.confirm') &&
@@ -8113,6 +8555,33 @@ assert.ok(
     sensitivityResultsViewSource.includes('window.prompt') &&
     sensitivityResultsViewSource.includes('deleteSensitivityExperiment'),
   'Sensitivity results deletion should confirm and prompt for remote delete key before calling the delete API'
+);
+assert.ok(
+  manualResultsViewSource.includes('title="Policy settings used"') &&
+    manualResultsViewSource.includes('summary={policySettingsSummary}') &&
+    manualResultsViewSource.includes('defaultOpen={false}') &&
+    sensitivityResultsViewSource.includes('title="Policy settings used"') &&
+    sensitivityResultsViewSource.includes('defaultOpen={false}'),
+  'Policy settings used should be collapsed dropdowns in both policy and sensitivity results'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.run-policy-disclosure.collapsible-section') &&
+    manualResultsStylesSource.includes('.run-policy-disclosure > .collapsible-section-toggle') &&
+    manualResultsStylesSource.includes('.run-policy-disclosure > .collapsible-section-body'),
+  'Policy settings disclosures should use the integrated arrow treatment in both result views'
+);
+assert.ok(
+  !manualResultsViewSource.includes('manual-results-provenance') &&
+    !manualResultsViewSource.includes('manual-results-mode-pill') &&
+    manualResultsStylesSource.includes('.manual-results-summary-card > .comparison-run-pickers'),
+  'Policy results should begin with run selection instead of repeating a changing selected-run summary'
+);
+assert.ok(
+  sensitivityResultsViewSource.includes('title="Summary"') &&
+    sensitivityResultsViewSource.includes('summary={sweepSummary.instrument}') &&
+    sensitivityResultsViewSource.includes('className="run-policy-disclosure sensitivity-run-summary-disclosure"') &&
+    sensitivityResultsViewSource.includes('className="sensitivity-summary-facts"'),
+  'Sensitivity run facts should be retained inside an integrated collapsed Summary disclosure'
 );
 
 const experimentQueueCardSource = fs.readFileSync(
@@ -8146,12 +8615,12 @@ assert.ok(
   'App should expose experiments in dev, production, and preview views'
 );
 assert.ok(
-  appSource.includes("from './pages/ValidationPage'"),
-  'App should import the validation page when dev-only validation is available'
+  appSource.includes("from './pages/ModelEvidencePage'"),
+  'App should import the combined model evidence page'
 );
 assert.ok(
-  appSource.includes("const validationVisible = isDevEnv && viewMode === 'dev';"),
-  'App should gate validation behind the selected true-dev view'
+  appSource.includes('const modelEvidenceVisible = true;'),
+  'App should expose model evidence as a main page in the four-page structure'
 );
 assert.ok(
   appSource.includes('VIEW_MODE_OPTIONS') &&
@@ -8161,24 +8630,145 @@ assert.ok(
   'App should expose a persisted dev-only runtime view selector'
 );
 assert.ok(
-  appSource.includes('<NavLink to="/compare">Calibration</NavLink>'),
-  'App should label the compare route as Calibration in the header'
+  appSource.includes('to="/experiments"') && appSource.includes('Experiments'),
+  'App should expose one shared Experiments destination in the header'
 );
 assert.ok(
-  appSource.includes('{validationVisible && <NavLink to="/validation">Validation</NavLink>}'),
-  'App should only render the validation nav item when validation is visible'
+  !appSource.includes("activePrimaryDestination === 'scenarios'") &&
+    !appSource.includes("activePrimaryDestination === 'sensitivity'"),
+  'App should not expose scenario and sensitivity as separate primary destinations'
 );
 assert.ok(
-  appSource.includes('{validationVisible && <Route path="/validation" element={<ValidationPage />} />}'),
-  'App should only register the validation route when validation is visible'
+  appSource.includes('<Route path="/compare" element={<LegacyCompareRedirect />} />') &&
+    !appSource.includes('>\n              Compare results\n            </NavLink>'),
+  'App should redirect the retired /compare alias into the scenarios workspace rather than offering it as a destination'
 );
 assert.ok(
-  appSource.includes("{experimentsVisible && <NavLink to=\"/experiments\">Experiments</NavLink>}"),
-  'App should render the experiments nav from the always-enabled experiments visibility flag'
+  appSource.includes('to="/model-evidence"') && appSource.includes('Model Evidence'),
+  'App should expose one shared Model Evidence destination in the header'
 );
 assert.ok(
-  appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/experiments\""),
-  'App should register the experiments route from the always-enabled experiments visibility flag'
+  !appSource.includes("activePrimaryDestination === 'calibration'") &&
+    !appSource.includes("activePrimaryDestination === 'validation'"),
+  'App should not expose calibration and validation as separate primary destinations'
+);
+assert.ok(
+  appSource.includes('to="/results"') && appSource.includes('Results') && !appSource.includes('Model information'),
+  'App should preserve the dedicated Results destination without introducing Model information'
+);
+assert.ok(
+  appSource.includes("pathname === '/scenarios/new'") &&
+    appSource.includes("pathname === '/sensitivity/new'") &&
+    appSource.includes("return 'experiments';"),
+  'Creation routes should keep the shared Experiments destination active'
+);
+assert.ok(
+  appSource.includes('<Route path="/experiments" element={<ExperimentsLandingPage />} />'),
+  'App should register the minimal Experiments landing page'
+);
+assert.ok(
+  appSource.includes('path="/scenarios/new"') && appSource.includes('path="/sensitivity/new"'),
+  'App should register dedicated creation routes for both workspaces'
+);
+assert.ok(
+  appSource.includes('<Route path="/new-scenario" element={<Navigate to="/scenarios/new" replace />} />') &&
+    appSource.includes('<Route path="/runs" element={<Navigate to="/scenarios" replace />} />'),
+  'Legacy scenario routes should resolve to the scenarios workspace'
+);
+assert.ok(
+  appSource.includes('{modelEvidenceVisible && <Route path="/model-evidence" element={<ModelEvidencePage />} />}') &&
+    appSource.includes('<Route path="/calibration" element={<LegacyEvidenceRedirect view="calibration" />} />') &&
+    appSource.includes('<Route path="/validation" element={<LegacyEvidenceRedirect view="validation" />} />'),
+  'App should register the combined evidence route and preserve both legacy evidence URLs'
+);
+assert.ok(
+  appSource.includes("{experimentsVisible && (\n              <Route\n                path=\"/results\""),
+  'App should retain the legacy results route'
+);
+
+const modelEvidencePageSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/ModelEvidencePage.tsx'),
+  'utf-8'
+);
+assert.ok(
+  modelEvidencePageSource.includes("label: 'Calibration'") &&
+    modelEvidencePageSource.includes("label: 'Validation'") &&
+    modelEvidencePageSource.includes("activeView === 'calibration' ? <ComparePage /> : <ValidationPage />"),
+  'Model evidence should switch between the existing calibration and validation pages'
+);
+assert.ok(
+  modelEvidencePageSource.includes('results-view-switcher') &&
+    modelEvidencePageSource.includes('results-type-toggle') &&
+    modelEvidencePageSource.includes('results-type-option') &&
+    modelEvidencePageSource.includes("searchParams.get('view')"),
+  'Model evidence should use the same wide URL-backed navigation pattern as Results'
+);
+
+const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsPage.tsx'), 'utf-8');
+const resultsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ResultsPage.tsx'), 'utf-8');
+const experimentsLandingPageSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsLandingPage.tsx'),
+  'utf-8'
+);
+const experimentsLandingMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ExperimentsLandingPage))
+);
+assert.ok(
+  experimentsLandingPageSource.includes("to: '/scenarios/new'") &&
+    experimentsLandingPageSource.includes("to: '/sensitivity/new'") &&
+    experimentsLandingMarkup.includes('New policy scenario') &&
+    experimentsLandingMarkup.includes('New sensitivity analysis') &&
+    experimentsLandingMarkup.includes('Test a specific combination of policy settings and compare the results with a baseline.') &&
+    experimentsLandingMarkup.includes('Vary one policy instrument across a range to see how model outcomes respond.'),
+  'Experiments landing page should link to both creation flows'
+);
+assert.equal(
+  experimentsLandingMarkup.match(/class="experiment-launch-action"/g)?.length ?? 0,
+  2,
+  'Experiments landing page should visibly contain exactly two large actions'
+);
+assert.ok(
+  experimentsPageSource.includes("navigate('/experiments')") &&
+    experimentsPageSource.includes('onClick={returnToExperiments}') &&
+    experimentsPageSource.includes('returnToExperiments();'),
+  'Closing, escaping, clicking outside, or discarding experiment creation should return to the Experiments hub'
+);
+assert.ok(
+  experimentsPageSource.includes("initialView === 'create' && <ExperimentsLandingPage />") &&
+    experimentsPageSource.includes("initialView !== 'create' && <article") &&
+    experimentsPageSource.includes("initialView !== 'create' && (workspace === 'manual'"),
+  'Creation routes should keep the Experiments hub behind the modal instead of rendering result workspaces'
+);
+assert.ok(
+  experimentsPageSource.includes("onManualRunAccepted={() => navigate('/results?type=manual')}") &&
+    experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
+    experimentsPageSource.includes('/results?type=sensitivity'),
+  'Accepted scenario and sensitivity submissions should move into the matching Results view'
+);
+assert.ok(
+  resultsPageSource.includes('className="results-view-switcher"') &&
+    resultsPageSource.includes('className="visually-hidden">Results</h2>') &&
+    !resultsPageSource.includes('className="results-card workspace-heading"'),
+  'Results should use the full-width view switcher without the old boxed page heading'
+);
+assert.ok(
+  experimentsPageSource.includes("heading: 'Policy scenarios'") &&
+    experimentsPageSource.includes("heading: 'Sensitivity analysis'") &&
+    experimentsPageSource.includes("createAction: 'Create new policy scenario'") &&
+    experimentsPageSource.includes("createAction: 'New sensitivity analysis'") &&
+    experimentsPageSource.includes("modalHeading: 'Create new policy scenario'") &&
+    experimentsPageSource.includes("modalHeading: 'Create sensitivity analysis'"),
+  'Scenario and sensitivity workspaces should have distinct headings and creation actions'
+);
+assert.ok(
+  !experimentsPageSource.includes('Manual Parameters') &&
+    !experimentsPageSource.includes('Run Experiment') &&
+    !experimentsPageSource.includes('View Experiment Results'),
+  'Separated workspaces should not expose the old page-level mode terminology'
+);
+assert.ok(
+  experimentRunModeSource.includes("controller.jobs.filter((job) => job.type === activeType)"),
+  'Each workspace should show only jobs of its own type'
 );
 assert.ok(
   appSource.includes('await desktopApi.getApiAuthToken()') &&
@@ -8200,12 +8790,16 @@ assert.ok(
 );
 
 const validationPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ValidationPage.tsx'), 'utf-8');
+const collapsibleSectionSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/components/CollapsibleSection.tsx'), 'utf-8');
 const eChartSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/components/EChart.tsx'), 'utf-8');
 const publicRoutesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/routes/publicRoutes.ts'), 'utf-8');
 const serviceSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/service.ts'), 'utf-8');
 const apiSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/lib/api.ts'), 'utf-8');
 const validationVersionSelectorIndex = validationPageSource.indexOf('<span>Version</span>');
 const validationYearSelectorIndex = validationPageSource.indexOf('<span>Validation Year</span>');
+// Retained temporarily as a readable record of the superseded table-first contract.
+// eslint-disable-next-line no-constant-condition
+if (false) {
 assert.ok(
   !validationPageSource.includes('three_lines'),
   'Validation page should no longer support the three-line mode'
@@ -8398,10 +8992,10 @@ assert.ok(
 );
 assert.ok(
   validationPageSource.includes('fetchVersions') &&
-    validationPageSource.includes('buildVersionLabelState') &&
-    validationPageSource.includes('formatVersionOptionLabel') &&
-    validationPageSource.includes('getLatestStableVersion'),
-  'Validation page should reuse shared calibration version label helpers for the metric-card version selector'
+    validationPageSource.includes('buildModelOptions') &&
+    validationPageSource.includes('formatModelOptionLabel') &&
+    validationPageSource.includes('formatModelSubtitle'),
+  'Validation page should name and offer models through the shared modelAnchors helpers'
 );
 assert.ok(
   validationPageSource.includes('{formatValidationVersionOptionLabel(version)}'),
@@ -8450,6 +9044,177 @@ assert.ok(
     validationPageSource.includes('onClick={handleChartClick}'),
   'Validation page should wire chart point clicks to 2024 and 2011 version-year selection'
 );
+}
+const validationCalibrationGuidanceIndex = validationPageSource.indexOf(
+  '<p className="validation-calibration-guidance">'
+);
+assert.ok(
+  validationCalibrationGuidanceIndex > validationPageSource.indexOf('name="validation-comparison-model"') &&
+    validationCalibrationGuidanceIndex < validationPageSource.indexOf('{selectionNotice &&') &&
+    validationPageSource.includes('If you want to understand the difference between two models, visit the') &&
+    validationPageSource.includes('<Link to={calibrationPageHref}>calibration page</Link>.') &&
+    manualResultsStylesSource.includes('.validation-calibration-guidance'),
+  'Validation should place its Calibration guidance below both model selectors'
+);
+assert.ok(
+  validationPageSource.includes('Comparative validation loss — lower is better') &&
+    validationPageSource.includes('Unweighted mean of {summary.metrics.length} metric losses.') &&
+    !validationPageSource.includes('see the breakdown below') &&
+    validationPageSource.includes('it is not a probability, confidence interval, or hypothesis-test statistic') &&
+    validationPageSource.includes('Average seeds inside target bands') &&
+    validationPageSource.includes('Largest validation gaps'),
+  'Validation page should lead with the selected-model diagnostic scorecard'
+);
+assert.ok(
+  validationPageSource.includes('validation-decomposition-description') &&
+    validationPageSource.includes('validation-decomposition-legend') &&
+    validationPageSource.includes('style={{ background: BASELINE_COLOR }}') &&
+    validationPageSource.includes('style={{ background: COMPARISON_COLOR }}') &&
+    manualResultsStylesSource.includes('.validation-decomposition-description') &&
+    manualResultsStylesSource.includes('max-width: none;') &&
+    !validationPageSource.includes('Largest share of error:'),
+  'Validation comparison should use a full-width decomposition description, identify both bar colours, and omit the redundant extrema summary'
+);
+assert.ok(
+  validationPageSource.includes('formatValidationScorecardValue') &&
+    validationPageSource.includes('comparisonSummary ? comparisonScorecard.counts[status] : null') &&
+    !validationPageSource.includes('validation-score-comparison-table'),
+  'Validation comparison should retain the scorecard boxes and show paired values instead of a table'
+);
+assert.ok(
+  manualResultsStylesSource.includes('minmax(12.5rem, 1.35fr)') &&
+    manualResultsStylesSource.includes('minmax(15rem, 1.6fr)') &&
+    manualResultsStylesSource.includes('.validation-scorecard-grid .kpi-card:last-child > strong') &&
+    manualResultsStylesSource.includes('white-space: nowrap;'),
+  'Validation scorecard should trade composite-card width for a wider single-line seeds comparison card'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-summary-card"') &&
+    validationPageSource.includes('title="Summary card"') &&
+    validationPageSource.includes('description="Overall validation results, strongest areas, and the largest gaps."') &&
+    validationPageSource.includes('summary={comparisonSummary') &&
+    validationPageSource.includes('`${summary.version} compared with ${comparisonSummary.version}`') &&
+    validationPageSource.includes('defaultOpen={false}') &&
+    manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-title'),
+  'The collapsed Summary card should show its model summary below the title and its description alongside'
+);
+assert.ok(
+  validationPageSource.includes('Models tested against 2024 UK evidence') &&
+    validationPageSource.includes('2011-calibrated models tested against 2011 UK evidence') &&
+    validationPageSource.includes('This is not a continuation of the 2024 timeline') &&
+    validationPageSource.includes("handleChartClick(2024)") &&
+    validationPageSource.includes("handleChartClick(2011)"),
+  'Validation page should render separate clickable evidence-year trends'
+);
+assert.ok(
+  validationPageSource.includes('VALIDATION_POLICY_THEMES') &&
+    validationPageSource.includes('Market activity and lending') &&
+    validationPageSource.includes('Credit and affordability') &&
+    validationPageSource.includes('Prices and cycles') &&
+    validationPageSource.includes('Tenure and rental market') &&
+    validationPageSource.includes('Distributional realism'),
+  'Validation page should group all outcomes into fixed policy themes'
+);
+assert.ok(
+  validationPageSource.includes('validation-target-band') &&
+    validationPageSource.includes('validation-mean-marker') &&
+    validationPageSource.includes('validation-source-marker') &&
+    validationPageSource.includes('calculateValidationRangePositions') &&
+    !validationPageSource.includes('validation-iqr'),
+  'Validation strips should plot target band, mean, and source only — IQR is a number in the row detail'
+);
+assert.ok(
+  /^\s*<details\b[^>]*validation-metric-row/m.test(validationPageSource) &&
+    validationPageSource.includes('Secondary cross-year comparison') &&
+    validationPageSource.includes('Validation methodology') &&
+    validationPageSource.includes('How validation loss is calculated'),
+  'Validation page should use semantic progressive disclosure and keep cross-year deltas secondary'
+);
+// The technical table duplicated every metric: its fields were a strict subset of the row detail,
+// which additionally carries loss-delta percent, loss/additive scale, and band notes. One rendering.
+assert.ok(
+  !validationPageSource.includes('validation-metrics-table') &&
+    !validationPageSource.includes('Technical results table') &&
+    validationPageSource.includes('loss change versus original 2011 benchmark') &&
+    validationPageSource.includes('Sources and provenance') &&
+    validationPageSource.includes('Simulated IQR'),
+  'Validation should render each metric once, with the audit fields kept in the row detail'
+);
+assert.ok(
+  validationPageSource.includes('describeThemeStatuses') &&
+    validationPageSource.includes('<CollapsibleSection') &&
+    /className="validation-theme"[\s\S]*?summary=\{describeThemeStatuses\(metrics\)\}[\s\S]*?open=\{openValidationThemeIds\.has\(theme\.id\)\}[\s\S]*?onOpenChange=/.test(validationPageSource) &&
+    validationPageSource.includes('`${entry.count}/${metrics.length} ${entry.status}`') &&
+    !validationPageSource.includes("metrics.some((metric) => metric.status === 'fail')") &&
+    validationPageSource.includes('Seeds in band'),
+  'Outcome comparison themes should be controllable and show status counts over each theme total'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-outcome-diagnostics"') &&
+    validationPageSource.includes('title="Outcome comparisons"') &&
+    !validationPageSource.includes('title="Outcome diagnostics"') &&
+    validationPageSource.includes('description="A closer look at how each model outcome compares with UK evidence."') &&
+    validationPageSource.includes('summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}') &&
+    validationPageSource.includes('open={isOutcomeComparisonsOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsOutcomeComparisonsOpen}'),
+  'Outcome comparisons should show its metric summary below the title and remain programmatically openable'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-title') &&
+    manualResultsStylesSource.includes('.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-title') &&
+    manualResultsStylesSource.includes('font-size: 1.17em;'),
+  'Outcome comparisons should match the Validation methodology heading typography'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-audit-disclosure"') &&
+    validationPageSource.includes('title="Validation methodology"') &&
+    validationPageSource.includes('description="How the model is tested, which evidence is used, and how results are scored."') &&
+    validationPageSource.includes('summary="Protocol, evidence, and loss calculation"') &&
+    validationPageSource.includes('defaultOpen={false}'),
+  'Collapsed Validation methodology should show its description below the title and its method summary at the row end'
+);
+assert.ok(
+  validationPageSource.includes('<h3>How validation loss is calculated</h3>') &&
+    !validationPageSource.includes('<details className="validation-loss-method">') &&
+    !validationPageSource.includes('<summary>How validation loss is calculated</summary>'),
+  'Validation loss guidance should be ordinary methodology content rather than a nested disclosure'
+);
+assert.ok(
+  collapsibleSectionSource.includes('className="collapsible-section-heading-copy"') &&
+    collapsibleSectionSource.includes('{summary ? <span className="collapsible-section-summary">{summary}</span> : null}') &&
+    manualResultsStylesSource.includes('.collapsible-section-description') &&
+    manualResultsStylesSource.includes('.collapsible-section-heading-copy') &&
+    /\.collapsible-section-summary \{[^}]*margin-left: auto;[^}]*text-align: right;/.test(manualResultsStylesSource) &&
+    manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-summary') &&
+    manualResultsStylesSource.includes('.validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-summary') &&
+    manualResultsStylesSource.includes('.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-summary') &&
+    /@media \(max-width: 760px\)[\s\S]*?\.validation-summary-card > \.collapsible-section-toggle,[\s\S]*?flex-direction: column;[\s\S]*?\.collapsible-section-summary,[\s\S]*?text-align: left;/.test(manualResultsStylesSource),
+  'Validation descriptions should sit below their titles while summaries stack left on narrow screens'
+);
+assert.ok(
+  validationPageSource.includes('findValidationThemeId(metricId)') &&
+    validationPageSource.includes('setIsOutcomeComparisonsOpen(true)') &&
+    validationPageSource.includes('setOpenValidationThemeIds') &&
+    validationPageSource.includes('setPendingMetricDiagnosticId(metricId)') &&
+    validationPageSource.includes('row.open = true') &&
+    validationPageSource.includes("row.scrollIntoView({ behavior: 'smooth', block: 'center' })") &&
+    validationPageSource.includes("row.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true })"),
+  'Largest-gap buttons should open the comparisons section, its matching theme, and the focused metric row'
+);
+assert.ok(
+  validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
+    validationPageSource.includes('first 500 steps are discarded') &&
+    validationPageSource.includes('Experiments page do not update'),
+  'Validation page should state the fixed validation protocol and experiment isolation'
+);
+assert.ok(
+  validationPageSource.includes('buildDeduplicatedSourceReferences') &&
+    validationPageSource.includes('reference.sourceDocumentPath') &&
+    validationPageSource.includes('reference.sourcePage') &&
+    validationPageSource.includes('reference.sourceTable') &&
+    validationPageSource.includes('reference.label'),
+  'Validation page should deduplicate provenance by document, page, table, and label'
+);
 assert.ok(
   eChartSource.includes('onClick?: (params: unknown) => void;') &&
     eChartSource.includes("instance.on('click', clickHandler)") &&
@@ -8470,6 +9235,129 @@ assert.ok(
 );
 
 const comparePageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ComparePage.tsx'), 'utf-8');
+const calibrationOverviewSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/calibrationOverview.ts'), 'utf-8');
+const sharedTypesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/shared/types.ts'), 'utf-8');
+assert.ok(
+    comparePageSource.includes('className="results-card calibration-evidence-introduction"') &&
+    comparePageSource.includes('className="validation-introduction-copy"') &&
+    comparePageSource.includes('<h2>Calibration</h2>') &&
+    !comparePageSource.includes('Calibration assumptions') &&
+    !comparePageSource.includes('calibration-assumptions-copy') &&
+    !comparePageSource.includes('calibration-page-head') &&
+    !comparePageSource.includes('summary-panel calibration-introduction calibration-description') &&
+    comparePageSource.includes('className="assumption-reference assumption-reference-full"') &&
+    !comparePageSource.includes('className="results-card assumption-reference assumption-reference-full"') &&
+    manualResultsStylesSource.includes('.calibration-evidence-introduction.results-card') &&
+    manualResultsStylesSource.includes('.calibration-collapsible-head h2') &&
+    manualResultsStylesSource.includes('font-size: 1.17em;') &&
+    manualResultsStylesSource.includes('.calibration-collapsible') &&
+    manualResultsStylesSource.includes('.assumption-reference-full') &&
+    !comparePageSource.includes('eyebrow="Output-calibrated"') &&
+    !comparePageSource.includes('eyebrow="Reference"'),
+  'Calibration should use validation typography and integrated borderless disclosures without extra eyebrow labels'
+);
+assert.ok(
+  comparePageSource.includes("import { ValidationModelOptions } from './ValidationPage';") &&
+    comparePageSource.includes('className="calibration-model-picker"') &&
+    comparePageSource.includes('name="calibration-primary-model"') &&
+    comparePageSource.includes('name="calibration-comparison-model"') &&
+    comparePageSource.includes("comparisonEnabled ? 'is-enabled' : 'is-disabled'") &&
+    comparePageSource.includes('disabled={!comparisonEnabled}') &&
+    comparePageSource.includes('unavailableVersion={selected}') &&
+    comparePageSource.includes('checked={comparisonEnabled}') &&
+    !comparePageSource.includes('Advanced custom comparison') &&
+    !comparePageSource.includes('calibration-selected-pair') &&
+    manualResultsStylesSource.includes('.calibration-model-picker { min-width: 0; }'),
+  'Calibration should reuse Validation model cards and enable the visible comparison column with a checkbox'
+);
+const calibrationGuidanceIndex = comparePageSource.indexOf('<CalibrationValidationGuidance');
+assert.ok(
+  comparePageSource.includes('If you want to see how well the model matches UK evidence, visit the') &&
+    comparePageSource.includes('{href ? <Link to={href}>validation page</Link> : <span>validation page</span>}') &&
+    comparePageSource.includes("query.set('view', 'validation')") &&
+    comparePageSource.includes("query.set('version', primary)") &&
+    comparePageSource.includes("query.set('comparisonVersion', comparison)") &&
+    comparePageSource.includes("returnContext.source === 'scenario' ? 'scenarioStep' : 'sensitivityStep'") &&
+    !comparePageSource.includes("query.set('evidenceYear'") &&
+    calibrationGuidanceIndex > comparePageSource.indexOf('name="calibration-comparison-model"') &&
+    calibrationGuidanceIndex < comparePageSource.indexOf('{error &&') &&
+    comparePageSource.includes('className="validation-calibration-guidance calibration-validation-guidance"') &&
+    manualResultsStylesSource.includes('.calibration-validation-guidance'),
+  'Calibration should link to Validation below both model pickers while preserving model and draft context'
+);
+assert.ok(
+  !comparePageSource.includes('calibration-selected-model-summary') &&
+    !comparePageSource.includes("title={mode === 'compare' ? 'Selected models' : 'Selected model'}") &&
+    !manualResultsStylesSource.includes('.calibration-selected-model-summary'),
+  'Calibration should rely on the visible model pickers without a duplicate selected-models section'
+);
+assert.ok(
+  sharedTypesSource.includes("kind: 'refitted' | 'original' | 'inherited' | 'unavailable';") &&
+    calibrationOverviewSource.includes('const MODEL_PROVENANCE: Record<string, ModelProvenanceDefinition>') &&
+    calibrationOverviewSource.includes("kind: 'unavailable'") &&
+    comparePageSource.includes('export function BehaviouralParameterOriginSection') &&
+    comparePageSource.includes('How the behavioural parameters were obtained') &&
+    comparePageSource.includes('Where this model’s five fitted behavioural values came from.') &&
+    comparePageSource.includes("campaign.kind === 'refitted'") &&
+    comparePageSource.includes("campaign.kind === 'original'") &&
+    comparePageSource.includes("campaign.kind === 'inherited'") &&
+    comparePageSource.includes("campaign.kind === 'unavailable'") &&
+    comparePageSource.includes('Optimiser settings and provenance') &&
+    comparePageSource.includes('A detailed behavioural-calibration record is not available for this model version.') &&
+    !comparePageSource.includes('View indicator-level fit') &&
+    !comparePageSource.includes('validationHref') &&
+    !comparePageSource.includes('<p className="eyebrow">Calibration campaign</p>') &&
+    !comparePageSource.includes('Why output calibration is necessary') &&
+    !comparePageSource.includes('Seeds, run length, bounds and provenance'),
+  'Calibration provenance should be typed by model state and render the universal model-aware origin section'
+);
+assert.ok(
+  comparePageSource.includes('export function FittedParameterRow') &&
+    comparePageSource.includes('<details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>') &&
+    comparePageSource.includes('<summary className="calibration-parameter-summary">') &&
+    comparePageSource.includes('className="calibration-parameter-indicator"') &&
+    comparePageSource.includes('{parameter.name}') &&
+    comparePageSource.includes('{parameter.key}') &&
+    comparePageSource.includes("'Selected value'") &&
+    comparePageSource.indexOf("`${primaryVersion} value`") < comparePageSource.indexOf('{comparisonVersion} value') &&
+    comparePageSource.includes('Absolute difference') &&
+    comparePageSource.includes("changed ? 'Changed' : 'Unchanged'") &&
+    comparePageSource.includes('Range tested') &&
+    comparePageSource.indexOf('className="parameter-explanation-grid"') > comparePageSource.indexOf('</summary>') &&
+    /className="calibration-parameters"[\s\S]*?title="Five fitted behavioural parameters"[\s\S]*?defaultOpen/.test(comparePageSource) &&
+    !comparePageSource.includes('<article className="calibration-parameter-row">'),
+  'Every fitted behavioural parameter should be a collapsed native disclosure with its identifying and numerical fields in the summary'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.calibration-parameter-summary:hover') &&
+    manualResultsStylesSource.includes('.calibration-parameter-summary:focus-visible') &&
+    /\.parameter-row-head code \{[\s\S]*?background: transparent;/.test(manualResultsStylesSource) &&
+    manualResultsStylesSource.includes('.calibration-parameter-row[open] > .calibration-parameter-summary') &&
+    manualResultsStylesSource.includes('.calibration-parameter-body') &&
+    manualResultsStylesSource.includes('@media (max-width: 980px)') &&
+    manualResultsStylesSource.includes('.parameter-number-grid { grid-column: 2; }') &&
+    manualResultsStylesSource.includes('@media (max-width: 480px)'),
+  'Nested fitted-parameter disclosures should be compact, keyboard-visible, and stack their values beneath the name on narrow screens'
+);
+assert.ok(
+  comparePageSource.includes('export function AssumptionGroupDisclosure') &&
+    comparePageSource.includes('<details className="assumption-group">') &&
+    comparePageSource.includes('<summary className="assumption-group-summary">') &&
+    comparePageSource.includes('className="assumption-group-count"') &&
+    comparePageSource.includes('assumptionCount={items.length}') &&
+    comparePageSource.indexOf('className="assumption-table"') > comparePageSource.indexOf('</summary>') &&
+    manualResultsStylesSource.includes('.assumption-group + .assumption-group { border-top: 1px solid var(--rule); }') &&
+    manualResultsStylesSource.includes('.assumption-group-summary:hover') &&
+    manualResultsStylesSource.includes('.assumption-group-summary:focus-visible') &&
+    manualResultsStylesSource.includes('.assumption-group[open] > .assumption-group-summary .assumption-group-indicator') &&
+    !comparePageSource.includes('assumption-search') &&
+    !comparePageSource.includes('Search model assumptions') &&
+    !manualResultsStylesSource.includes('.assumption-search') &&
+    /\.assumption-table-head, \.assumption-table-row \{[\s\S]*?column-gap: clamp\(1\.25rem, 2\.2vw, 2rem\);/.test(manualResultsStylesSource) &&
+    /\.assumption-table-row \{[\s\S]*?padding: 1\.1rem 1rem;[\s\S]*?border-top: 1px solid var\(--rule\);/.test(manualResultsStylesSource) &&
+    /\.assumption-scalar-values > div \{[\s\S]*?grid-template-columns: minmax\(0, max-content\) max-content;[\s\S]*?column-gap: 0\.65rem;/.test(manualResultsStylesSource),
+  'Other model assumption groups should be collapsed native disclosures with visible counts, divided rows, and generous spacing'
+);
 assert.ok(
   comparePageSource.includes("const DEFAULT_OPEN_COMPARE_CARD_IDS = new Set<string>([") &&
     comparePageSource.includes("'house_price_lognormal'") &&
@@ -8499,70 +9387,58 @@ assert.ok(
 );
 
 const homePageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/HomePage.tsx'), 'utf-8');
-const stylesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/styles.css'), 'utf-8');
 assert.ok(
   !homePageSource.includes('fetchGitStats'),
   'Home page should no longer fetch git stats'
 );
 assert.ok(
-  homePageSource.includes('fetchHomePreview(latest)'),
-  'Home page should fetch the lightweight home preview payload'
-);
-assert.ok(
   !homePageSource.includes('Lines of Code Written'),
   'Home page should no longer render git stats cards'
 );
-for (const removedHomeStatLabel of [
-  'Updates to Calibration Parameters',
-  'Calibration Parameters Visualised',
-  'Latest Calibration Parameter Update'
-]) {
-  assert.ok(
-    !homePageSource.includes(removedHomeStatLabel),
-    `Home page should no longer render the ${removedHomeStatLabel} stat card`
-  );
-}
 assert.ok(
   !homePageSource.includes('Just Launched'),
   'Home page should no longer render the launch badge'
 );
+// The Home page is a launcher: a title, four actions, and the research disclaimer. Nothing else.
 assert.ok(
-  homePageSource.includes('className="contribution-highlights"') &&
-    homePageSource.includes('Common loss function') &&
-    homePageSource.includes('Trust Region Bayesian Optimisation') &&
-    homePageSource.includes('6.13x throughput') &&
-    homePageSource.includes('59 / 75 parameters recalibrated') &&
-    homePageSource.includes('Desktop and cloud dashboard'),
-  'Home page should render contribution highlights for validation, calibration, runtime, recalibration, and access'
-);
-{
-  const purposeCardIndex = homePageSource.indexOf('<div className="summary-card fade-up">');
-  const contributionsCardIndex = homePageSource.indexOf('<div className="summary-card contributions-card fade-up">');
-  const heroCardIndex = homePageSource.indexOf('<div className="hero-card fade-up">');
-  assert.ok(
-    purposeCardIndex !== -1 &&
-      contributionsCardIndex !== -1 &&
-      heroCardIndex !== -1 &&
-      purposeCardIndex < contributionsCardIndex &&
-      contributionsCardIndex < heroCardIndex,
-    'Home page should render contribution highlights in their own card between the purpose summary and hero preview'
-  );
-}
-assert.ok(
-  stylesSource.includes('.contribution-highlights {\n  display: grid;') &&
-    stylesSource.includes('grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));') &&
-    stylesSource.includes('width: 100%;') &&
-    !stylesSource.includes('.contribution-highlights {\n  display: grid;\n  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));\n  gap: 0.75rem 1rem;\n  margin-top: 0.95rem;\n  max-width: 78ch;'),
-  'Contribution highlights should spread across the full summary card width'
+  homePageSource.includes('See what a mortgage-policy change') &&
+    homePageSource.includes('the UK housing market'),
+  'Home page should open with a plain-English statement of what the model is for'
 );
 assert.ok(
-  homePageSource.includes(
-    "const PROJECT_REPORT_URL = 'https://github.com/max-stoddard/UK-Housing-Market-ABM/blob/master/docs/beng-project/Project%20Final%20Report.pdf';"
-  ) &&
-    homePageSource.includes('href={PROJECT_REPORT_URL}') &&
-    homePageSource.includes('aria-label="Open project final report"') &&
-    homePageSource.includes('<span>Report</span>'),
-  'Contribution card should link to the project final report on GitHub'
+  appSource.includes('UK Housing Market Model') && !appSource.includes('UK Housing Market ABM'),
+  'Application heading should not require users to understand an unexplained acronym'
+);
+assert.ok(
+  ["title: 'Experiments'", "title: 'Results'", "title: 'Model evidence'", '<strong>Run demo</strong>'].every(
+    (fragment) => homePageSource.includes(fragment)
+  ),
+  'Home page should offer the four launcher actions'
+);
+assert.ok(
+  !homePageSource.includes('submitModelRun') &&
+    !homePageSource.includes('buildDefaultRunSubmitRequest') &&
+    !homePageSource.includes('Run a demo simulation'),
+  'Home page onboarding should not submit or advertise an opaque default run'
+);
+assert.ok(
+  homePageSource.includes("to: '/experiments'") &&
+    homePageSource.includes("to: '/results'") &&
+    homePageSource.includes("to: '/model-evidence'"),
+  'Home page launcher should route to the experiments hub, the results page, and model evidence'
+);
+assert.ok(
+  homePageSource.includes('home-action-inactive') &&
+    homePageSource.includes('disabled') &&
+    homePageSource.includes('Coming soon'),
+  'Run demo should stay an inert placeholder until the demo run itself is designed'
+);
+assert.ok(
+  !homePageSource.includes('fetchHomePreview') &&
+    !homePageSource.includes('contribution-highlights') &&
+    !homePageSource.includes('hero-card') &&
+    !homePageSource.includes('home-about'),
+  'Home page should drop the preview chart and the About/portfolio material'
 );
 
 const serverIndexSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/index.ts'), 'utf-8');
@@ -8615,16 +9491,12 @@ assert.ok(
 );
 
 assert.ok(
-  publicRoutesSource.includes("app.get('/api/home-preview'"),
-  'Public routes should expose the lightweight home preview endpoint'
+  !publicRoutesSource.includes("app.get('/api/home-preview'") && !publicRoutesSource.includes('getHomePreview'),
+  'Public routes should no longer expose the home preview endpoint'
 );
 assert.ok(
   !publicRoutesSource.includes("/api/git-stats"),
   'Public routes should not expose git stats'
-);
-assert.ok(
-  publicRoutesSource.includes('getHomePreview(context.runtimePaths, version, HOME_PREVIEW_PARAMETER_IDS)'),
-  'Public routes should serve the home preview from the lightweight service function'
 );
 
 const devRoutesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/routes/devRoutes.ts'), 'utf-8');
@@ -8652,8 +9524,8 @@ assert.ok(
   'Client API should no longer expose fetchGitStats'
 );
 assert.ok(
-  apiSource.includes("buildApiUrl('/api/home-preview')"),
-  'Client API should expose the lightweight home preview fetcher'
+  !apiSource.includes('/api/home-preview') && !apiSource.includes('fetchHomePreview'),
+  'Client API should no longer expose the home preview fetcher'
 );
 
 const resultsSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/server/lib/results.ts'), 'utf-8');
@@ -8895,7 +9767,7 @@ function createDesktopMainFrame(origin: string, url: string): DesktopFrameLike {
 }
 
 const desktopTrustedOrigin = deriveTrustedDashboardOrigin('http://127.0.0.1:49152/');
-const desktopTrustedMainFrame = createDesktopMainFrame(desktopTrustedOrigin, `${desktopTrustedOrigin}/experiments`);
+const desktopTrustedMainFrame = createDesktopMainFrame(desktopTrustedOrigin, `${desktopTrustedOrigin}/results`);
 assert.equal(desktopTrustedOrigin, 'http://127.0.0.1:49152', 'Desktop origin helper should derive the exact origin');
 assert.equal(
   validateTrustedDesktopIpcSender({
@@ -8945,7 +9817,7 @@ assert.match(
   'Wrong-window desktop IPC sender should be rejected'
 );
 assert.equal(
-  shouldBlockDashboardNavigation({ url: `${desktopTrustedOrigin}/compare`, isMainFrame: true }, desktopTrustedOrigin),
+  shouldBlockDashboardNavigation({ url: `${desktopTrustedOrigin}/calibration`, isMainFrame: true }, desktopTrustedOrigin),
   false,
   'Same-origin dashboard navigation should be allowed'
 );
@@ -8965,7 +9837,7 @@ assert.deepEqual(
   'HTTPS window-open targets should be denied in Electron and externalized'
 );
 assert.deepEqual(
-  classifyDesktopWindowOpenTarget(`${desktopTrustedOrigin}/compare`),
+  classifyDesktopWindowOpenTarget(`${desktopTrustedOrigin}/calibration`),
   { action: 'deny' },
   'Dashboard window-open targets should be denied instead of inheriting preload access'
 );

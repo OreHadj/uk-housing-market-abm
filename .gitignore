@@ -63,3 +63,12 @@ dashboard/release/
 
 # dashboard smoke artifacts
 dashboard/.smoke-dist/
+
+# macOS + editor / IDE cruft
+.DS_Store
+.metals/
+.bloop/
+
+# scratch notes / planning docs (not committed)
+/home-default-run-options.md
+dashboard/webapp-page-functionality-summary.md

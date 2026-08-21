@@ -38,6 +38,8 @@ import type {
   ModelRunSubmitResponse,
   ModelRunWarning,
   RemoteExecutionStatus,
+  LendingDistributionComparePayload,
+  LendingDistributionPayload,
   ResultsComparePayload,
   ResultsFileManifestEntry,
   ResultsFileType,
@@ -62,8 +64,10 @@ import {
   getResultsRunFiles,
   getResultsSeries,
   REQUIRED_RESULTS_PARSE_FILE_NAMES,
-  resolveResultsFileType
+  resolveResultsFileType,
+  SALE_TRANSACTIONS_FILE_NAME
 } from './results';
+import { getLendingDistribution, getLendingDistributionCompare } from './lendingDistribution';
 import {
   prepareSensitivityExperimentSubmission,
   type PreparedSensitivityExperimentSubmission
@@ -73,6 +77,9 @@ import {
   type ResultArchive
 } from './resultDownloads';
 import type { RuntimePaths, RuntimePathInput } from './runtimePaths';
+
+/** Beyond the required parse set: the loan-level file and the config the caps are read from. */
+const LENDING_WORKSPACE_FILE_NAMES = [SALE_TRANSACTIONS_FILE_NAME, 'config.properties'];
 
 const INDEX_KEY = 'experiments/remote-job-index/index.json';
 const SOURCE_MANIFEST_KEY = 'tmp/github-actions/source/current-deploy.json';
@@ -1084,6 +1091,40 @@ export class RemoteExecutionManager {
     }
   }
 
+  async getRemoteManualResultLending(runId: string, window: string | undefined): Promise<LendingDistributionPayload> {
+    const job = await this.findManualJobForReadByRunId(runId);
+    const workspace = await this.createRemoteResultsWorkspace([job], LENDING_WORKSPACE_FILE_NAMES);
+    try {
+      return getLendingDistribution(workspace.runtimePaths, job.runId ?? job.id, window);
+    } finally {
+      this.removeRemoteResultsWorkspace(workspace);
+    }
+  }
+
+  async getRemoteManualResultLendingCompare(
+    runIds: string[],
+    window: string | undefined
+  ): Promise<LendingDistributionComparePayload> {
+    const jobs: RemoteJobRecord[] = [];
+    for (const runId of runIds) {
+      const job = await this.findManualJobForReadByRunId(runId);
+      const resolvedRunId = job.runId ?? job.id;
+      if (!jobs.some((entry) => (entry.runId ?? entry.id) === resolvedRunId)) {
+        jobs.push(job);
+      }
+    }
+    const workspace = await this.createRemoteResultsWorkspace(jobs, LENDING_WORKSPACE_FILE_NAMES);
+    try {
+      return getLendingDistributionCompare(
+        workspace.runtimePaths,
+        jobs.map((job) => job.runId ?? job.id),
+        window
+      );
+    } finally {
+      this.removeRemoteResultsWorkspace(workspace);
+    }
+  }
+
   async getRemoteManualResultSeries(
     runId: string,
     indicatorId: string,
@@ -1488,7 +1529,10 @@ export class RemoteExecutionManager {
     return files.sort((left, right) => left.relativeName.localeCompare(right.relativeName));
   }
 
-  private async createRemoteResultsWorkspace(jobs: RemoteJobRecord[]): Promise<RemoteResultsWorkspace> {
+  private async createRemoteResultsWorkspace(
+    jobs: RemoteJobRecord[],
+    additionalFileNames: string[] = []
+  ): Promise<RemoteResultsWorkspace> {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'dashboard-remote-results-'));
     const resultsRoot = path.join(tempRoot, 'Results');
     fs.mkdirSync(resultsRoot, { recursive: true });
@@ -1503,6 +1547,20 @@ export class RemoteExecutionManager {
     const parseFileNames = new Set(REQUIRED_RESULTS_PARSE_FILE_NAMES);
     const objectsByRunId = new Map<string, RemoteRunObject[]>();
 
+    // Callers that need files beyond the required parse set (the loan-level transaction file
+    // and the run config) also need the per-seed copies, which multi-seed runs never merge up
+    // to the run root.
+    const wantsObject = (relativeName: string): boolean => {
+      if (parseFileNames.has(relativeName)) {
+        return true;
+      }
+      if (additionalFileNames.length === 0) {
+        return false;
+      }
+      const baseName = relativeName.split('/').pop() ?? relativeName;
+      return additionalFileNames.includes(baseName) && (relativeName === baseName || relativeName.startsWith('seeds/'));
+    };
+
     try {
       for (const job of jobs) {
         const runId = job.runId ?? job.id;
@@ -1511,14 +1569,16 @@ export class RemoteExecutionManager {
         const objects = await this.listRemoteRunObjects(job);
         objectsByRunId.set(runId, objects);
         for (const object of objects) {
-          if (!parseFileNames.has(object.relativeName)) {
+          if (!wantsObject(object.relativeName)) {
             continue;
           }
           const bytes = await this.adapter.getBytes(this.config.artifactsBucket, object.key);
           if (!bytes) {
             continue;
           }
-          fs.writeFileSync(path.join(runPath, object.relativeName), bytes);
+          const destinationPath = path.join(runPath, object.relativeName);
+          fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+          fs.writeFileSync(destinationPath, bytes);
         }
       }
       return { tempRoot, runtimePaths, objectsByRunId };

@@ -4,11 +4,11 @@ import type {
   AuthLogoutResponse,
   AuthStatusPayload,
   CompareResponse,
+  CalibrationOverviewResponse,
   ExperimentJobCancelResponse,
   ExperimentJobDeleteResponse,
   ExperimentJobLogsPayload,
   ExperimentJobsPayload,
-  HomePreviewPayload,
   ModelRunJob,
   ModelRunJobClearResponse,
   ModelRunJobLogsPayload,
@@ -17,6 +17,8 @@ import type {
   ModelRunSubmitRequest,
   ModelRunSubmitResponse,
   ParameterCardMeta,
+  LendingDistributionComparePayload,
+  LendingDistributionPayload,
   ResultsComparePayload,
   ResultsCompareWindow,
   ResultsFileManifestEntry,
@@ -257,11 +259,15 @@ export async function fetchVersions(): Promise<VersionsPayload> {
 
 export async function fetchValidationOverview(
   version?: string,
-  validationTargetYear = 2024
+  validationTargetYear = 2024,
+  comparisonVersion?: string
 ): Promise<ValidationOverviewPayload> {
   const params = new URLSearchParams();
   if (version) {
     params.set('version', version);
+  }
+  if (comparisonVersion) {
+    params.set('comparisonVersion', comparisonVersion);
   }
   params.set('validationTargetYear', String(validationTargetYear));
   const query = params.toString();
@@ -272,14 +278,6 @@ export async function fetchValidationOverview(
 export async function fetchCatalog(): Promise<ParameterCardMeta[]> {
   const payload = await requestJson<CatalogResponse>(buildApiUrl('/api/parameter-catalog'), 'Failed to fetch parameter catalog');
   return payload.items;
-}
-
-export async function fetchHomePreview(version: string): Promise<HomePreviewPayload> {
-  const params = new URLSearchParams({ version });
-  return requestJson<HomePreviewPayload>(
-    `${buildApiUrl('/api/home-preview')}?${params.toString()}`,
-    'Failed to fetch homepage preview'
-  );
 }
 
 export async function fetchCompare(
@@ -296,6 +294,12 @@ export async function fetchCompare(
   });
 
   return requestJson<CompareResponse>(`${buildApiUrl('/api/compare')}?${params.toString()}`, 'Failed to fetch comparison');
+}
+
+export async function fetchCalibrationOverview(primary: string, comparison?: string): Promise<CalibrationOverviewResponse> {
+  const params = new URLSearchParams({ primary });
+  if (comparison) params.set('comparison', comparison);
+  return requestJson<CalibrationOverviewResponse>(`${buildApiUrl('/api/calibration-overview')}?${params.toString()}`, 'Failed to fetch calibration overview');
 }
 
 export async function fetchResultsRuns(): Promise<ResultsRunSummary[]> {
@@ -317,6 +321,18 @@ export async function fetchResultsRunFiles(runId: string): Promise<ResultsFileMa
     'Failed to fetch run files'
   );
   return payload.files;
+}
+
+export async function renameResultsRun(runId: string, title: string): Promise<{ runId: string; title: string | null }> {
+  return requestJsonWithInit<{ runId: string; title: string | null }>(
+    buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/title`),
+    'Failed to rename run',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    }
+  );
 }
 
 export async function deleteResultsRun(runId: string, deleteKey?: string): Promise<ResultsRunDeleteResponse> {
@@ -349,6 +365,32 @@ export async function fetchResultsSeries(
   return requestJson<ResultsSeriesPayload>(
     `${buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/series`)}?${params.toString()}`,
     'Failed to fetch series'
+  );
+}
+
+export async function fetchLendingDistribution(
+  runId: string,
+  window: ResultsCompareWindow
+): Promise<LendingDistributionPayload> {
+  const params = new URLSearchParams({ window });
+  return requestJson<LendingDistributionPayload>(
+    `${buildApiUrl(`/api/results/runs/${encodeURIComponent(runId)}/lending`)}?${params.toString()}`,
+    'Failed to fetch new-lending distributions'
+  );
+}
+
+export async function fetchLendingDistributionCompare(
+  runIds: string[],
+  window: ResultsCompareWindow
+): Promise<LendingDistributionComparePayload> {
+  const params = new URLSearchParams();
+  for (const runId of runIds) {
+    params.append('runId', runId);
+  }
+  params.set('window', window);
+  return requestJson<LendingDistributionComparePayload>(
+    `${buildApiUrl('/api/results/lending/compare')}?${params.toString()}`,
+    'Failed to fetch new-lending comparison'
   );
 }
 

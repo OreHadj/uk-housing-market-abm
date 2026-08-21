@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
+  KpiMetricSummary,
+  LendingDistributionPayload,
+  LendingMetricId,
+  ModelRunJob,
+  ModelRunJobStatus,
   ResultsCompareWindow,
   ResultsComparePayload,
   ResultsFileManifestEntry,
@@ -10,28 +15,27 @@ import type {
 } from '../../../../shared/types';
 import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
-import { GroupedCheckboxSections } from '../../../components/GroupedCheckboxSections';
 import { LoadingSkeleton, LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
 import { ManualSelectionStatusPills } from '../../../components/ManualSelectionStatusPills';
 import {
   API_RETRY_DELAY_MS,
   deleteResultsRun,
   downloadResultsRun,
+  fetchLendingDistributionCompare,
+  fetchModelRunJobs,
   fetchResultsCompare,
   fetchResultsRunDetail,
+  renameResultsRun,
   fetchResultsRunFiles,
   fetchResultsRuns,
   fetchVersions,
   isRetryableApiError
 } from '../../../lib/api';
 import {
-  KPI_DETAIL_ROWS,
   computeKpiDeltaValue,
-  formatKpiDeltaValue,
+  formatKpiComparisonDelta,
   formatKpiValue,
-  getKpiMetricValue,
-  getKpiDeltaLabel,
-  groupIndicatorsBySource,
+  groupIndicatorsByPolicyQuestion,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -39,7 +43,11 @@ import {
   sortKpis
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
-import { buildResultsRunVersionLabelState } from '../../../lib/versionLabels';
+import { NewLendingCard, type LendingView } from './NewLendingCard';
+import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
+import { formatModelName } from '../../../lib/modelAnchors';
+import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
+import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
 
@@ -49,6 +57,21 @@ type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
 type ManifestTarget = 'baseline' | 'comparison';
 type ManualResultsMode = 'single' | 'compare';
+
+function getRunModelVersion(run: Pick<ResultsRunSummary, 'runId'>): string | null {
+  return extractVersionFromResultsRunId(run.runId);
+}
+
+function getRunPrimaryLabel(run: Pick<ResultsRunSummary, 'runId' | 'title'>): string {
+  const title = run.title?.trim();
+  if (title) return title;
+  const version = getRunModelVersion(run);
+  return version ? formatModelName(version) : run.runId;
+}
+
+function formatRunOptionLabel(run: ResultsRunSummary): string {
+  return getRunPrimaryLabel(run);
+}
 
 interface ManualResultsViewProps {
   canWrite: boolean;
@@ -62,11 +85,6 @@ interface ManualResultsViewProps {
   sidebarSubtitle: string;
 }
 
-interface InlineInfoTipProps {
-  label: string;
-  description: string;
-}
-
 function isProtectedResultsRun(runId: string): boolean {
   return PROTECTED_RESULTS_RUN_IDS.has(runId.trim());
 }
@@ -77,6 +95,29 @@ function deltaClassName(value: number | null): string {
   }
   return value > 0 ? 'positive' : 'negative';
 }
+
+function deltaDirection(value: number | null): { symbol: string; label: string } {
+  if (value === null || !Number.isFinite(value) || Math.abs(value) < 1e-12) {
+    return { symbol: '\u2014', label: 'No change' };
+  }
+  return value > 0
+    ? { symbol: '\u2191', label: 'Increase' }
+    : { symbol: '\u2193', label: 'Decrease' };
+}
+
+const QUEUE_STATUS_META: Record<ModelRunJobStatus, { label: string; className: string }> = {
+  queued: { label: 'Queued', className: 'status-pill partial' },
+  running: { label: 'In progress', className: 'status-pill partial' },
+  succeeded: { label: 'Completed successfully', className: 'status-pill complete' },
+  failed: { label: 'Failed', className: 'status-pill invalid' },
+  canceled: { label: 'Canceled', className: 'coverage-pill unsupported' }
+};
+
+function formatQueueTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
+}
+
 
 function statusClass(status: ResultsRunStatus): string {
   switch (status) {
@@ -102,23 +143,8 @@ function coverageClass(status: ResultsFileManifestEntry['coverageStatus']): stri
   }
 }
 
-function InlineInfoTip({ label, description }: InlineInfoTipProps) {
-  return (
-    <span className="manual-control-header">
-      <span>{label}</span>
-      <button type="button" className="manual-help-trigger" aria-label={`${label} help`}>
-        <span aria-hidden="true" className="manual-help-icon">
-          i
-        </span>
-        <span role="tooltip" className="manual-help-tooltip">
-          {description}
-        </span>
-      </button>
-    </span>
-  );
-}
-
 export function ManualResultsView({
+  canWrite,
   canDownloadResults,
   canDeleteResults,
   deleteKeyRequired,
@@ -130,13 +156,23 @@ export function ManualResultsView({
 }: ManualResultsViewProps) {
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
+  const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
+  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
+  // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
+  const [previewRunId, setPreviewRunId] = useState<string>('');
+  const [renamingRunId, setRenamingRunId] = useState<string>('');
+  const [renameDraft, setRenameDraft] = useState<string>('');
+  const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
-  const [showAllKpiDetails, setShowAllKpiDetails] = useState<boolean>(false);
+  const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
+  const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
+  const [showBaselineTrend, setShowBaselineTrend] = useState<boolean>(true);
+  const [showComparisonTrend, setShowComparisonTrend] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string>('');
   const [compareError, setCompareError] = useState<string>('');
   const [isLoadingRuns, setIsLoadingRuns] = useState<boolean>(true);
@@ -145,14 +181,38 @@ export function ManualResultsView({
   const [isLoadingManifest, setIsLoadingManifest] = useState<boolean>(false);
   const [isDeletingRunId, setIsDeletingRunId] = useState<string>('');
   const [isDownloadingRunId, setIsDownloadingRunId] = useState<string>('');
-  const [isIndicatorSettingsOpen, setIsIndicatorSettingsOpen] = useState<boolean>(false);
   const [manifestTarget, setManifestTarget] = useState<ManifestTarget>('baseline');
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
+  const [runJobs, setRunJobs] = useState<ModelRunJob[]>([]);
+  const [lendingBaseline, setLendingBaseline] = useState<LendingDistributionPayload | null>(null);
+  const [lendingComparison, setLendingComparison] = useState<LendingDistributionPayload | null>(null);
+  const [isLoadingLending, setIsLoadingLending] = useState<boolean>(false);
+  const [lendingError, setLendingError] = useState<string>('');
+  const [lendingView, setLendingView] = useState<LendingView>('distribution');
+  const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
+  const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
+  const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
+
+  // A run's output folder is created when it is queued, so an in-progress run appears in the
+  // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
+  // belong in the Queue until they finish — so History only shows runs that actually completed.
+  const activeRunIds = useMemo(
+    () =>
+      new Set(
+        runJobs
+          .filter((job) => job.status === 'queued' || job.status === 'running')
+          .map((job) => job.runId)
+          .filter(Boolean)
+      ),
+    [runJobs]
+  );
+  const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
 
   const resolvedSelection = useMemo(
-    () => resolveManualRunSelection(runs, requestedBaselineRunId, requestedComparisonRunId),
-    [requestedBaselineRunId, requestedComparisonRunId, runs]
+    () => resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId),
+    [historyRuns, requestedBaselineRunId, requestedComparisonRunId]
   );
   const baselineRunId = resolvedSelection.baselineRunId;
   const comparisonRunId = resolvedSelection.comparisonRunId;
@@ -171,8 +231,16 @@ export function ManualResultsView({
     () => buildResultsRunVersionLabelState(comparisonRunId, versions, inProgressVersions),
     [comparisonRunId, inProgressVersions, versions]
   );
-
   useEffect(() => {
+    // Don't canonicalise the URL selection until the runs list has loaded. While it is still
+    // loading, `runs` is empty and resolveManualRunSelection() returns an empty selection, which
+    // would strip a requested baselineRunId out of the URL and bounce the user straight back out
+    // of the results view — the "View results" button appears to do nothing. Once runs have
+    // loaded, a genuinely-missing id falls back to a default run instead of an empty one, so it is
+    // safe to write the resolved selection back.
+    if (isLoadingRuns) {
+      return;
+    }
     if (
       requestedBaselineRunId === baselineRunId &&
       requestedComparisonRunId === comparisonRunId
@@ -187,6 +255,7 @@ export function ManualResultsView({
   }, [
     baselineRunId,
     comparisonRunId,
+    isLoadingRuns,
     onManualSelectionChange,
     requestedBaselineRunId,
     requestedComparisonRunId
@@ -237,6 +306,39 @@ export function ManualResultsView({
 
   useEffect(() => {
     let cancelled = false;
+    let previousActive = false;
+
+    const pollActiveRuns = async () => {
+      try {
+        const jobs = await fetchModelRunJobs();
+        if (cancelled) {
+          return;
+        }
+        setRunJobs(jobs);
+        const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
+        if (previousActive && !active) {
+          // A run just finished — refresh the completed-runs list so it appears in the picker.
+          void loadRuns();
+        }
+        previousActive = active;
+      } catch {
+        // Model runs may be unavailable (e.g. cloud/preview); ignore polling errors.
+      }
+    };
+
+    void pollActiveRuns();
+    const timer = window.setInterval(() => {
+      void pollActiveRuns();
+    }, 4000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loadRuns]);
+
+  useEffect(() => {
+    let cancelled = false;
     let retryTimer: number | undefined;
 
     const loadVersions = async () => {
@@ -274,6 +376,33 @@ export function ManualResultsView({
       setManifestTarget('baseline');
     }
   }, [comparisonRunId, manifestTarget]);
+
+  useEffect(() => {
+    // The comparison run's policy is fetched separately from its results so the policy block can
+    // show both sides of a comparison; without it the block would silently describe only the
+    // baseline while the page header says "Comparing runs".
+    if (!comparisonRunId) {
+      setComparisonDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchResultsRunDetail(comparisonRunId)
+      .then((payload) => {
+        if (!cancelled) {
+          setComparisonDetail(payload);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setComparisonDetail(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [comparisonRunId]);
 
   useEffect(() => {
     if (!baselineRunId) {
@@ -384,10 +513,108 @@ export function ManualResultsView({
     };
   }, [compareWindow, selectedIndicatorIds, selectedRunIds, smoothWindow]);
 
-  const runById = useMemo(() => new Map(runs.map((run) => [run.runId, run])), [runs]);
+  useEffect(() => {
+    if (selectedRunIds.length === 0) {
+      setLendingBaseline(null);
+      setLendingComparison(null);
+      setLendingError('');
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingLending(true);
+    setLendingError('');
+
+    void fetchLendingDistributionCompare(selectedRunIds, compareWindow)
+      .then((payload) => {
+        if (cancelled) {
+          return;
+        }
+        setLendingBaseline(payload.runs.find((run) => run.runId === selectedRunIds[0]) ?? null);
+        setLendingComparison(
+          selectedRunIds.length > 1
+            ? payload.runs.find((run) => run.runId === selectedRunIds[1]) ?? null
+            : null
+        );
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setLendingBaseline(null);
+          setLendingComparison(null);
+          setLendingError((error as Error).message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingLending(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [compareWindow, selectedRunIds]);
+
+  const runById = useMemo(() => new Map(historyRuns.map((run) => [run.runId, run])), [historyRuns]);
+  // Runs are identified by an opaque timestamped id; the scenario name is what a reader recognises.
+  // Fall back to the id whenever a run carries no title so nothing is ever unlabelled.
+  const runLabel = (runId: string) => {
+    const run = runById.get(runId);
+    return run ? getRunPrimaryLabel(run) : runId;
+  };
+
+  const submitRename = async (runId: string) => {
+    setIsSavingRename(true);
+    setLoadError('');
+    try {
+      await renameResultsRun(runId, renameDraft);
+      setRenamingRunId('');
+      setRenameDraft('');
+      await loadRuns();
+    } catch (error) {
+      setLoadError((error as Error).message);
+    } finally {
+      setIsSavingRename(false);
+    }
+  };
+
+  /**
+   * A run's full recorded policy, plus which settings deviate from the baseline it matches. Shown in
+   * full on every run so a run stays identifiable when its name is missing or unclear.
+   */
+  const describeRunPolicy = (run: ResultsRunSummary) => {
+    if (run.policySettings.length === 0) {
+      return null;
+    }
+    const summary = summariseRunPolicy(run.policySettings);
+    const changedKeys = new Set(summary.deviations.map((deviation) => deviation.key));
+    const heading = summary.basePolicyTitle
+      ? summary.deviations.length === 0
+        ? `${summary.basePolicyTitle}, unchanged`
+        : `${summary.basePolicyTitle} \u00b7 ${summary.deviations.length} changed`
+      : `${run.policySettings.length} Central Bank settings`;
+    return { heading, changedKeys };
+  };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
   const availableIndicators = useMemo(() => baselineDetail?.indicators ?? [], [baselineDetail]);
+
+  const policySettings = baselineDetail?.policySettings ?? [];
+  // Collapsed, the disclosure is only worth opening if it says something. A plain count does that for
+  // a single run; for a comparison the useful headline is how many settings actually differ.
+  const changedPolicyCount = useMemo(() => {
+    if (!comparisonDetail) {
+      return 0;
+    }
+    return policySettings.filter((setting) => {
+      const other = comparisonDetail.policySettings.find((item) => item.key === setting.key)?.value;
+      return other !== undefined && other !== setting.value;
+    }).length;
+  }, [comparisonDetail, policySettings]);
+
+  const policySettingsSummary = comparisonDetail
+    ? `${changedPolicyCount} of ${policySettings.length} settings differ`
+    : `${policySettings.length} Central Bank settings`;
   const baselineCompareKpis = useMemo(
     () => comparePayload?.kpiSummaryByRun.find((entry) => entry.runId === baselineRunId)?.kpiSummary ?? [],
     [baselineRunId, comparePayload]
@@ -401,44 +628,31 @@ export function ManualResultsView({
     () => new Map(comparisonCompareKpis.map((kpi) => [kpi.indicatorId, kpi])),
     [comparisonCompareKpis]
   );
-  const groupedIndicatorSections = useMemo(
-    () =>
-      groupIndicatorsBySource(availableIndicators).map((section) => ({
+  const groupedKpis = useMemo(() => {
+    const kpiById = new Map(sortedKpis.map((kpi) => [kpi.indicatorId, kpi]));
+    return groupIndicatorsByPolicyQuestion(availableIndicators)
+      .map((section) => ({
         id: section.id,
         title: section.title,
-        items: section.items.map((indicator) => ({
-          id: indicator.id,
-          label: indicator.title,
-          description: `${indicator.units} · ${indicator.source}${indicator.note ? ` · ${indicator.note}` : ''}`,
-          checked: selectedIndicatorIds.includes(indicator.id),
-          disabled: !indicator.available
-        }))
-      })),
-    [availableIndicators, selectedIndicatorIds]
+        items: section.items
+          .map((indicator) => kpiById.get(indicator.id))
+          .filter((kpi): kpi is KpiMetricSummary => Boolean(kpi))
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [availableIndicators, sortedKpis]);
+  const policyGroupIds = useMemo(() => groupedKpis.map((section) => section.id), [groupedKpis]);
+  const allPolicyGroupsExpanded =
+    policyGroupIds.length > 0 && policyGroupIds.every((groupId) => expandedPolicyGroupIds.includes(groupId));
+  const allPolicyGroupsCollapsed = policyGroupIds.every(
+    (groupId) => !expandedPolicyGroupIds.includes(groupId)
   );
   const overlayIndicators = comparePayload?.indicators ?? [];
-  const activeIndicatorOptions = useMemo(() => {
-    if (overlayIndicators.length > 0) {
-      return overlayIndicators.map((indicatorPayload) => ({
-        id: indicatorPayload.indicator.id,
-        title: indicatorPayload.indicator.title
-      }));
-    }
-
-    const titleById = new Map(availableIndicators.map((indicator) => [indicator.id, indicator.title]));
-    return selectedIndicatorIds.map((indicatorId) => ({
-      id: indicatorId,
-      title: titleById.get(indicatorId) ?? indicatorId
-    }));
-  }, [availableIndicators, overlayIndicators, selectedIndicatorIds]);
   const activeIndicatorPayload = useMemo(
     () => resolveActiveIndicatorPayload(overlayIndicators, selectedIndicatorIds, activeIndicatorId),
     [activeIndicatorId, overlayIndicators, selectedIndicatorIds]
   );
   const showRunsSkeleton = isLoadingRuns && runs.length === 0;
   const showRunsRefreshing = isLoadingRuns && runs.length > 0;
-  const showIndicatorsSkeleton = isLoadingDetail && availableIndicators.length === 0;
-  const showIndicatorsRefreshing = isLoadingDetail && availableIndicators.length > 0;
   const showKpiSkeleton = (isLoadingDetail || isLoadingCompare) && sortedKpis.length === 0;
   const showKpiRefreshing = (isLoadingDetail || isLoadingCompare) && sortedKpis.length > 0;
   const showOverlaySkeleton = isLoadingCompare && overlayIndicators.length === 0 && selectedIndicatorIds.length > 0;
@@ -449,6 +663,25 @@ export function ManualResultsView({
   useEffect(() => {
     setActiveIndicatorId((current) => resolveActiveIndicatorId(selectedIndicatorIds, overlayIndicators, current));
   }, [overlayIndicators, selectedIndicatorIds]);
+
+  useEffect(() => {
+    if (!isTrendModalOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsTrendModalOpen(false);
+      }
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isTrendModalOpen]);
 
   const updateSelection = useCallback(
     (nextBaselineRunId: string, nextComparisonRunId: string) => {
@@ -462,6 +695,8 @@ export function ManualResultsView({
   );
 
   const setBaselineSelection = (runId: string) => {
+    // Deliberately leaves Run History open: selecting a run is often the first of several
+    // comparisons, and collapsing the list would throw away the user's place in it.
     updateSelection(runId, comparisonRunId === runId ? '' : comparisonRunId);
   };
 
@@ -473,10 +708,36 @@ export function ManualResultsView({
     updateSelection(baselineRunId, comparisonRunId === runId ? '' : runId);
   };
 
-  const toggleIndicatorSelection = (indicatorId: string) => {
-    setSelectedIndicatorIds((current) =>
-      current.includes(indicatorId) ? current.filter((id) => id !== indicatorId) : [...current, indicatorId]
-    );
+  // The KPI table reports a mean; the distribution is where a flow limit actually shows up. These
+  // two views sit in the same column and would otherwise never meet.
+  const LENDING_METRIC_BY_INDICATOR: Record<string, LendingMetricId> = {
+    core_ooLTV: 'ltv',
+    core_btlLTV: 'ltv',
+    core_ooLTI: 'lti'
+  };
+
+  const viewLendingDistribution = (indicatorId: string) => {
+    const metric = LENDING_METRIC_BY_INDICATOR[indicatorId];
+    if (!metric) {
+      return;
+    }
+    setLendingMetric(metric);
+    setLendingView('distribution');
+    // The section is collapsible, so opening it is part of jumping to it.
+    setIsLendingExpanded(true);
+    window.requestAnimationFrame(() => {
+      document.getElementById('new-lending-card')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
+  const viewIndicatorTrend = (indicatorId: string) => {
+    if (!selectedIndicatorIds.includes(indicatorId)) {
+      setSelectedIndicatorIds((current) => [...current, indicatorId]);
+    }
+    setActiveIndicatorId(indicatorId);
+    setShowBaselineTrend(true);
+    setShowComparisonTrend(true);
+    setIsTrendModalOpen(true);
   };
 
   const deleteRun = async (runId: string) => {
@@ -565,191 +826,190 @@ export function ManualResultsView({
     );
   };
 
+  // Queue = pending work only (queued/running). Run History = every finished run: the completed
+  // runs on disk plus failed/cancelled jobs from this session (which have no saved results).
+  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running');
+  const failedHistoryJobs = runJobs.filter((job) => job.status === 'failed' || job.status === 'canceled');
+  const queuePreviewJob = queueItems.find((job) => job.status === 'running') ?? queueItems[0] ?? null;
+  const remainingQueueItems = queuePreviewJob
+    ? queueItems.filter((job) => job.jobId !== queuePreviewJob.jobId)
+    : queueItems;
+  const historyPreviewRun = baselineSummary ?? historyRuns[0] ?? null;
+  const finishedRunCount = historyRuns.length + failedHistoryJobs.length;
+
   return (
     <section className="results-layout manual-results-layout">
       {loadError && <p className="error-banner">{loadError}</p>}
-
-      <div className="results-grid">
-        <aside className="results-sidebar">
-          <div className="results-panel">
-            <CollapsibleSection
-              title="Run Selection"
-              defaultOpen={false}
-              className="manual-results-disclosure"
-              bodyClassName="manual-results-disclosure-body"
-            >
-              <p>{sidebarSubtitle}</p>
-              {showRunsRefreshing && (
-                <LoadingSkeleton
-                  as="span"
-                  className="loading-skeleton-pill section-loading-row"
-                  ariaLabel="Refreshing runs"
-                />
-              )}
-              {showRunsSkeleton ? (
-                <LoadingSkeletonGroup
-                  className="run-list-skeleton"
-                  count={4}
-                  itemClassName="loading-skeleton-card run-item-skeleton"
-                  ariaLabel="Loading runs"
-                />
-              ) : (
-                <ul className="run-list">
-                  {runs.map((run) => {
-                    const isBaselineSelected = baselineRunId === run.runId;
-                    const isComparisonSelected = comparisonRunId === run.runId;
-                    return (
-                      <li
-                        key={run.runId}
-                        className={[
-                          'run-item',
-                          isBaselineSelected ? 'selected-baseline' : '',
-                          isComparisonSelected ? 'selected-comparison' : ''
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                      >
-                        <div className="run-item-head">
-                          <strong>{run.runId}</strong>
-                          <div className="run-role-chips">
-                            {isBaselineSelected && <span className="run-role-chip">Baseline</span>}
-                            {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
-                          </div>
-                        </div>
-
-                        <div className="manual-run-action-row">
-                          <button
-                            type="button"
-                            className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
-                            onClick={() => setBaselineSelection(run.runId)}
-                          >
-                            {isBaselineSelected ? 'Baseline selected' : 'Set baseline'}
-                          </button>
-                          <button
-                            type="button"
-                            className={`run-select-btn ${isComparisonSelected ? 'active' : ''}`}
-                            onClick={() => toggleComparisonSelection(run.runId)}
-                            disabled={!baselineRunId || isBaselineSelected}
-                          >
-                            {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
-                          </button>
-                        </div>
-
-                        <div className="run-meta">
-                          <span className={statusClass(run.status)}>{run.status}</span>
-                          <span>{(run.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
-                        </div>
-                        <p>
-                          Coverage: {run.parseCoverage.supportedCount}/{run.parseCoverage.requiredCount} supported
-                        </p>
-                        {canDeleteResults && (
-                          <button
-                            type="button"
-                            className="danger-button"
-                            disabled={isDeletingRunId === run.runId || isProtectedResultsRun(run.runId)}
-                            onClick={() => void deleteRun(run.runId)}
-                            title={isProtectedResultsRun(run.runId) ? 'Protected run cannot be deleted.' : undefined}
-                          >
-                            {isProtectedResultsRun(run.runId)
-                              ? 'Protected'
-                              : isDeletingRunId === run.runId
-                                ? 'Deleting...'
-                                : 'Delete'}
-                          </button>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </CollapsibleSection>
-          </div>
-
-          <div className="results-panel">
-            <div className="results-panel-header">
-              <h2>Settings</h2>
-              <p>{selectedIndicatorIds.length} indicators enabled</p>
-            </div>
-            <div className="results-controls results-controls-sidebar">
-              <label>
-                <InlineInfoTip
-                  label="Window"
-                  description="post500 shows months after the main analysis cutoff at month 500. post200 shows all months after the spin-up cutoff at month 200. tail120 shows only the latest 120 months. full shows the entire run including spin-up."
-                />
-                <select
-                  value={compareWindow}
-                  onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
-                >
-                  <option value="post500">post500</option>
-                  <option value="post200">post200</option>
-                  <option value="tail120">tail120</option>
-                  <option value="full">full</option>
-                </select>
-              </label>
-              <label>
-                <InlineInfoTip
-                  label="Smoothing"
-                  description="off shows raw monthly values. 3 shows a trailing 3-month average. 12 shows a trailing 12-month average."
-                />
-                <select
-                  value={String(smoothWindow)}
-                  onChange={(event) => setSmoothWindow(Number.parseInt(event.target.value, 10) as SmoothWindow)}
-                >
-                  <option value="0">off</option>
-                  <option value="3">3</option>
-                  <option value="12">12</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="settings-disclosure">
+      <div className="results-main results-main-full">
+          {queueItems.length > 0 && (
+          <article className="results-card run-queue-card">
+            <div className="disclosure-preview-head">
+              <div className="disclosure-preview-title">
+                <h3>Queue</h3>
+                <p>
+                  {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
+                </p>
+              </div>
               <button
                 type="button"
-                className="result-group-header settings-disclosure-toggle"
-                onClick={() => setIsIndicatorSettingsOpen((current) => !current)}
+                className="disclosure-preview-toggle"
+                aria-expanded={isQueueExpanded}
+                onClick={() => setIsQueueExpanded((current) => !current)}
+                disabled={remainingQueueItems.length === 0}
               >
-                <span className="result-group-title">{isIndicatorSettingsOpen ? '▾' : '▸'} Indicators</span>
-                <span className="result-group-counts">
-                  <span className="unchanged">{selectedIndicatorIds.length} selected</span>
-                </span>
+                {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
               </button>
-              {isIndicatorSettingsOpen && (
-                <div className="settings-disclosure-body">
-                  <p>Select indicators for overlay charts.</p>
-                  {showIndicatorsRefreshing && (
-                    <LoadingSkeleton
-                      as="span"
-                      className="loading-skeleton-pill section-loading-row"
-                      ariaLabel="Refreshing indicators"
-                    />
-                  )}
-                  {showIndicatorsSkeleton ? (
-                    <LoadingSkeletonGroup
-                      className="indicator-grid"
-                      count={6}
-                      itemClassName="loading-skeleton-card indicator-item-skeleton"
-                      ariaLabel="Loading indicators"
-                    />
-                  ) : (
-                    <GroupedCheckboxSections
-                      sections={groupedIndicatorSections}
-                      onToggle={toggleIndicatorSelection}
-                      className="param-groups indicator-settings-groups"
-                      sectionClassName="indicator-settings-section"
-                    />
-                  )}
-                </div>
-              )}
             </div>
-          </div>
-        </aside>
 
-        <div className="results-main">
-          <article className="results-card">
-            <div className="results-card-head">
-              <h2>Manual Results</h2>
-              <span className="manual-results-mode-pill">{mode === 'compare' ? 'Compare mode' : 'Single mode'}</span>
+            {queuePreviewJob ? (
+              <div className="run-preview-card is-static">
+                <span className="run-preview-title">
+                  {queuePreviewJob.title || queuePreviewJob.runId || queuePreviewJob.jobId}
+                </span>
+                <span className="run-preview-meta">
+                  <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
+                    {QUEUE_STATUS_META[queuePreviewJob.status].label}
+                  </span>
+                  <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
+                </span>
+              </div>
+            ) : (
+              <p className="info-banner">No runs in progress.</p>
+            )}
+
+            {isQueueExpanded && remainingQueueItems.length > 0 && (
+              <ul className="job-list run-queue-list">
+                {remainingQueueItems.map((job) => (
+                  <li key={job.jobId} className="job-item">
+                    <strong>{job.title || job.runId || job.jobId}</strong>
+                    <p>
+                      <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
+                    </p>
+                    {job.baseline && <p>Model {job.baseline}</p>}
+                    <p>{formatQueueTimestamp(job.createdAt)}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </article>
+          )}
+
+          <article className="results-card manual-results-summary-card">
+            <div className="comparison-run-pickers">
+              <label>
+                <span>Selected policy run</span>
+                <select
+                  value={baselineRunId}
+                  disabled={historyRuns.length === 0}
+                  onChange={(event) => setBaselineSelection(event.target.value)}
+                >
+                  {historyRuns.map((run) => (
+                    <option key={run.runId} value={run.runId}>
+                      {formatRunOptionLabel(run)}
+                    </option>
+                  ))}
+                </select>
+                {baselineSummary && (
+                  <ManualSelectionStatusPills
+                    status={baselineSummary.status}
+                    versionLabelState={baselineVersionLabelState}
+                  />
+                )}
+              </label>
+              <label>
+                <span>Compare with</span>
+                <select
+                  value={comparisonRunId}
+                  disabled={!baselineRunId || historyRuns.length < 2}
+                  onChange={(event) => updateSelection(baselineRunId, event.target.value)}
+                >
+                  <option value="">No comparison</option>
+                  {historyRuns
+                    .filter((run) => run.runId !== baselineRunId)
+                    .map((run) => (
+                      <option key={run.runId} value={run.runId}>
+                        {formatRunOptionLabel(run)}
+                      </option>
+                    ))}
+                </select>
+                {comparisonSummary ? (
+                  <ManualSelectionStatusPills
+                    status={comparisonSummary.status}
+                    versionLabelState={comparisonVersionLabelState}
+                  />
+                ) : (
+                  <small>Select a run to compare values and graph lines.</small>
+                )}
+              </label>
             </div>
+
+            {baselineDetail && policySettings.length > 0 && (
+              <CollapsibleSection
+                title="Policy settings used"
+                summary={policySettingsSummary}
+                defaultOpen={false}
+                className="run-policy-disclosure"
+              >
+                <div className="run-policy-provenance" aria-label="Policy run provenance">
+                  {[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])].map((run) => {
+                    const referencePolicy = summariseRunPolicy(run.policySettings).basePolicyId;
+                    return (
+                      <section key={run.runId} className="run-policy-provenance-item">
+                        <h3>{runLabel(run.runId)}</h3>
+                        <dl>
+                          <div>
+                            <dt>Calibrated model</dt>
+                            <dd>{getRunModelVersion(run) ?? 'Not recorded'}</dd>
+                          </div>
+                          <div>
+                            <dt>Reference policy</dt>
+                            <dd>{referencePolicy ? `${referencePolicy} policy` : 'Not recorded'}</dd>
+                          </div>
+                        </dl>
+                      </section>
+                    );
+                  })}
+                </div>
+
+                <div className="policy-settings-table-wrap">
+                    <table className="policy-settings-table">
+                      <thead>
+                        <tr>
+                          <th>Setting</th>
+                          <th>{runLabel(baselineDetail.runId)}</th>
+                          {comparisonDetail && (
+                            <th>{runLabel(comparisonDetail.runId)}</th>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {policySettings.map((setting) => {
+                          const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                          const format = (value: number) =>
+                            display ? formatPolicyValue(value, display.unit) : String(value);
+                          const comparisonValue = comparisonDetail?.policySettings.find(
+                            (item) => item.key === setting.key
+                          )?.value;
+                          const differs = comparisonValue !== undefined && comparisonValue !== setting.value;
+                          return (
+                            <tr key={setting.key} className={differs ? 'policy-settings-row-changed' : undefined}>
+                              <th scope="row" title={setting.key}>
+                                {display?.label ?? setting.key}
+                                {differs && <span className="policy-settings-changed-chip">changed</span>}
+                              </th>
+                              <td>{format(setting.value)}</td>
+                              {comparisonDetail && (
+                                <td>{comparisonValue === undefined ? 'Not recorded' : format(comparisonValue)}</td>
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                </div>
+              </CollapsibleSection>
+            )}
+
             <div className="summary-links">
               <Link
                 className="summary-link-inline"
@@ -759,68 +1019,26 @@ export function ManualResultsView({
                   mode: 'view'
                 })}
               >
-                Open Sensitivity Results
+                Open Sensitivity analysis
               </Link>
-              {renderDownloadAction(baselineRunId, 'Download Baseline Results')}
-              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download Comparison Results')}
+              {renderDownloadAction(baselineRunId, 'Download primary')}
+              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison')}
             </div>
 
-            <div className="manual-selection-summary">
-              <div className="manual-selection-summary-row">
-                <span className="manual-selection-summary-label">Baseline</span>
-                <strong>{baselineRunId || 'none'}</strong>
-                {baselineSummary && (
-                  <ManualSelectionStatusPills
-                    status={baselineSummary.status}
-                    versionLabelState={baselineVersionLabelState}
-                  />
-                )}
-              </div>
-              <div className="manual-selection-summary-row">
-                <span className="manual-selection-summary-label">Comparison</span>
-                {comparisonRunId ? (
-                  <>
-                    <strong>{comparisonRunId}</strong>
-                    {comparisonSummary && (
-                      <ManualSelectionStatusPills
-                        status={comparisonSummary.status}
-                        versionLabelState={comparisonVersionLabelState}
-                      />
-                    )}
-                  </>
-                ) : (
-                  <span className="manual-selection-empty">None selected</span>
-                )}
-              </div>
-            </div>
-
-            <p>Compare window and indicator controls are available in the Settings panel.</p>
+            <p>Analysis-window and smoothing controls are available when a trend chart is opened.</p>
           </article>
 
-          <article className="results-card">
-            <div className="aggregate-results-head">
-              <div>
-                <h3>Aggregate Results</h3>
-                <p>
-                  {showAllKpiDetails
-                    ? 'Detailed tables show mean, CV, and range for every KPI.'
-                    : 'Mean is shown by default. Use More details to switch every KPI card to a detailed table.'}
-                </p>
-              </div>
-              <button
-                type="button"
-                className="table-toggle aggregate-results-toggle"
-                aria-pressed={showAllKpiDetails}
-                onClick={() => setShowAllKpiDetails((current) => !current)}
-              >
-                {showAllKpiDetails ? 'Hide details' : 'More details'}
-              </button>
-            </div>
+          <CollapsibleSection
+            className="results-card manual-results-aggregate-card"
+            title="Policy results"
+            description="Monthly means over the selected analysis window. Open any series to inspect its path through time."
+            defaultOpen={false}
+          >
             {showKpiRefreshing && (
               <LoadingSkeleton
                 as="span"
                 className="loading-skeleton-pill section-loading-row"
-                ariaLabel="Refreshing aggregate results"
+                ariaLabel="Refreshing policy results"
               />
             )}
             {showKpiSkeleton ? (
@@ -828,158 +1046,485 @@ export function ManualResultsView({
                 className="kpi-grid"
                 count={4}
                 itemClassName="loading-skeleton-card kpi-card-skeleton"
-                ariaLabel="Loading aggregate results"
+                ariaLabel="Loading policy results"
               />
             ) : (
-              <div
-                id="aggregate-results-grid"
-                className={['kpi-grid', showAllKpiDetails ? 'kpi-grid-detailed' : ''].filter(Boolean).join(' ')}
-              >
-                {sortedKpis.map((kpi) => {
-                  const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
-                  const meanDelta = computeKpiDeltaValue(kpi.mean, comparisonKpi?.mean ?? null, kpi.units);
-                  return (
-                    <div key={kpi.indicatorId} className="kpi-card">
-                      <p className="kpi-title">{kpi.title}</p>
-                      {!showAllKpiDetails ? (
-                        mode === 'single' ? (
-                          <p className="kpi-value">Mean (month): {formatKpiValue(kpi.mean, kpi.units)}</p>
-                        ) : (
-                          <div className="manual-kpi-compare-grid">
-                            <p>
-                              <span>Baseline</span>
-                              {formatKpiValue(kpi.mean, kpi.units)}
-                            </p>
-                            <p>
-                              <span>Comparison</span>
-                              {formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}
-                            </p>
-                            <p className={`manual-kpi-delta ${deltaClassName(meanDelta)}`}>
-                              <span>{getKpiDeltaLabel(kpi.units)}</span>
-                              {formatKpiDeltaValue(meanDelta, kpi.units)}
-                            </p>
-                          </div>
-                        )
-                      ) : (
-                        <div className="manual-kpi-detail-table-wrap">
-                          {mode === 'single' ? (
-                            <table className="manual-kpi-detail-table single">
-                              <thead>
-                                <tr>
-                                  <th>Metric</th>
-                                  <th>Value</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {KPI_DETAIL_ROWS.map((row) => {
-                                  const value = getKpiMetricValue(kpi, row.key);
-                                  const units = row.units === 'dynamic' ? kpi.units : row.units;
-                                  return (
-                                    <tr key={row.key}>
-                                      <td>{row.label}</td>
-                                      <td>{formatKpiValue(value, units)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          ) : (
-                            <table className="manual-kpi-detail-table compare">
-                              <thead>
-                                <tr>
-                                  <th>Metric</th>
-                                  <th>Baseline</th>
-                                  <th>Comparison</th>
-                                  <th>Delta</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {KPI_DETAIL_ROWS.map((row) => {
-                                  const baselineValue = getKpiMetricValue(kpi, row.key);
-                                  const comparisonValue = getKpiMetricValue(comparisonKpi, row.key);
-                                  const units = row.units === 'dynamic' ? kpi.units : row.units;
-                                  const delta = computeKpiDeltaValue(baselineValue, comparisonValue, units);
-                                  return (
-                                    <tr key={row.key}>
-                                      <td>{row.label}</td>
-                                      <td>{formatKpiValue(baselineValue, units)}</td>
-                                      <td>{formatKpiValue(comparisonValue, units)}</td>
-                                      <td className={deltaClassName(delta)}>{formatKpiDeltaValue(delta, units)}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
+              <div className="policy-results-sections">
+                <div className="policy-results-sections-head">
+                  <div className="policy-results-expansion-controls" aria-label="Policy result section controls">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPolicyGroupIds(policyGroupIds)}
+                      disabled={allPolicyGroupsExpanded}
+                    >
+                      Expand all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPolicyGroupIds([])}
+                      disabled={allPolicyGroupsCollapsed}
+                    >
+                      Collapse all
+                    </button>
+                  </div>
+                </div>
+                <div className="policy-results-table-wrap">
+                  <table className={`policy-results-table ${mode === 'compare' ? 'is-comparison' : ''}`}>
+                    <colgroup>
+                      <col className="policy-results-indicator-column" />
+                      <col className="policy-results-value-column" />
+                      {mode === 'compare' && <col className="policy-results-value-column" />}
+                      {mode === 'compare' && <col className="policy-results-value-column" />}
+                      <col className="policy-results-value-column" />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th scope="col">Indicator</th>
+                        <th scope="col">{mode === 'compare' ? 'Baseline' : 'Mean for a single run'}</th>
+                        {mode === 'compare' && <th scope="col">Comparison</th>}
+                        {mode === 'compare' && <th scope="col">Change</th>}
+                        <th scope="col">Trend</th>
+                      </tr>
+                    </thead>
+                    {groupedKpis.map((section) => {
+                      const isExpanded = expandedPolicyGroupIds.includes(section.id);
+                      return (
+                        <tbody
+                          key={section.id}
+                          id={`policy-results-${section.id}`}
+                          className="policy-results-group"
+                        >
+                          <tr className="policy-results-group-row">
+                            <th colSpan={mode === 'compare' ? 5 : 3} scope="rowgroup">
+                              <button
+                                type="button"
+                                className="policy-results-group-toggle"
+                                aria-expanded={isExpanded}
+                                aria-controls={`policy-results-${section.id}`}
+                                onClick={() =>
+                                  setExpandedPolicyGroupIds((current) =>
+                                    current.includes(section.id)
+                                      ? current.filter((groupId) => groupId !== section.id)
+                                      : [...current, section.id]
+                                  )
+                                }
+                              >
+                                <span aria-hidden="true" className="policy-results-chevron" />
+                                <strong>{section.title}</strong>
+                                <small>{section.items.length} indicators</small>
+                              </button>
+                            </th>
+                          </tr>
+                          {isExpanded && (
+                            <>
+                              {section.items.map((kpi) => {
+                                const comparisonKpi = comparisonKpiById.get(kpi.indicatorId) ?? null;
+                                const delta = computeKpiDeltaValue(
+                                  kpi.mean,
+                                  comparisonKpi?.mean ?? null,
+                                  kpi.units
+                                );
+                                const direction = deltaDirection(delta);
+                                return (
+                                  <tr key={kpi.indicatorId}>
+                                    <th scope="row">{kpi.title}</th>
+                                    <td>{formatKpiValue(kpi.mean, kpi.units)}</td>
+                                    {mode === 'compare' && (
+                                      <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}</td>
+                                    )}
+                                    {mode === 'compare' && (
+                                      <td className={deltaClassName(delta)}>
+                                        <span className="policy-results-change-direction" aria-label={direction.label}>
+                                          {direction.symbol}
+                                        </span>{' '}
+                                        {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
+                                      </td>
+                                    )}
+                                    <td>
+                                      <div className="policy-row-actions">
+                                        <button
+                                          type="button"
+                                          className="policy-trend-link"
+                                          onClick={() => viewIndicatorTrend(kpi.indicatorId)}
+                                        >
+                                          View trend
+                                        </button>
+                                        {LENDING_METRIC_BY_INDICATOR[kpi.indicatorId] && (
+                                          <button
+                                            type="button"
+                                            className="policy-trend-link"
+                                            onClick={() => viewLendingDistribution(kpi.indicatorId)}
+                                          >
+                                            Distribution
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </>
                           )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </article>
-
-          <article className="results-card">
-            <div className="overlay-card-head">
-              <h3>Indicator Overlays</h3>
-              <label>
-                Indicator
-                <select
-                  value={activeIndicatorId}
-                  disabled={activeIndicatorOptions.length === 0}
-                  onChange={(event) => setActiveIndicatorId(event.target.value)}
-                >
-                  {activeIndicatorOptions.map((indicator) => (
-                    <option key={indicator.id} value={indicator.id}>
-                      {indicator.title}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <p>
-              Overlay series are shown in raw units, and dotted lines show each selected run&apos;s mean over the
-              currently displayed data. {mode === 'compare' ? 'Baseline and comparison are labelled by role.' : 'Single-run view uses the baseline selection.'}
-            </p>
-            {showOverlayRefreshing && (
-              <LoadingSkeleton
-                as="span"
-                className="loading-skeleton-pill section-loading-row"
-                ariaLabel="Refreshing indicator overlays"
-              />
-            )}
-            {selectedIndicatorIds.length === 0 ? (
-              <p className="info-banner">Enable at least one indicator in Settings to view an overlay chart.</p>
-            ) : showOverlaySkeleton ? (
-              <LoadingSkeletonGroup
-                className="overlay-grid"
-                count={1}
-                itemClassName="loading-skeleton-card overlay-card-skeleton"
-                ariaLabel="Loading indicator overlays"
-              />
-            ) : compareError ? (
-              <p className="error-banner">{compareError}</p>
-            ) : !activeIndicatorPayload ? (
-              <p className="info-banner">No overlay data is available for the current indicator selection yet.</p>
-            ) : (
-              <div className="overlay-grid">
-                <div key={activeIndicatorPayload.indicator.id} className="overlay-card">
-                  <h4>{activeIndicatorPayload.indicator.title}</h4>
-                  <EChart
-                    option={buildManualOverlayOption(activeIndicatorPayload, baselineRunId, comparisonRunId)}
-                    className="chart"
-                  />
+                        </tbody>
+                      );
+                    })}
+                  </table>
                 </div>
               </div>
             )}
-          </article>
+          </CollapsibleSection>
 
-          <article className="results-card">
+          {isTrendModalOpen && (
+            <div
+              className="trend-modal-backdrop"
+              role="presentation"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setIsTrendModalOpen(false);
+                }
+              }}
+            >
+              <section
+                className="trend-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="trend-modal-title"
+              >
+                <div className="trend-modal-head">
+                  <div>
+                    <p className="trend-modal-eyebrow">Time series</p>
+                    <h3 id="trend-modal-title">
+                      {activeIndicatorPayload?.indicator.title ?? 'Loading indicator'}
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="trend-modal-close"
+                    aria-label="Close trend chart"
+                    onClick={() => setIsTrendModalOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="trend-modal-layout">
+                  <aside className="trend-modal-settings" aria-label="Trend chart settings">
+                    <h4>Settings</h4>
+                    <label>
+                      <span>Analysis window</span>
+                      <select
+                        value={compareWindow}
+                        onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
+                      >
+                        <option value="post500">After month 500</option>
+                        <option value="post200">After month 200</option>
+                        <option value="tail120">Latest 120 months</option>
+                        <option value="full">Full run</option>
+                      </select>
+                      <small>Also updates the means in the results tables.</small>
+                    </label>
+                    <label>
+                      <span>Smoothing</span>
+                      <select
+                        value={String(smoothWindow)}
+                        onChange={(event) => setSmoothWindow(Number.parseInt(event.target.value, 10) as SmoothWindow)}
+                      >
+                        <option value="0">Raw monthly</option>
+                        <option value="3">3-month average</option>
+                        <option value="12">12-month average</option>
+                      </select>
+                      <small>Changes this graph only.</small>
+                    </label>
+                    <div className="trend-modal-reading-note">
+                      <strong>Reading the chart</strong>
+                      <span>Dotted lines show each selected run&apos;s mean.</span>
+                    </div>
+                  </aside>
+                  <div className="trend-modal-visual">
+                    {showOverlaySkeleton || showOverlayRefreshing ? (
+                      <LoadingSkeleton
+                        className="trend-modal-chart-skeleton"
+                        ariaLabel="Loading trend chart"
+                      />
+                    ) : compareError ? (
+                      <p className="error-banner">{compareError}</p>
+                    ) : !activeIndicatorPayload ? (
+                      <p className="info-banner">No trend data is available for this indicator.</p>
+                    ) : (
+                      <EChart
+                        option={buildManualOverlayOption(
+                          activeIndicatorPayload,
+                          baselineRunId,
+                          comparisonRunId,
+                          {
+                            Baseline: showBaselineTrend,
+                            Comparison: showComparisonTrend
+                          }
+                        )}
+                        className="trend-modal-chart"
+                        onLegendSelectionChange={(selected) => {
+                          setShowBaselineTrend(selected.Baseline ?? showBaselineTrend);
+                          setShowComparisonTrend(selected.Comparison ?? showComparisonTrend);
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
+          <NewLendingCard
+            baseline={lendingBaseline}
+            comparison={lendingComparison}
+            isLoading={isLoadingLending}
+            error={lendingError}
+            activeView={lendingView}
+            onViewChange={setLendingView}
+            activeMetric={lendingMetric}
+            onMetricChange={setLendingMetric}
+            open={isLendingExpanded}
+            onOpenChange={setIsLendingExpanded}
+          />
+
+          <CollapsibleSection
+            className="results-card run-history-card"
+            title="Run History"
+            description={sidebarSubtitle}
+            summary={`${finishedRunCount} finished ${finishedRunCount === 1 ? 'run' : 'runs'}`}
+            open={isHistoryExpanded}
+            onOpenChange={setIsHistoryExpanded}
+          >
+            {historyPreviewRun ? (
+              <button
+                type="button"
+                className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
+                onClick={() => setBaselineSelection(historyPreviewRun.runId)}
+              >
+                <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
+                <span className="run-preview-meta">
+                  <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
+                  <span className="run-preview-action">
+                    {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
+                  </span>
+                </span>
+              </button>
+            ) : (
+              <p className="info-banner">No completed runs yet.</p>
+            )}
+
+            <div className="disclosure-expanded-list">
+                {showRunsRefreshing && (
+                  <LoadingSkeleton
+                    as="span"
+                    className="loading-skeleton-pill section-loading-row"
+                    ariaLabel="Refreshing runs"
+                  />
+                )}
+                {showRunsSkeleton ? (
+                  <LoadingSkeletonGroup
+                    className="run-list-skeleton"
+                    count={4}
+                    itemClassName="loading-skeleton-card run-item-skeleton"
+                    ariaLabel="Loading runs"
+                  />
+                ) : (
+                  <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
+                  <ul className="run-list">
+                    {historyRuns.map((run) => {
+                      const isBaselineSelected = baselineRunId === run.runId;
+                      const isComparisonSelected = comparisonRunId === run.runId;
+                      return (
+                        <li
+                          key={run.runId}
+                          className={[
+                            'run-item',
+                            isBaselineSelected ? 'selected-baseline' : '',
+                            isComparisonSelected ? 'selected-comparison' : '',
+                            previewRunId === run.runId ? 'is-previewed' : ''
+                          ]
+                            .filter(Boolean)
+                            .join(' ')}
+                          onMouseEnter={() => setPreviewRunId(run.runId)}
+                          onFocus={() => setPreviewRunId(run.runId)}
+                        >
+                          <div className="run-item-head">
+                            <div className="run-item-name">
+                              {renamingRunId === run.runId ? (
+                                <form
+                                  className="run-rename-form"
+                                  onSubmit={(event) => {
+                                    event.preventDefault();
+                                    void submitRename(run.runId);
+                                  }}
+                                >
+                                  <input
+                                    type="text"
+                                    value={renameDraft}
+                                    maxLength={120}
+                                    autoFocus
+                                    aria-label={`Rename ${run.title ?? run.runId}`}
+                                    placeholder="Scenario name"
+                                    disabled={isSavingRename}
+                                    onChange={(event) => setRenameDraft(event.target.value)}
+                                  />
+                                  <button type="submit" className="run-select-btn" disabled={isSavingRename}>
+                                    {isSavingRename ? 'Saving...' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="table-toggle"
+                                    disabled={isSavingRename}
+                                    onClick={() => {
+                                      setRenamingRunId('');
+                                      setRenameDraft('');
+                                    }}
+                                  >
+                                    Cancel
+                                  </button>
+                                </form>
+                              ) : (
+                                <strong>{getRunPrimaryLabel(run)}</strong>
+                              )}
+                            </div>
+                            <div className="run-role-chips">
+                              {isBaselineSelected && <span className="run-role-chip">Primary</span>}
+                              {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
+                            </div>
+                          </div>
+
+                          <div className="manual-run-action-row">
+                            <button
+                              type="button"
+                              className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
+                              onClick={() => setBaselineSelection(run.runId)}
+                            >
+                              {isBaselineSelected ? 'Primary selected' : 'Set primary'}
+                            </button>
+                            <button
+                              type="button"
+                              className={`run-select-btn ${isComparisonSelected ? 'active' : ''}`}
+                              onClick={() => toggleComparisonSelection(run.runId)}
+                              disabled={!baselineRunId || isBaselineSelected}
+                            >
+                              {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
+                            </button>
+                            {canWrite && renamingRunId !== run.runId && (
+                              <button
+                                type="button"
+                                className="table-toggle"
+                                onClick={() => {
+                                  setRenamingRunId(run.runId);
+                                  setRenameDraft(run.title ?? '');
+                                }}
+                              >
+                                Rename
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="run-meta">
+                            <span className={statusClass(run.status)}>{run.status}</span>
+                          </div>
+                          {canDeleteResults && (
+                            <button
+                              type="button"
+                              className="danger-button"
+                              disabled={isDeletingRunId === run.runId || isProtectedResultsRun(run.runId)}
+                              onClick={() => void deleteRun(run.runId)}
+                              title={isProtectedResultsRun(run.runId) ? 'Protected run cannot be deleted.' : undefined}
+                            >
+                              {isProtectedResultsRun(run.runId)
+                                ? 'Protected'
+                                : isDeletingRunId === run.runId
+                                  ? 'Deleting...'
+                                  : 'Delete'}
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {(() => {
+                    const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
+                    if (!detailRun) {
+                      return null;
+                    }
+                    const policy = describeRunPolicy(detailRun);
+                    return (
+                      <div className="run-history-preview" aria-live="polite">
+                        <p className="run-history-preview-eyebrow">
+                          {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
+                        </p>
+                        <h4>{getRunPrimaryLabel(detailRun)}</h4>
+                        <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
+                        <div className="run-meta">
+                          <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
+                          <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
+                          <span>
+                            Coverage {detailRun.parseCoverage.supportedCount}/{detailRun.parseCoverage.requiredCount}
+                          </span>
+                        </div>
+                        {policy ? (
+                          <div className="run-item-policy">
+                            <p className="run-item-policy-head">{policy.heading}</p>
+                            <dl className="run-item-policy-list">
+                              {detailRun.policySettings.map((setting) => {
+                                const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
+                                const isChanged = policy.changedKeys.has(setting.key);
+                                return (
+                                  <div
+                                    key={setting.key}
+                                    className={isChanged ? 'is-changed' : undefined}
+                                    title={setting.key}
+                                  >
+                                    <dt>{display?.label ?? setting.key}</dt>
+                                    <dd>
+                                      {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
+                                    </dd>
+                                  </div>
+                                );
+                              })}
+                            </dl>
+                          </div>
+                        ) : (
+                          <p className="info-banner">No policy settings recorded for this run.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  </div>
+                )}
+                {failedHistoryJobs.length > 0 && (
+                  <ul className="run-list run-history-failed-list">
+                    {failedHistoryJobs.map((job) => (
+                      <li key={job.jobId} className="run-item run-item-failed">
+                        <div className="run-item-head">
+                          <strong>{job.title || job.runId || job.jobId}</strong>
+                          <span className={QUEUE_STATUS_META[job.status].className}>
+                            {QUEUE_STATUS_META[job.status].label}
+                          </span>
+                        </div>
+                        <p className="run-queue-failure">
+                          This run {job.status === 'canceled' ? 'was cancelled' : 'failed'} — no results.
+                          {job.signal
+                            ? ` Stopped by signal ${job.signal}.`
+                            : job.exitCode != null
+                              ? ` Exit code ${job.exitCode}.`
+                              : ''}
+                        </p>
+                        <p>{formatQueueTimestamp(job.createdAt)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+          </CollapsibleSection>
+
+          <article className="results-card manual-results-files-card">
             <CollapsibleSection
               title="File Manifest"
               defaultOpen={false}
-              summary={`${manifestTargetLabel}${manifestRunId ? ` · ${manifestRunId}` : ''}`}
+              summary={`${manifestTargetLabel}${manifestRunId ? ` · Run ID: ${manifestRunId}` : ''}`}
               className="manual-results-disclosure"
               bodyClassName="manual-results-disclosure-body"
             >
@@ -1002,7 +1547,8 @@ export function ManualResultsView({
                 </div>
               )}
               <p>
-                Showing {manifestTargetLabel.toLowerCase()} manifest for <strong>{manifestRunId || 'no run selected'}</strong>.
+                Showing {manifestTargetLabel.toLowerCase()} manifest.{' '}
+                <strong>Run ID: {manifestRunId || 'no run selected'}</strong>
               </p>
               {showManifestRefreshing && (
                 <LoadingSkeleton
@@ -1048,7 +1594,6 @@ export function ManualResultsView({
               )}
             </CollapsibleSection>
           </article>
-        </div>
       </div>
     </section>
   );

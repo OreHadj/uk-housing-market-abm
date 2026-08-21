@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type { AuthStatusPayload } from '../shared/types';
 import {
   type ApiViewMode,
@@ -8,16 +8,57 @@ import {
   setApiAuthToken,
   setApiViewMode
 } from './lib/api';
-import { ComparePage } from './pages/ComparePage';
+import { ExperimentsLandingPage } from './pages/ExperimentsLandingPage';
 import { ExperimentsPage } from './pages/ExperimentsPage';
 import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
-import { ValidationPage } from './pages/ValidationPage';
+import { ModelEvidencePage } from './pages/ModelEvidencePage';
+import { ResultsPage } from './pages/ResultsPage';
 
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
-const EXPERIMENTS_VIEW_PATH = '/experiments?mode=view&type=manual';
+const EXPERIMENTS_VIEW_PATH = '/experiments';
+
+type PrimaryDestination = 'home' | 'experiments' | 'results' | 'model-evidence';
+
+function getActivePrimaryDestination(pathname: string): PrimaryDestination | null {
+  if (pathname === '/') return 'home';
+  if (pathname === '/experiments') return 'experiments';
+  if (pathname === '/results') return 'results';
+  if (pathname === '/model-evidence' || pathname === '/calibration' || pathname === '/validation') {
+    return 'model-evidence';
+  }
+
+  if (
+    pathname === '/scenarios' ||
+    pathname === '/scenarios/new' ||
+    pathname === '/sensitivity' ||
+    pathname === '/sensitivity/new' ||
+    pathname === '/runs' ||
+    pathname === '/new-scenario' ||
+    pathname === '/compare'
+  ) return 'experiments';
+  return null;
+}
+
+/**
+ * /compare was a separate page that rendered the same ManualResultsView as /scenarios, differing
+ * only in its heading. Comparison is a state of that view, so the alias redirects and carries its
+ * run-selection params through, keeping any links already shared elsewhere working.
+ */
+function LegacyCompareRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/scenarios${location.search}`} replace />;
+}
+
+/** Keep existing evidence links working while moving both views under one primary destination. */
+function LegacyEvidenceRedirect({ view }: { view: 'calibration' | 'validation' }) {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  searchParams.set('view', view);
+  return <Navigate to={`/model-evidence?${searchParams.toString()}`} replace />;
+}
 
 const DEFAULT_AUTH_STATUS: AuthStatusPayload = {
   authEnabled: false,
@@ -102,6 +143,7 @@ function getDesktopApi(): UkHousingDesktopApi | null {
 }
 
 export function App() {
+  const location = useLocation();
   const isDevEnv = import.meta.env.DEV;
   const [desktopApi] = useState<UkHousingDesktopApi | null>(() => getDesktopApi());
   const isDesktopRuntime = Boolean(desktopApi);
@@ -113,11 +155,12 @@ export function App() {
   const [desktopActionError, setDesktopActionError] = useState('');
   const [desktopActionMessage, setDesktopActionMessage] = useState('');
   const experimentsVisible = true;
-  const validationVisible = isDevEnv && viewMode === 'dev';
+  const modelEvidenceVisible = true;
   const browserAuthControlsVisible = !isDesktopRuntime && viewMode !== 'preview_desktop';
   const activeViewModeLabel = VIEW_MODE_OPTIONS.find((option) => option.value === viewMode)?.label ?? 'Dev mode';
 
   const loginPath = `/login?next=${encodeURIComponent(EXPERIMENTS_VIEW_PATH)}`;
+  const activePrimaryDestination = getActivePrimaryDestination(location.pathname);
 
   const refreshAuthStatus = useCallback(async () => {
     try {
@@ -234,36 +277,30 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <header className="app-header">
-        <div className="brand-wrap">
-          <p className="eyebrow">Max Stoddard BEng Individual Project</p>
-          <div className="brand-heading-row">
-            <h1 className="brand-title">UK Housing Market ABM</h1>
-            {isDevEnv && (
-              <div className="env-controls">
-                <span className="env-pill-dev">{activeViewModeLabel}</span>
-                <label className="env-selector">
-                  <span>Runtime view</span>
-                  <select value={viewMode} onChange={(event) => handleViewModeChange(event.target.value as ApiViewMode)}>
-                    {VIEW_MODE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="header-nav-wrap">
-          <nav className="main-nav" aria-label="Main">
-            <NavLink to="/" end>
+      <header className="top">
+        <div className="wrap">
+          <div className="top-inner">
+            <div className="top-brand">
+              <p className="eyebrow">Max Stoddard · BEng Individual Project</p>
+              <h1 className="brand">
+                <Link to="/">UK Housing Market Model</Link>
+              </h1>
+            </div>
+            <nav className="main" aria-label="Main">
+            <NavLink className={activePrimaryDestination === 'home' ? 'active' : undefined} to="/" end>
               Home
             </NavLink>
-            <NavLink to="/compare">Calibration</NavLink>
-            {validationVisible && <NavLink to="/validation">Validation</NavLink>}
-            {experimentsVisible && <NavLink to="/experiments">Experiments</NavLink>}
+            <NavLink className={activePrimaryDestination === 'experiments' ? 'active' : undefined} to="/experiments">
+              Experiments
+            </NavLink>
+            <NavLink className={activePrimaryDestination === 'results' ? 'active' : undefined} to="/results">
+              Results
+            </NavLink>
+            {modelEvidenceVisible && (
+              <NavLink className={activePrimaryDestination === 'model-evidence' ? 'active' : undefined} to="/model-evidence">
+                Model Evidence
+              </NavLink>
+            )}
             {experimentsVisible && browserAuthControlsVisible && authStatus.authEnabled && !authStatus.canWrite && (
               <NavLink className="main-nav-auth-control main-nav-auth-link" to={loginPath}>
                 <span className="main-nav-auth-icon" aria-hidden="true">
@@ -291,6 +328,22 @@ export function App() {
               </button>
             )}
           </nav>
+            {isDevEnv && (
+              <div className="env-controls">
+                <span className="env-pill-dev">{activeViewModeLabel}</span>
+                <label className="env-selector">
+                  <span>Runtime view</span>
+                  <select value={viewMode} onChange={(event) => handleViewModeChange(event.target.value as ApiViewMode)}>
+                    {VIEW_MODE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            )}
+          </div>
           {desktopApi && (
             <div className="desktop-folder-actions" aria-label="Desktop folders">
               <button
@@ -333,13 +386,72 @@ export function App() {
         ) : (
           <Routes>
             <Route path="/" element={<HomePage />} />
-            <Route path="/compare" element={<ComparePage />} />
-            {validationVisible && <Route path="/validation" element={<ValidationPage />} />}
+            <Route path="/experiments" element={<ExperimentsLandingPage />} />
+            <Route
+              path="/scenarios"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  workspace="manual"
+                />
+              }
+            />
+            <Route
+              path="/scenarios/new"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  workspace="manual"
+                  initialView="create"
+                />
+              }
+            />
+            <Route path="/new-scenario" element={<Navigate to="/scenarios/new" replace />} />
+            <Route path="/runs" element={<Navigate to="/scenarios" replace />} />
+            <Route
+              path="/sensitivity"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  workspace="sensitivity"
+                />
+              }
+            />
+            <Route
+              path="/sensitivity/new"
+              element={
+                <ExperimentsPage
+                  canWrite={authStatus.canWrite}
+                  canDownloadResults={authStatus.canDownloadResults}
+                  canDeleteResults={authStatus.canDeleteResults}
+                  deleteKeyRequired={authStatus.deleteKeyRequired}
+                  authEnabled={authStatus.authEnabled}
+                  workspace="sensitivity"
+                  initialView="create"
+                />
+              }
+            />
+            <Route path="/compare" element={<LegacyCompareRedirect />} />
+            {modelEvidenceVisible && <Route path="/model-evidence" element={<ModelEvidencePage />} />}
+            <Route path="/calibration" element={<LegacyEvidenceRedirect view="calibration" />} />
+            <Route path="/validation" element={<LegacyEvidenceRedirect view="validation" />} />
             {experimentsVisible && (
               <Route
-                path="/experiments"
+                path="/results"
                 element={
-                  <ExperimentsPage
+                  <ResultsPage
                     canWrite={authStatus.canWrite}
                     canDownloadResults={authStatus.canDownloadResults}
                     canDeleteResults={authStatus.canDeleteResults}
@@ -360,7 +472,12 @@ export function App() {
         )}
       </main>
 
-      <footer className="app-footer">© 2026 Max Stoddard. All rights reserved.</footer>
+      <footer className="foot">
+        <div className="wrap">
+          <span>© 2026 Max Stoddard. All rights reserved.</span>
+          <span>Carro, Hinterschweiger, Uluc &amp; Farmer — BoE SWP 976</span>
+        </div>
+      </footer>
     </div>
   );
 }

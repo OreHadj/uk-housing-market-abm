@@ -5,9 +5,10 @@ interface EChartProps {
   option: echarts.EChartsOption;
   className?: string;
   onClick?: (params: unknown) => void;
+  onLegendSelectionChange?: (selected: Record<string, boolean>) => void;
 }
 
-export function EChart({ option, className, onClick }: EChartProps) {
+export function EChart({ option, className, onClick, onLegendSelectionChange }: EChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
 
@@ -53,6 +54,26 @@ export function EChart({ option, className, onClick }: EChartProps) {
       instance.off('click', clickHandler);
     };
   }, [onClick]);
+
+  useEffect(() => {
+    const instance = instanceRef.current;
+    if (!instance || !onLegendSelectionChange) {
+      return;
+    }
+
+    const legendHandler = (params: unknown) => {
+      const selected =
+        typeof params === 'object' && params !== null && 'selected' in params
+          ? (params as { selected?: Record<string, boolean> }).selected
+          : undefined;
+      onLegendSelectionChange(selected ?? {});
+    };
+    instance.on('legendselectchanged', legendHandler);
+
+    return () => {
+      instance.off('legendselectchanged', legendHandler);
+    };
+  }, [onLegendSelectionChange]);
 
   return <div ref={containerRef} className={className ?? 'chart'} />;
 }

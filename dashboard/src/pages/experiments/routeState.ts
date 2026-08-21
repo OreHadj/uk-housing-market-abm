@@ -15,6 +15,15 @@ interface ExperimentRouteStateInput {
   runId?: string;
   experimentId?: string;
   jobRef?: string;
+  follow?: string | boolean;
+}
+
+function parseFollowFlag(value: string | boolean | null | undefined): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  const cleaned = clean(value).toLowerCase();
+  return cleaned === '1' || cleaned === 'true';
 }
 
 function isExperimentType(value: string): value is ExperimentType {
@@ -53,7 +62,8 @@ export function normaliseExperimentRouteState(
     comparisonRunId:
       baselineRunId && comparisonRunIdRaw && comparisonRunIdRaw !== baselineRunId ? comparisonRunIdRaw : '',
     experimentId: clean(partial.experimentId),
-    jobRef: clean(partial.jobRef)
+    jobRef: clean(partial.jobRef),
+    follow: parseFollowFlag(partial.follow)
   };
 
   if (base.mode === 'run') {
@@ -61,7 +71,8 @@ export function normaliseExperimentRouteState(
       ...base,
       baselineRunId: '',
       comparisonRunId: '',
-      experimentId: ''
+      experimentId: '',
+      follow: base.follow && Boolean(base.jobRef)
     };
   }
 
@@ -69,7 +80,8 @@ export function normaliseExperimentRouteState(
     return {
       ...base,
       experimentId: '',
-      jobRef: ''
+      jobRef: '',
+      follow: false
     };
   }
 
@@ -77,7 +89,8 @@ export function normaliseExperimentRouteState(
     ...base,
     baselineRunId: '',
     comparisonRunId: '',
-    jobRef: ''
+    jobRef: '',
+    follow: false
   };
 }
 
@@ -88,7 +101,8 @@ export function parseExperimentRouteState(searchParams: URLSearchParams): Experi
     baselineRunId: clean(searchParams.get('baselineRunId')) || clean(searchParams.get('runId')),
     comparisonRunId: clean(searchParams.get('comparisonRunId')),
     experimentId: clean(searchParams.get('experimentId')),
-    jobRef: clean(searchParams.get('jobRef'))
+    jobRef: clean(searchParams.get('jobRef')),
+    follow: clean(searchParams.get('follow'))
   });
 }
 
@@ -100,6 +114,9 @@ export function buildExperimentSearchParams(state: ExperimentRouteState): URLSea
 
   if (normalised.mode === 'run' && normalised.jobRef) {
     params.set('jobRef', normalised.jobRef);
+    if (normalised.follow) {
+      params.set('follow', '1');
+    }
   }
 
   if (normalised.mode === 'view' && normalised.type === 'manual' && normalised.baselineRunId) {
@@ -117,6 +134,29 @@ export function buildExperimentSearchParams(state: ExperimentRouteState): URLSea
 }
 
 export function buildExperimentsPath(state: ExperimentRouteState): string {
-  const query = buildExperimentSearchParams(state).toString();
-  return query ? `/experiments?${query}` : '/experiments';
+  const normalised = normaliseExperimentRouteState(state);
+  const params = new URLSearchParams();
+  if (normalised.mode === 'run' && normalised.jobRef) {
+    params.set('jobRef', normalised.jobRef);
+    if (normalised.follow) params.set('follow', '1');
+  }
+  if (normalised.mode === 'view' && normalised.type === 'manual' && normalised.baselineRunId) {
+    params.set('baselineRunId', normalised.baselineRunId);
+    if (normalised.comparisonRunId) params.set('comparisonRunId', normalised.comparisonRunId);
+  }
+  if (normalised.mode === 'view' && normalised.type === 'sensitivity' && normalised.experimentId) {
+    params.set('experimentId', normalised.experimentId);
+  }
+  if (
+    normalised.mode === 'view' &&
+    !normalised.baselineRunId &&
+    !normalised.experimentId
+  ) {
+    params.set('view', 'results');
+  }
+  // Comparing two runs is a state of the scenarios results view, not a separate page, so a
+  // comparison selection stays on /scenarios rather than routing to the old /compare alias.
+  const basePath = normalised.type === 'sensitivity' ? '/sensitivity' : '/scenarios';
+  const query = params.toString();
+  return query ? `${basePath}?${query}` : basePath;
 }

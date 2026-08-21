@@ -1,11 +1,14 @@
 // Author: Max Stoddard
 import { useEffect, useMemo, useState } from 'react';
-import type { EChartsOption } from 'echarts';
+// import type { EChartsOption } from 'echarts'; // Retained for the temporarily hidden trend chart below.
+import { Link, useSearchParams } from 'react-router-dom';
 import type {
+  ValidationMetricComparisonPoint,
+  ValidationMetricStatus,
   ValidationMetricSummary,
   ValidationOverviewPayload
 } from '../../shared/types';
-import { EChart } from '../components/EChart';
+// import { EChart } from '../components/EChart'; // Retained for the temporarily hidden trend chart below.
 import {
   API_RETRY_DELAY_MS,
   fetchValidationOverview,
@@ -13,887 +16,1272 @@ import {
   isRetryableApiError
 } from '../lib/api';
 import {
-  buildVersionLabelState,
-  formatVersionOptionLabel,
-  getLatestStableVersion
-} from '../lib/versionLabels';
+  buildModelOptions,
+  formatModelName,
+  formatModelSubtitle
+} from '../lib/modelAnchors';
+import { CollapsibleSection } from '../components/CollapsibleSection';
+import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
+import { BASELINE_COLOR, COMPARISON_COLOR } from '../lib/manualOverlayChartOption';
 
-type ValidationSortMode =
-  | 'highest_loss'
-  | 'lowest_loss'
-  | 'metric_name'
-  | 'most_inside_band'
-  | 'least_inside_band';
+/**
+ * The simulated-mean marker when only one model is on the axis. Deliberately not BASELINE_COLOR:
+ * that teal is the target band's own colour, so the marker vanished into the band it sits on. Ink
+ * reads against both the band and the page, and cannot be mistaken for a status colour the way the
+ * previous orange now would be, `warn` having moved to orange.
+ */
+const MEAN_MARKER_COLOR = '#112018';
+import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
+import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
 
-const DEFAULT_SORT_MODE: ValidationSortMode = 'highest_loss';
 const DEFAULT_VALIDATION_TARGET_YEAR = 2024;
-const REFERENCE_VALIDATION_TARGET_YEAR = 2011;
-const TRACKED_VALIDATION_SERIES_NAME = '2024 validation';
-const V0_REFERENCE_SERIES_NAME = '2011 validation (v0, v0o2, v0o7)';
 
-function formatNumber(value: number | null, digits = 3): string {
-  if (value === null) {
-    return 'Unsupported';
+/** Setup forms that can hand off to Validation and be returned to with a chosen model. */
+const RETURN_DESTINATIONS: Record<string, { path: string; noun: string }> = {
+  scenario: { path: '/scenarios/new', noun: 'scenario' },
+  sensitivity: { path: '/sensitivity/new', noun: 'sensitivity analysis' }
+};
+export const TRACKED_VALIDATION_SERIES_NAME = 'Models tested against 2024 UK evidence';
+export const REFERENCE_VALIDATION_SERIES_NAME = '2011-calibrated models tested against 2011 UK evidence';
+
+export const VALIDATION_POLICY_THEMES = [
+  {
+    id: 'activity',
+    title: 'Market activity and lending',
+    metricIds: [
+      'core_mortgageApprovals',
+      'core_housingTransactions',
+      'core_advancesToFTB',
+      'core_advancesToHM',
+      'core_advancesToBTL'
+    ]
+  },
+  {
+    id: 'credit',
+    title: 'Credit and affordability',
+    metricIds: ['core_debtToIncome', 'core_ooDebtToIncome', 'core_priceToIncome', 'core_interestRateSpread']
+  },
+  {
+    id: 'prices',
+    title: 'Prices and cycles',
+    metricIds: ['core_housePriceGrowth', 'core_hpiMean', 'core_hpiStd', 'core_hpiCyclePeriod']
+  },
+  {
+    id: 'tenure',
+    title: 'Tenure and rental market',
+    metricIds: ['rpi_mean', 'household_owning_share', 'household_renting_share', 'core_rentalYield']
+  },
+  {
+    id: 'distribution',
+    title: 'Distributional realism',
+    metricIds: ['income_distribution_jsd', 'housing_wealth_distribution_jsd', 'financial_wealth_distribution_jsd']
   }
-  return value.toLocaleString('en-GB', {
-    maximumFractionDigits: digits,
-    minimumFractionDigits: digits > 0 ? Math.min(1, digits) : 0
-  });
+] as const;
+
+function formatNumber(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return 'Unsupported';
+  return value.toLocaleString('en-GB', { maximumFractionDigits: digits });
 }
 
-function formatTargetBand(metric: ValidationMetricSummary): string {
-  if (!metric.targetBand) {
-    return 'Unsupported';
-  }
-  return `${formatNumber(metric.targetBand.lower, 2)} to ${formatNumber(metric.targetBand.upper, 2)}`;
+function withUnits(value: number | null, units: string, digits = 2): string {
+  const formatted = formatNumber(value, digits);
+  return formatted === 'Unsupported' || !units ? formatted : `${formatted} ${units}`;
 }
 
-function formatTargetValue(metric: ValidationMetricSummary): string {
-  return formatNumber(metric.sourceValue, 2);
+/**
+ * `sourceValue`, `seedMean` and the target band are expressed in `comparisonUnits`
+ * (e.g. 62.86 "thousand count/month"), while `units` describes the raw model scale.
+ * Rendering the raw units against a rescaled value understates figures by 1000x.
+ */
+function displayUnits(metric: ValidationMetricSummary): string {
+  return metric.comparisonUnits || metric.units || '';
 }
 
-function formatAcceptanceRange(metric: ValidationMetricSummary): string {
-  if (metric.sourceValue === null) {
-    return 'Unsupported';
-  }
-  const halfWidth = Math.abs(metric.sourceValue) * 0.25;
-  return `${formatNumber(metric.sourceValue - halfWidth, 2)} to ${formatNumber(metric.sourceValue + halfWidth, 2)}`;
+function formatBand(metric: ValidationMetricSummary): string {
+  return metric.targetBand
+    ? `${withUnits(metric.targetBand.lower, displayUnits(metric))} to ${withUnits(metric.targetBand.upper, displayUnits(metric))}`
+    : 'Unsupported';
 }
 
 function formatInsideRate(value: number | null): string {
-  if (value === null) {
-    return 'Unsupported';
-  }
-  return `${(value * 100).toLocaleString('en-GB', { maximumFractionDigits: 1 })}%`;
+  return value === null ? 'Unsupported' : `${formatNumber(value * 100, 1)}%`;
 }
 
 function formatLoss(value: number | null): string {
   return value === null ? 'Unsupported' : formatNumber(value, 4);
 }
 
-function formatLossDelta(value: number | null): string {
-  if (value === null) {
-    return 'Unsupported';
-  }
-  if (Math.abs(value) < 1e-12) {
-    return formatLoss(0);
-  }
-  return `${value > 0 ? '+' : '-'}${formatLoss(Math.abs(value))}`;
+function formatDelta(value: number | null): string {
+  if (value === null) return 'Unsupported';
+  return `${value > 0 ? '+' : ''}${formatNumber(value, 4)}`;
 }
 
-function formatLossDeltaPercent(value: number | null): string {
-  if (value === null) {
-    return 'Unsupported';
-  }
-  if (Math.abs(value) < 1e-12) {
-    return '0%';
-  }
-  return `${value > 0 ? '+' : '-'}${Math.abs(value).toLocaleString('en-GB', { maximumFractionDigits: 1 })}%`;
+function formatDeltaPercent(value: number | null): string {
+  if (value === null) return 'Unsupported';
+  return `${value > 0 ? '+' : ''}${formatNumber(value, 1)}%`;
 }
 
-function lossDeltaClassName(value: number | null): string {
-  return [
-    'validation-loss-cell',
-    value === null ? 'validation-loss-unsupported' : '',
-    value !== null && value > 0 ? 'validation-loss-delta-positive' : '',
-    value !== null && value < 0 ? 'validation-loss-delta-negative' : ''
-  ]
-    .filter(Boolean)
-    .join(' ');
+function formatModelWithVersion(version: string): string {
+  const name = formatModelName(version);
+  return name === version ? version : `${name} (${version})`;
 }
 
-function formatMetricWeight(value: number): string {
-  return value.toLocaleString('en-GB', {
-    maximumFractionDigits: 4
-  });
+export function formatValidationScorecardValue(
+  primary: string | number,
+  comparison?: string | number | null
+): string {
+  return comparison === null || comparison === undefined ? String(primary) : `${primary} vs ${comparison}`;
 }
 
-function formatLossFamily(metric: ValidationMetricSummary): string | null {
-  if (!metric.lossFamily) {
-    return null;
-  }
-  const familyLabel =
-    metric.lossFamily === 'positive_level'
-      ? 'Positive level'
-      : metric.lossFamily === 'signed_additive'
-        ? 'Signed additive'
-        : metric.lossFamily === 'bounded_low_is_better'
-          ? 'Bounded low-is-better'
-          : metric.lossFamily === 'bounded_share'
-            ? 'Bounded share'
-            : 'Diagnostic';
-  const transform = metric.lossTransform ? `, ${metric.lossTransform.replace(/_/gu, ' ')}` : '';
-  return `Loss family: ${familyLabel}${transform}`;
+/**
+ * Every metric row is drawn on one shared axis measuring deviation from the empirical
+ * target, so a 1.6% miss and a 324% miss are visually distinguishable. The axis is
+ * piecewise-linear: fine resolution inside +/-25%, compressed out to the +/-100% limit,
+ * with anything beyond that clamped and flagged as an overflow.
+ */
+export const DEVIATION_AXIS_LIMIT = 100;
+export const DEVIATION_AXIS_TICKS = [-100, -25, 0, 25, 100] as const;
+const WIDE_BAND_DEVIATION = 25;
+const NARROW_BAND_DEVIATION = 5;
+
+function toDeviationPercent(value: number, source: number): number {
+  return ((value - source) / Math.abs(source)) * 100;
 }
 
-function formatLossScaleBasisLabel(basis: ValidationMetricSummary['lossScaleBasis']): string {
-  if (basis === 'source_value') {
-    return 'source target level';
-  }
-  if (basis === 'target_band_midpoint') {
-    return 'target-band midpoint';
-  }
-  if (basis === 'target_band_upper') {
-    return 'target-band upper bound';
-  }
-  if (basis === 'target_band_lower_abs') {
-    return 'absolute target lower bound';
-  }
-  if (basis === 'target_band_upper_abs') {
-    return 'absolute target upper bound';
-  }
-  if (basis === 'target_band_half_width') {
-    return 'target-band half-width';
-  }
-  if (basis === 'target_band_width') {
-    return 'target-band width';
-  }
-  if (basis === 'bounded_share_domain_width') {
-    return 'bounded share domain width';
-  }
-  if (basis === 'metric_floor') {
-    return 'metric floor';
-  }
-  return 'not applicable';
+export function deviationToPosition(percent: number): number {
+  if (!Number.isFinite(percent)) return 50;
+  const magnitude = Math.min(Math.abs(percent), DEVIATION_AXIS_LIMIT);
+  const fraction = magnitude <= 25 ? (magnitude / 25) * 0.45 : 0.45 + ((magnitude - 25) / 75) * 0.55;
+  return 50 + Math.sign(percent) * fraction * 50;
 }
 
-function formatLossScaleBasis(metric: ValidationMetricSummary): string | null {
-  const notes: string[] = [];
-  if (metric.lossScale !== null && metric.lossScaleBasis !== null && metric.lossScaleBasis !== 'not_applicable') {
-    notes.push(`Loss scale ${formatNumber(metric.lossScale, 4)} from ${formatLossScaleBasisLabel(metric.lossScaleBasis)}`);
-  }
-  if (
-    metric.additiveScale !== null &&
-    metric.additiveScaleBasis !== null &&
-    metric.additiveScaleBasis !== 'not_applicable'
-  ) {
-    notes.push(
-      `Additive scale ${formatNumber(metric.additiveScale, 4)} from ${formatLossScaleBasisLabel(metric.additiveScaleBasis)}`
-    );
-  }
-  return notes.length > 0 ? notes.join(' · ') : null;
+export interface ValidationRangePositions {
+  targetStart: number | null;
+  targetEnd: number | null;
+  mean: number;
+  source: number | null;
+  deviationPercent: number | null;
+  meanOverflow: boolean;
+  scaled: boolean;
 }
 
-function getPathTail(pathValue: string | null): string | null {
-  if (!pathValue) {
-    return null;
+export function calculateValidationRangePositions(metric: ValidationMetricSummary): ValidationRangePositions {
+  const source = metric.sourceValue;
+  // Distribution-shape metrics (JSD) have no single empirical target, so a percentage
+  // deviation is undefined for them. Their rows carry a note instead of a strip.
+  if (source === null || !Number.isFinite(source) || source === 0) {
+    return {
+      targetStart: null,
+      targetEnd: null,
+      mean: 50,
+      source: null,
+      deviationPercent: null,
+      meanOverflow: false,
+      scaled: false
+    };
   }
-  const parts = pathValue.split('/');
-  return parts[parts.length - 1] ?? pathValue;
-}
-
-function formatSourceReference(metric: ValidationMetricSummary, index: number): {
-  key: string;
-  label: string;
-  title: string;
-} {
-  const reference = metric.sourceReferences[index];
-  const documentLabel = getPathTail(reference?.sourceDocumentPath ?? null) ?? reference?.label ?? metric.sourceLabel;
-  const parts = [documentLabel];
-  if (reference?.sourcePage !== null && reference?.sourcePage !== undefined) {
-    parts.push(`p.${reference.sourcePage}`);
-  }
-  if (reference?.sourceTable) {
-    parts.push(reference.sourceTable);
-  }
-  const title = [
-    reference?.label ?? metric.sourceLabel,
-    reference?.sourceDocumentPath ?? metric.sourceDocumentPath ?? '',
-    reference?.notes ?? ''
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const deviationPercent = toDeviationPercent(metric.seedMean, source);
   return {
-    key: `${metric.metricId}-${index}`,
-    label: parts.join(' · '),
-    title
+    targetStart: metric.targetBand ? deviationToPosition(toDeviationPercent(metric.targetBand.lower, source)) : null,
+    targetEnd: metric.targetBand ? deviationToPosition(toDeviationPercent(metric.targetBand.upper, source)) : null,
+    mean: deviationToPosition(deviationPercent),
+    source: 50,
+    deviationPercent,
+    meanOverflow: Math.abs(deviationPercent) > DEVIATION_AXIS_LIMIT,
+    scaled: true
   };
 }
 
-function buildSourceReferences(metric: ValidationMetricSummary): Array<{ key: string; label: string; title: string }> {
-  if (metric.sourceReferences.length > 0) {
-    return metric.sourceReferences.map((_, index) => formatSourceReference(metric, index));
+/**
+ * A pass on a metric that sits far from its target, or a fail on one that sits very close,
+ * is a property of the band width rather than of model accuracy. Surface it as a caution.
+ */
+export function buildBandWidthNote(metric: ValidationMetricSummary, deviationPercent: number | null): string | null {
+  if (deviationPercent === null || !Number.isFinite(deviationPercent)) return null;
+  const magnitude = Math.abs(deviationPercent);
+  const direction = deviationPercent < 0 ? 'below' : 'above';
+  if (metric.status !== 'fail' && magnitude >= WIDE_BAND_DEVIATION) {
+    return `Inside the target band, but ${formatNumber(magnitude, 1)}% ${direction} the empirical target — this band is wide.`;
   }
-  const documentLabel = getPathTail(metric.sourceDocumentPath) ?? metric.sourceLabel;
-  const parts = [documentLabel];
-  if (metric.sourcePage !== null) {
-    parts.push(`p.${metric.sourcePage}`);
-  }
-  if (metric.sourceTable) {
-    parts.push(metric.sourceTable);
-  }
-  return [
-    {
-      key: `${metric.metricId}-primary`,
-      label: parts.join(' · '),
-      title: [metric.sourceLabel, metric.sourceDocumentPath ?? '', metric.bandNotes ?? ''].filter(Boolean).join('\n')
-    }
-  ];
-}
-
-interface ValidationTooltipRow {
-  axisValue?: string;
-  data?: number | null | { value?: number | null };
-  marker?: string;
-  seriesName?: string;
-}
-
-interface ValidationChartClickParams {
-  name?: string;
-  seriesName?: string;
-}
-
-function formatValidationTargetYearLabel(validationTargetYear: number): string {
-  return `${validationTargetYear} evidence`;
-}
-
-function formatValidationYearOptionLabel(validationTargetYear: number): string {
-  return `${validationTargetYear} validation`;
-}
-
-function getCanonicalValidationVersionRank(label: string): number {
-  if (label.startsWith('Optimised 2011 model')) {
-    return 0;
-  }
-  if (label.startsWith('Original 2011 model')) {
-    return 1;
-  }
-  if (label.startsWith('Optimised 2024 model')) {
-    return 2;
-  }
-  if (label.startsWith('Latest 2024 model')) {
-    return 3;
-  }
-  return 4;
-}
-
-function orderValidationVersionOptions(
-  versions: readonly string[],
-  formatVersionLabel: (version: string) => string
-): string[] {
-  return versions
-    .map((version, index) => ({
-      version,
-      index,
-      rank: getCanonicalValidationVersionRank(formatVersionLabel(version))
-    }))
-    .sort((left, right) => left.rank - right.rank || left.index - right.index)
-    .map((item) => item.version);
-}
-
-function formatReferenceLineLabel(label: string, validationTargetYear: number): string {
-  return `${label} (${validationTargetYear} comparator)`;
-}
-
-function getTooltipValue(data: ValidationTooltipRow['data']): number | null {
-  if (typeof data === 'number') {
-    return data;
-  }
-  if (data && typeof data === 'object' && typeof data.value === 'number') {
-    return data.value;
+  if (metric.status === 'fail' && magnitude <= NARROW_BAND_DEVIATION) {
+    return `Outside the target band, but only ${formatNumber(magnitude, 1)}% ${direction} the empirical target — this band is narrow.`;
   }
   return null;
 }
 
-function buildChartOption(overview: ValidationOverviewPayload): EChartsOption {
-  const selectedTrackedIndex =
-    overview.selectedValidationTargetYear === DEFAULT_VALIDATION_TARGET_YEAR
-      ? overview.trend.points.findIndex((point) => point.version === overview.selectedVersion)
-      : -1;
-  const pointsByVersion = new Map(overview.trend.points.map((point) => [point.version, point]));
-  const referencePointsByVersion = new Map(overview.trend.referencePoints.map((point) => [point.version, point]));
-  const selectedReferencePoint =
-    overview.selectedValidationTargetYear === REFERENCE_VALIDATION_TARGET_YEAR
-      ? referencePointsByVersion.get(overview.selectedVersion)
-      : null;
-  const referenceLine = overview.trend.referenceLine;
-  const referenceLineLabel = referenceLine
-    ? formatReferenceLineLabel(referenceLine.label, referenceLine.validationTargetYear)
-    : null;
-  const series: NonNullable<EChartsOption['series']> = [];
+/** Percentage distance from the empirical target; null where there is no single target (JSD). */
+export function metricDeviationPercent(
+  point: Pick<ValidationMetricComparisonPoint, 'seedMean' | 'sourceValue'>
+): number | null {
+  const source = point.sourceValue;
+  if (source === null || !Number.isFinite(source) || source === 0) return null;
+  return toDeviationPercent(point.seedMean, source);
+}
 
-  if (referenceLine && referenceLineLabel) {
-    series.push({
-      type: 'line',
-      name: referenceLineLabel,
-      smooth: false,
-      symbol: 'none',
-      data: overview.trend.points.map(() => referenceLine.overallCompositeLoss),
-      lineStyle: {
-        color: '#8f5b00',
-        width: 1.8,
-        type: 'dashed'
-      },
-      emphasis: {
-        disabled: true
-      },
-      z: 1
-    });
-  }
+export interface ValidationModelRanking {
+  version: string;
+  deviationPercent: number | null;
+  status: ValidationMetricStatus | null;
+  metricLoss: number | null;
+}
 
-  series.push({
-    type: 'line',
-    name: TRACKED_VALIDATION_SERIES_NAME,
-    smooth: true,
-    showSymbol: true,
-    symbol: 'circle',
-    symbolSize: 10,
-    cursor: 'pointer',
-    data: overview.trend.points.map((point) => ({
-      name: point.version,
-      value: point.overallCompositeLoss
-    })),
-    lineStyle: { color: '#0b7285', width: 2.4 },
-    itemStyle: { color: '#0b7285' },
-    z: 2,
-    markPoint:
-      selectedTrackedIndex >= 0
-        ? {
-            symbol: 'circle',
-            symbolSize: 18,
-            itemStyle: {
-              color: '#d9480f',
-              borderColor: '#fff4e6',
-              borderWidth: 3
-            },
-            label: {
-              show: true,
-              formatter: overview.selectedVersion,
-              position: 'top',
-              distance: 10,
-              color: '#8f3b13',
-              backgroundColor: '#fff4e6',
-              borderColor: '#ffd8a8',
-              borderWidth: 1,
-              borderRadius: 999,
-              padding: [4, 8],
-              fontWeight: 700
-            },
-            data: [
-              {
-                name: overview.selectedVersion,
-                xAxis: overview.trend.points[selectedTrackedIndex]?.version,
-                yAxis: overview.trend.points[selectedTrackedIndex]?.overallCompositeLoss
-              }
-            ]
-          }
-        : undefined
-  });
-
-  const referenceSeriesData = overview.trend.points.map((point) => {
-    const referencePoint = referencePointsByVersion.get(point.version);
-    if (!referencePoint) {
-      return null;
-    }
+/**
+ * Orders models by how close they sit to one indicator's empirical target. Models with no value
+ * for that indicator keep a stable position at the end rather than being dropped, so the picker
+ * never silently loses an option.
+ */
+export function rankVersionsByMetric(
+  metricsByVersion: Record<string, ValidationMetricComparisonPoint[]>,
+  versions: readonly string[],
+  metricId: string
+): ValidationModelRanking[] {
+  const ranked = versions.map((version) => {
+    const point = (metricsByVersion[version] ?? []).find((item) => item.metricId === metricId) ?? null;
     return {
-      name: point.version,
-      value: referencePoint.overallCompositeLoss
+      version,
+      deviationPercent: point ? metricDeviationPercent(point) : null,
+      status: point?.status ?? null,
+      metricLoss: point?.metricLoss ?? null
     };
   });
-  if (referenceSeriesData.some((point) => point !== null)) {
-    series.push({
-      type: 'line',
-      name: V0_REFERENCE_SERIES_NAME,
-      smooth: false,
-      showSymbol: true,
-      symbol: 'diamond',
-      symbolSize: 11,
-      connectNulls: false,
-      data: referenceSeriesData,
-      lineStyle: { color: '#6741d9', width: 2.2 },
-      itemStyle: { color: '#6741d9' },
-      z: 3,
-      markPoint:
-        selectedReferencePoint
-          ? {
-              symbol: 'diamond',
-              symbolSize: 20,
-              itemStyle: {
-                color: '#d9480f',
-                borderColor: '#fff4e6',
-                borderWidth: 3
-              },
-              label: {
-                show: true,
-                formatter: overview.selectedVersion,
-                position: 'top',
-                distance: 10,
-                color: '#8f3b13',
-                backgroundColor: '#fff4e6',
-                borderColor: '#ffd8a8',
-                borderWidth: 1,
-                borderRadius: 999,
-                padding: [4, 8],
-                fontWeight: 700
-              },
-              data: [
-                {
-                  name: overview.selectedVersion,
-                  xAxis: overview.selectedVersion,
-                  yAxis: selectedReferencePoint.overallCompositeLoss
-                }
-              ]
-            }
-          : undefined
-    });
-  }
+  return ranked.sort((left, right) => {
+    const leftKey = left.deviationPercent === null ? Number.POSITIVE_INFINITY : Math.abs(left.deviationPercent);
+    const rightKey = right.deviationPercent === null ? Number.POSITIVE_INFINITY : Math.abs(right.deviationPercent);
+    return leftKey - rightKey;
+  });
+}
 
-  return {
-    legend: {
-      top: 8,
-      left: 56,
-      textStyle: { color: '#50625a' }
-    },
-    tooltip: {
-      trigger: 'axis',
-      formatter: (rawParams: unknown) => {
-        const rows = (Array.isArray(rawParams) ? rawParams : [rawParams]) as ValidationTooltipRow[];
-        const axisValue = String(rows[0]?.axisValue ?? '');
-        const point = pointsByVersion.get(axisValue);
-        const referencePoint = referencePointsByVersion.get(axisValue);
-        if (!point) {
-          return '';
-        }
+export function buildValidationLossDecomposition(metrics: ValidationMetricSummary[]) {
+  const byId = new Map(metrics.map((metric) => [metric.metricId, metric]));
+  const total = metrics.reduce((sum, metric) => sum + (metric.metricLoss ?? 0), 0);
+  const themes = VALIDATION_POLICY_THEMES.map((theme) => {
+    const loss = theme.metricIds.reduce((sum, metricId) => sum + (byId.get(metricId)?.metricLoss ?? 0), 0);
+    return { id: theme.id, title: theme.title, loss, share: total > 0 ? loss / total : 0 };
+  }).sort((left, right) => right.loss - left.loss);
+  return { total, themes };
+}
 
-        const tooltipRows = [
-          `<strong>${point.version}</strong>`,
-          `Tracked summary: ${formatValidationTargetYearLabel(point.validationTargetYear)}`
-        ];
+export function buildValidationScorecard(metrics: ValidationMetricSummary[]) {
+  const counts = { pass: 0, warn: 0, fail: 0, unsupported: 0 };
+  metrics.forEach((metric) => {
+    counts[metric.status] += 1;
+  });
+  const insideRates = metrics
+    .filter((metric) => metric.status !== 'unsupported' && metric.insideRate !== null)
+    .map((metric) => metric.insideRate as number);
+  const averageInsideRate =
+    insideRates.length > 0 ? insideRates.reduce((total, value) => total + value, 0) / insideRates.length : null;
+  const largestGaps = metrics
+    .filter((metric) => metric.status !== 'unsupported' && metric.metricLoss !== null)
+    .sort((left, right) => (right.metricLoss as number) - (left.metricLoss as number))
+    .slice(0, 3);
+  return { counts, averageInsideRate, largestGaps };
+}
 
-        for (const row of rows) {
-          const value = getTooltipValue(row.data);
-          if (value === null) {
-            continue;
+function getPathTail(pathValue: string | null): string {
+  return pathValue?.split('/').pop() ?? '';
+}
+
+export function buildDeduplicatedSourceReferences(metric: ValidationMetricSummary) {
+  const references =
+    metric.sourceReferences.length > 0
+      ? metric.sourceReferences
+      : [
+          {
+            label: metric.sourceLabel,
+            sourceDocumentPath: metric.sourceDocumentPath ?? '',
+            sourceTextPath: metric.sourceTextPath,
+            sourceTable: metric.sourceTable,
+            sourcePage: metric.sourcePage,
+            sourceIndicatorLabel: metric.sourceIndicatorLabel,
+            rawSourceValue: metric.rawSourceValue,
+            sourceAsOf: metric.sourceAsOf,
+            sourceUnits: metric.sourceUnits,
+            notes: metric.bandNotes
           }
-          const seriesName = row.seriesName ?? TRACKED_VALIDATION_SERIES_NAME;
-          const evidenceLabel =
-            seriesName === V0_REFERENCE_SERIES_NAME && referencePoint
-              ? formatValidationTargetYearLabel(referencePoint.validationTargetYear)
-              : seriesName === referenceLineLabel && referenceLine
-                ? formatValidationTargetYearLabel(referenceLine.validationTargetYear)
-                : formatValidationTargetYearLabel(point.validationTargetYear);
-          tooltipRows.push(`${row.marker ?? ''}${seriesName}: ${formatNumber(value, 4)} (${evidenceLabel})`);
-        }
+        ];
+  const seen = new Set<string>();
+  return references.flatMap((reference) => {
+    const key = [
+      reference.sourceDocumentPath,
+      reference.sourcePage,
+      reference.sourceTable,
+      reference.label
+    ].join('|');
+    if (seen.has(key)) return [];
+    seen.add(key);
+    const parts = [getPathTail(reference.sourceDocumentPath) || reference.label];
+    if (reference.sourcePage !== null) parts.push(`p.${reference.sourcePage}`);
+    if (reference.sourceTable) parts.push(reference.sourceTable);
+    return [{ key, label: parts.join(' · '), notes: reference.notes }];
+  });
+}
 
-        return tooltipRows.join('<br/>');
+function lossFamilyDescription(metric: ValidationMetricSummary): string {
+  const labels = {
+    positive_level: 'Positive level',
+    signed_additive: 'Signed additive',
+    bounded_low_is_better: 'Bounded low-is-better',
+    bounded_share: 'Bounded share',
+    diagnostic: 'Diagnostic'
+  };
+  return metric.lossFamily
+    ? `${labels[metric.lossFamily]}${metric.lossTransform ? ` · ${metric.lossTransform.replaceAll('_', ' ')}` : ''}`
+    : 'Not applicable';
+}
+
+/* Retained with the temporarily hidden model-development trend chart.
+function buildTrendOption(
+  overview: ValidationOverviewPayload,
+  year: 2024 | 2011,
+  formatVersionLabel: (version: string) => string
+): EChartsOption | null {
+  const points =
+    year === 2024
+      ? overview.trend.points
+      : overview.trend.referencePoints.filter((point) => point.validationTargetYear === 2011);
+  if (points.length === 0) return null;
+  const seriesName = year === 2024 ? TRACKED_VALIDATION_SERIES_NAME : REFERENCE_VALIDATION_SERIES_NAME;
+  return {
+    tooltip: {
+      trigger: 'item',
+      formatter: (raw: unknown) => {
+        const item = raw as { name?: string; value?: number };
+        return `<strong>${formatVersionLabel(item.name ?? '')}</strong><br/>${year} UK evidence<br/>Validation loss: ${formatNumber(item.value ?? null, 4)}`;
       }
     },
-    grid: { left: 64, right: 28, top: 52, bottom: 56, containLabel: true },
+    grid: { left: 62, right: 24, top: 28, bottom: 64, containLabel: true },
     xAxis: {
       type: 'category',
-      data: overview.trend.points.map((point) => point.version),
-      axisLabel: { color: '#50625a' }
+      data: points.map((point) => point.version),
+      axisLabel: {
+        color: '#50625a',
+        formatter: (value: string) => formatVersionLabel(value),
+        rotate: points.length > 5 ? 25 : 0
+      }
     },
     yAxis: {
       type: 'value',
-      name: 'Validation loss',
+      name: 'Validation loss — lower is better',
       nameLocation: 'middle',
-      nameGap: 52,
+      nameGap: 48,
       axisLabel: { color: '#50625a' }
     },
-    series
+    series: [
+      {
+        type: 'line',
+        name: seriesName,
+        data: points.map((point) => ({ name: point.version, value: point.overallCompositeLoss })),
+        showSymbol: true,
+        symbol: year === 2024 ? 'circle' : 'diamond',
+        symbolSize: 11,
+        cursor: 'pointer',
+        lineStyle: { color: year === 2024 ? '#0b7285' : '#6741d9', width: 2.4 },
+        itemStyle: {
+          color: year === 2024 ? '#0b7285' : '#6741d9',
+          borderColor: '#fff',
+          borderWidth: 2
+        }
+      }
+    ]
   };
 }
+*/
 
-function compareNullableNumbers(left: number | null, right: number | null, descending = false): number {
-  if (left === null && right === null) {
-    return 0;
-  }
-  if (left === null) {
-    return 1;
-  }
-  if (right === null) {
-    return -1;
-  }
-  return descending ? right - left : left - right;
+function formatDeviation(percent: number | null): string {
+  if (percent === null || !Number.isFinite(percent)) return 'No single target';
+  return `${percent > 0 ? '+' : percent < 0 ? '−' : ''}${formatNumber(Math.abs(percent), 1)}%`;
 }
 
-function buildMetricSearchText(metric: ValidationMetricSummary): string {
-  return [metric.label, metric.metricId, metric.sourceLabel, metric.sourceIndicatorLabel ?? '']
-    .join(' ')
-    .toLowerCase();
+export function ValidationModelOptions({
+  versions,
+  selectedVersion,
+  name,
+  label,
+  rankings = null,
+  disabled = false,
+  unavailableVersion = '',
+  inProgressVersions,
+  onChange
+}: {
+  versions: readonly string[];
+  selectedVersion: string;
+  name: string;
+  label: string;
+  rankings?: readonly ValidationModelRanking[] | null;
+  disabled?: boolean;
+  unavailableVersion?: string;
+  inProgressVersions?: ReadonlySet<string>;
+  onChange: (version: string) => void;
+}) {
+  return (
+    <div className="validation-model-options" role="radiogroup" aria-label={label} aria-disabled={disabled}>
+      {versions.map((version, index) => {
+        const ranking = rankings?.find((entry) => entry.version === version) ?? null;
+        const isUnavailable = version === unavailableVersion;
+        const isDisabled = disabled || isUnavailable;
+        const isSelected = version === selectedVersion;
+        return (
+          <label
+            key={version}
+            className={`validation-model-option${isSelected ? ' is-selected' : ''}${isDisabled ? ' is-disabled' : ''}`}
+          >
+            <input
+              type="radio"
+              name={name}
+              value={version}
+              checked={isSelected}
+              disabled={isDisabled}
+              onChange={() => onChange(version)}
+            />
+            <span className="validation-model-option-copy">
+              <span className="validation-model-option-heading">
+                {rankings && <span className="validation-model-option-rank" aria-label={`Rank ${index + 1}`}>{index + 1}.</span>}
+                <strong>{formatModelName(version)}</strong>
+                <span className="validation-model-option-version">{version}</span>
+              </span>
+              <small>{formatModelSubtitle(version)}</small>
+              {(ranking || isUnavailable || inProgressVersions?.has(version)) && (
+                <span className="validation-model-option-meta">
+                  {ranking && (
+                    <span>
+                      {ranking.deviationPercent === null
+                        ? 'No single target'
+                        : `${formatDeviation(ranking.deviationPercent)} from target`}
+                    </span>
+                  )}
+                  {ranking?.status && (
+                    <span className={`validation-model-option-status validation-status-${ranking.status}`}>
+                      {ranking.status}
+                    </span>
+                  )}
+                  {isUnavailable && <span className="validation-model-option-unavailable">Selected as primary</span>}
+                  {inProgressVersions?.has(version) && <span className="validation-model-option-progress">In progress</span>}
+                </span>
+              )}
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
 }
 
-function sortMetrics(metrics: ValidationMetricSummary[], sortMode: ValidationSortMode): ValidationMetricSummary[] {
-  return [...metrics].sort((left, right) => {
-    if (sortMode === 'highest_loss') {
-      const lossComparison = compareNullableNumbers(left.metricLoss, right.metricLoss, true);
-      if (lossComparison !== 0) {
-        return lossComparison;
+/**
+ * One model's IQR and mean on the shared axis. The axis, ticks, target marker and band are drawn
+ * once by `MetricRange` because they are identical for every model scored on the same metric and
+ * evidence year — verified: `sourceValue` and `targetBand` do not vary by version.
+ */
+function MetricSeries({
+  positions,
+  colour,
+  title
+}: {
+  positions: ValidationRangePositions;
+  colour: string;
+  title: string;
+}) {
+  return (
+    <span
+      className={positions.meanOverflow ? 'validation-mean-marker validation-mean-overflow' : 'validation-mean-marker'}
+      style={
+        positions.meanOverflow
+          ? { left: `${positions.mean}%`, borderLeftColor: colour }
+          : { left: `${positions.mean}%`, background: colour }
       }
-    } else if (sortMode === 'lowest_loss') {
-      const lossComparison = compareNullableNumbers(left.metricLoss, right.metricLoss);
-      if (lossComparison !== 0) {
-        return lossComparison;
-      }
-    } else if (sortMode === 'metric_name') {
-      const metricComparison = left.label.localeCompare(right.label);
-      if (metricComparison !== 0) {
-        return metricComparison;
-      }
-    } else if (sortMode === 'most_inside_band') {
-      const insideBandComparison = compareNullableNumbers(left.insideRate, right.insideRate, true);
-      if (insideBandComparison !== 0) {
-        return insideBandComparison;
-      }
-    } else if (sortMode === 'least_inside_band') {
-      const insideBandComparison = compareNullableNumbers(left.insideRate, right.insideRate);
-      if (insideBandComparison !== 0) {
-        return insideBandComparison;
-      }
-    }
+      title={title}
+    />
+  );
+}
 
-    const weightComparison = right.metricWeight - left.metricWeight;
-    if (weightComparison !== 0) {
-      return weightComparison;
-    }
-    return left.label.localeCompare(right.label);
-  });
+function MetricRange({
+  metric,
+  positions,
+  comparisonPositions,
+  comparisonLabel
+}: {
+  metric: ValidationMetricSummary;
+  positions: ValidationRangePositions;
+  comparisonPositions?: ValidationRangePositions | null;
+  comparisonLabel?: string;
+}) {
+  if (!positions.scaled) {
+    return <div className="validation-range validation-range-unscaled">No single empirical target — compared by distribution shape</div>;
+  }
+  return (
+    <div
+      className="validation-range"
+      role="img"
+      aria-label={`${metric.label}: simulated mean ${formatDeviation(
+        positions.deviationPercent
+      )} versus the empirical target of ${withUnits(metric.sourceValue, displayUnits(metric))}, target band ${formatBand(metric)}`}
+    >
+      <div className="validation-range-axis" />
+      {DEVIATION_AXIS_TICKS.map((tick) => (
+        <span
+          key={tick}
+          /* Zero is the empirical target itself, so it keeps the source-marker identity. */
+          className={tick === 0 ? 'validation-source-marker' : 'validation-axis-tick'}
+          style={{ left: `${deviationToPosition(tick)}%` }}
+          title={tick === 0 ? 'Empirical target' : `${tick > 0 ? '+' : ''}${tick}% off target`}
+        />
+      ))}
+      {positions.targetStart !== null && positions.targetEnd !== null && (
+        <div
+          className="validation-target-band"
+          style={{ left: `${positions.targetStart}%`, width: `${Math.max(0.6, positions.targetEnd - positions.targetStart)}%` }}
+        />
+      )}
+      <MetricSeries
+        positions={positions}
+        colour={comparisonPositions?.scaled ? BASELINE_COLOR : MEAN_MARKER_COLOR}
+        title="Simulated mean"
+      />
+      {comparisonPositions?.scaled && (
+        <MetricSeries
+          positions={comparisonPositions}
+          colour={COMPARISON_COLOR}
+          title={`Simulated mean — ${comparisonLabel ?? 'comparison'}`}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * What pass / warn / fail / unsupported actually mean, stated once for the whole page — the words
+ * appear on the scorecard counts, on every metric row, and in the technical table.
+ *
+ * The rules mirror `classify_metric_status` (scripts/python/validation/model/scoring.py): a status
+ * is decided by two things together, how far the seed mean sits from the nearest edge of the target
+ * band (measured in band-widths) and what fraction of individual seeds land inside that band. Both
+ * conditions must hold, which is why a metric can be centred on its target and still only warn.
+ */
+const VALIDATION_STATUS_DEFINITIONS: {
+  status: ValidationMetricStatus;
+  meaning: string;
+  rule: string;
+}[] = [
+  {
+    status: 'pass',
+    meaning: 'Matches the evidence, and does so consistently.',
+    rule: 'Seed mean inside the target band, and at least 75% of seeds inside it.'
+  },
+  {
+    status: 'warn',
+    meaning: 'Close to the evidence, or on target but unsteady across seeds.',
+    rule: 'Seed mean within half a band-width of the band, and at least 50% of seeds inside it.'
+  },
+  {
+    status: 'fail',
+    meaning: 'Neither close enough nor consistent enough to rely on.',
+    rule: 'Falls outside both of the limits above.'
+  },
+  {
+    status: 'unsupported',
+    meaning: 'Cannot be scored — no target band is published for this metric.',
+    rule: 'Carries no weight and is excluded from the composite loss.'
+  }
+];
+
+function ValidationStatusLegend() {
+  return (
+    <aside className="validation-status-legend" aria-labelledby="validation-status-legend-heading">
+      <h3 id="validation-status-legend-heading">How each metric is scored</h3>
+      <dl>
+        {VALIDATION_STATUS_DEFINITIONS.map((definition) => (
+          <div key={definition.status}>
+            <dt>
+              <span className={`validation-status-pill validation-status-${definition.status}`}>
+                {definition.status}
+              </span>
+            </dt>
+            <dd>
+              <strong>{definition.meaning}</strong>
+              <span>{definition.rule}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+      <p>
+        Target bands vary in width, so a pass can still sit some way from the empirical target. Rows
+        say so when that happens.
+      </p>
+    </aside>
+  );
+}
+
+/**
+ * The collapsed summary for a theme: what its metrics scored, most severe first. This is what makes
+ * a collapsed theme worth reading rather than just something to click open.
+ */
+export function describeThemeStatuses(metrics: Pick<ValidationMetricSummary, 'status'>[]): string {
+  if (metrics.length === 0) {
+    return 'No metrics';
+  }
+  const order: ValidationMetricStatus[] = ['fail', 'warn', 'pass', 'unsupported'];
+  return order
+    .map((status) => ({ status, count: metrics.filter((metric) => metric.status === status).length }))
+    .filter((entry) => entry.count > 0)
+    .map((entry) => `${entry.count}/${metrics.length} ${entry.status}`)
+    .join(' \u00b7 ');
+}
+
+export function findValidationThemeId(metricId: string): string | null {
+  return VALIDATION_POLICY_THEMES.find((theme) =>
+    theme.metricIds.some((themeMetricId) => themeMetricId === metricId)
+  )?.id ?? null;
+}
+
+function MetricRow({
+  metric,
+  comparisonMetric,
+  versionLabels
+}: {
+  metric: ValidationMetricSummary;
+  comparisonMetric?: ValidationMetricSummary | null;
+  versionLabels?: { selected: string; comparison: string };
+}) {
+  const positions = calculateValidationRangePositions(metric);
+  const comparisonPositions = comparisonMetric ? calculateValidationRangePositions(comparisonMetric) : null;
+  // Two band-width cautions in one row is noise, so the advisory is single-mode only.
+  const bandNote = comparisonMetric ? null : buildBandWidthNote(metric, positions.deviationPercent);
+  return (
+    <details id={`validation-metric-${metric.metricId}`} className={`validation-metric-row validation-metric-${metric.status}`}>
+      <summary>
+        <div className="validation-metric-title">
+          <strong>{metric.label}</strong>
+          <span>{displayUnits(metric) || 'Unitless'}</span>
+          {/* In compare mode each model carries its own pill beside its own figure, so a lone pill
+              here would read as a verdict on the whole row rather than on the selected model. */}
+          {!comparisonMetric && (
+            <span className={`validation-status-pill validation-status-${metric.status}`}>{metric.status}</span>
+          )}
+        </div>
+        <MetricRange
+          metric={metric}
+          positions={positions}
+          comparisonPositions={comparisonPositions}
+          comparisonLabel={versionLabels?.comparison}
+        />
+        {comparisonMetric && comparisonPositions ? (
+          <div className="validation-row-deviation validation-row-deviation-compare">
+            <span className="validation-series-label">
+              <em className="validation-series-key validation-series-key-selected" />
+              {versionLabels?.selected}
+            </span>
+            <strong>{formatDeviation(positions.deviationPercent)}</strong>
+            <span className={`validation-status-pill validation-status-${metric.status}`}>{metric.status}</span>
+            <span className="validation-series-label">
+              <em className="validation-series-key validation-series-key-comparison" />
+              {versionLabels?.comparison}
+            </span>
+            <strong>{formatDeviation(comparisonPositions.deviationPercent)}</strong>
+            <span className={`validation-status-pill validation-status-${comparisonMetric.status}`}>
+              {comparisonMetric.status}
+            </span>
+          </div>
+        ) : (
+          <div className="validation-row-deviation">
+            <span>Off target</span>
+            <strong>{formatDeviation(positions.deviationPercent)}</strong>
+          </div>
+        )}
+        <div className={comparisonMetric ? 'validation-row-seeds validation-row-seeds-compare' : 'validation-row-seeds'}>
+          <span>Seeds in band</span>
+          <strong>{formatInsideRate(metric.insideRate)}</strong>
+          {comparisonMetric && <strong>{formatInsideRate(comparisonMetric.insideRate)}</strong>}
+        </div>
+        <div className={comparisonMetric ? 'validation-row-loss validation-row-loss-compare' : 'validation-row-loss'}>
+          <span>Loss</span>
+          <strong>{formatLoss(metric.metricLoss)}</strong>
+          {comparisonMetric && <strong>{formatLoss(comparisonMetric.metricLoss)}</strong>}
+        </div>
+      </summary>
+      {bandNote && <p className="validation-band-note">{bandNote}</p>}
+      <div className="validation-metric-detail">
+        <dl>
+          <div><dt>Exact target</dt><dd>{withUnits(metric.sourceValue, displayUnits(metric))}</dd></div>
+          <div><dt>Target band</dt><dd>{formatBand(metric)}</dd></div>
+          <div><dt>Simulated mean</dt><dd>{withUnits(metric.seedMean, displayUnits(metric), 3)}</dd></div>
+          <div><dt>Simulated IQR</dt><dd>{withUnits(metric.p25, displayUnits(metric), 3)} to {withUnits(metric.p75, displayUnits(metric), 3)}</dd></div>
+          <div><dt>Seeds inside band</dt><dd>{formatInsideRate(metric.insideRate)}</dd></div>
+          <div><dt>Metric loss · weight</dt><dd>{formatLoss(metric.metricLoss)} · {formatNumber(metric.metricWeight, 4)}</dd></div>
+          <div><dt>Secondary cross-year comparison</dt><dd>{formatDelta(metric.lossDeltaVsReference2011)} ({formatDeltaPercent(metric.lossDeltaPercentVsReference2011)}) loss change versus original 2011 benchmark</dd></div>
+          <div><dt>Loss family</dt><dd>{lossFamilyDescription(metric)}</dd></div>
+        </dl>
+        <details className="validation-source-disclosure">
+          <summary>Sources and provenance</summary>
+          <div className="validation-source-panel">
+            <strong>{metric.sourceLabel}</strong>
+            {buildDeduplicatedSourceReferences(metric).map((reference) => (
+              <span key={reference.key} title={reference.notes ?? undefined}>{reference.label}</span>
+            ))}
+            {metric.lossScale !== null && <span>Loss scale: {formatNumber(metric.lossScale, 4)} ({metric.lossScaleBasis?.replaceAll('_', ' ')})</span>}
+            {metric.additiveScale !== null && <span>Additive scale: {formatNumber(metric.additiveScale, 4)} ({metric.additiveScaleBasis?.replaceAll('_', ' ')})</span>}
+            {metric.bandNotes && <span>{metric.bandNotes}</span>}
+          </div>
+        </details>
+      </div>
+    </details>
+  );
 }
 
 export function ValidationPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedVersion = searchParams.get('version')?.trim() ?? '';
+  const requestedEvidenceYear = Number(searchParams.get('evidenceYear'));
+  // Only offered when the analyst arrived from a setup form, so this reads as a return trip
+  // rather than an unexplained call to action for someone browsing validation on its own.
+  const returnSource = searchParams.get('from')?.trim() ?? '';
+  const draftId = searchParams.get('draft')?.trim() ?? '';
+  const isScenarioContext = returnSource === 'scenario' && Boolean(draftId && readScenarioDraft(draftId));
+  const isSensitivityContext = returnSource === 'sensitivity' && Boolean(draftId && readSensitivityDraft(draftId));
+  const returnDestination = isScenarioContext
+    ? RETURN_DESTINATIONS.scenario
+    : isSensitivityContext
+      ? RETURN_DESTINATIONS.sensitivity
+      : null;
   const [overview, setOverview] = useState<ValidationOverviewPayload | null>(null);
-  const [selectedVersion, setSelectedVersion] = useState<string>('');
-  const [selectedValidationTargetYear, setSelectedValidationTargetYear] =
-    useState<number>(DEFAULT_VALIDATION_TARGET_YEAR);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [isWaitingForApi, setIsWaitingForApi] = useState<boolean>(false);
-  const [error, setError] = useState<string>('');
+  const [selectedVersion, setSelectedVersion] = useState(requestedVersion);
+  const [selectedValidationTargetYear, setSelectedValidationTargetYear] = useState(
+    Number.isFinite(requestedEvidenceYear) && requestedEvidenceYear > 0
+      ? requestedEvidenceYear
+      : DEFAULT_VALIDATION_TARGET_YEAR
+  );
+  const [isLoading, setIsLoading] = useState(true);
+  const [isWaitingForApi, setIsWaitingForApi] = useState(false);
+  const [error, setError] = useState('');
   const [inProgressVersions, setInProgressVersions] = useState<string[]>([]);
-  const [metricSearch, setMetricSearch] = useState<string>('');
-  const [sortMode, setSortMode] = useState<ValidationSortMode>(DEFAULT_SORT_MODE);
-  const [openMetricIds, setOpenMetricIds] = useState<string[]>([]);
+  const [selectionNotice, setSelectionNotice] = useState('');
+  // Comparison is a state of this view, not a separate page: picking a second model switches the
+  // body into compare mode, exactly as `comparisonRunId` does on the scenario results view.
+  const [comparisonVersion, setComparisonVersion] = useState(searchParams.get('comparisonVersion')?.trim() ?? '');
+  const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState(Boolean(comparisonVersion));
+  const [sortMetricId, setSortMetricId] = useState('');
+  const [isOutcomeComparisonsOpen, setIsOutcomeComparisonsOpen] = useState(false);
+  const [openValidationThemeIds, setOpenValidationThemeIds] = useState<Set<string>>(() => new Set());
+  const [pendingMetricDiagnosticId, setPendingMetricDiagnosticId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     let retryTimer: number | undefined;
-
     const load = async () => {
       setIsLoading(true);
       setIsWaitingForApi(false);
       setError('');
-
       try {
-        const [response, versionsPayload] = await Promise.all([
-          fetchValidationOverview(selectedVersion || undefined, selectedValidationTargetYear),
+        const [response, versions] = await Promise.all([
+          fetchValidationOverview(selectedVersion || undefined, selectedValidationTargetYear, comparisonVersion || undefined),
           fetchVersions()
         ]);
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
+        const requestedCombinationChanged =
+          (selectedVersion.length > 0 && response.selectedVersion !== selectedVersion) ||
+          response.selectedValidationTargetYear !== selectedValidationTargetYear;
+        setSelectionNotice(requestedCombinationChanged
+          ? 'That model and evidence-year combination is unavailable. Showing the nearest available validation evidence.'
+          : '');
         setOverview(response);
         setSelectedVersion(response.selectedVersion);
         setSelectedValidationTargetYear(response.selectedValidationTargetYear);
-        setInProgressVersions(versionsPayload.inProgressVersions);
+        setInProgressVersions(versions.inProgressVersions);
       } catch (loadError) {
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         if (isRetryableApiError(loadError)) {
           setIsWaitingForApi(true);
-          retryTimer = window.setTimeout(() => {
-            void load();
-          }, API_RETRY_DELAY_MS);
+          retryTimer = window.setTimeout(() => void load(), API_RETRY_DELAY_MS);
+          return;
+        }
+        if (selectedVersion) {
+          setSelectionNotice('That model version has no published validation evidence. Showing the latest available validated model.');
+          setSelectedVersion('');
+          setSelectedValidationTargetYear(DEFAULT_VALIDATION_TARGET_YEAR);
           return;
         }
         setError((loadError as Error).message);
       } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
+        if (!cancelled) setIsLoading(false);
       }
     };
-
     void load();
-
     return () => {
       cancelled = true;
-      if (retryTimer !== undefined) {
-        window.clearTimeout(retryTimer);
-      }
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [selectedVersion, selectedValidationTargetYear]);
-
-  const chartOption = useMemo(() => {
-    if (!overview || overview.trend.points.length === 0) {
-      return null;
-    }
-    return buildChartOption(overview);
-  }, [overview]);
-
-  const summary = overview?.selectedSummary ?? null;
-  const displayedValidationTargetYear =
-    overview?.selectedValidationTargetYear ?? summary?.validationTargetYear ?? selectedValidationTargetYear;
-  const availableValidationTargetYears =
-    overview?.availableValidationTargetYearsByVersion[selectedVersion] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
-  const openMetricIdSet = useMemo(() => new Set(openMetricIds), [openMetricIds]);
-  const inProgressVersionSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
-  const latestStableValidationVersion = useMemo(
-    () => getLatestStableVersion(overview?.availableVersions ?? [], inProgressVersions),
-    [overview, inProgressVersions]
-  );
+  }, [selectedVersion, selectedValidationTargetYear, comparisonVersion]);
 
   useEffect(() => {
-    setOpenMetricIds([]);
-  }, [summary?.version, summary?.validationTargetYear]);
+    if (!overview) return;
+    // Preserve params this page does not own (notably `from`, which drives the return-to-setup
+    // bar) — rebuilding from scratch silently dropped them as soon as the overview loaded.
+    const next = new URLSearchParams(searchParams);
+    next.set('version', selectedVersion);
+    next.set('evidenceYear', String(selectedValidationTargetYear));
+    if (comparisonVersion) next.set('comparisonVersion', comparisonVersion);
+    else next.delete('comparisonVersion');
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [comparisonVersion, overview, searchParams, selectedValidationTargetYear, selectedVersion, setSearchParams]);
 
-  const filteredMetrics = useMemo(() => {
-    if (!summary) {
-      return [];
-    }
+  useEffect(() => {
+    if (!pendingMetricDiagnosticId || !isOutcomeComparisonsOpen) return;
+    const themeId = findValidationThemeId(pendingMetricDiagnosticId);
+    if (!themeId || !openValidationThemeIds.has(themeId)) return;
 
-    const searchTerm = metricSearch.trim().toLowerCase();
-    const searchFilteredMetrics = searchTerm
-      ? summary.metrics.filter((metric) => buildMetricSearchText(metric).includes(searchTerm))
-      : summary.metrics;
+    const row = document.getElementById(`validation-metric-${pendingMetricDiagnosticId}`);
+    setPendingMetricDiagnosticId(null);
+    if (!(row instanceof HTMLDetailsElement)) return;
+    row.open = true;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+  }, [isOutcomeComparisonsOpen, openValidationThemeIds, pendingMetricDiagnosticId]);
 
-    return sortMetrics(searchFilteredMetrics, sortMode);
-  }, [summary, metricSearch, sortMode]);
-
-  const toggleMetricSources = (metricId: string) => {
-    setOpenMetricIds((current) =>
-      current.includes(metricId) ? current.filter((value) => value !== metricId) : [...current, metricId]
-    );
-  };
-
-  const formatValidationVersionOptionLabel = (version: string) =>
-    formatVersionOptionLabel(version, buildVersionLabelState(version, latestStableValidationVersion, inProgressVersionSet));
-  const orderedValidationVersions = orderValidationVersionOptions(
-    overview?.availableVersions ?? [],
-    formatValidationVersionOptionLabel
+  const summary = overview?.selectedSummary ?? null;
+  const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
+  const versionLabel = (version: string) => formatModelName(version);
+  // Selection is limited to the four named models; the trend charts below still plot every
+  // version, because that series is the recalibration trajectory rather than a set of choices.
+  const orderedVersions = useMemo(
+    () => buildModelOptions(overview?.availableVersions ?? [], selectedVersion, inProgressSet).map((option) => option.version),
+    [overview, selectedVersion, inProgressSet]
   );
-
-  const selectVersionAndValidationYear = (version: string, validationTargetYear: number) => {
-    if (version === selectedVersion && validationTargetYear === selectedValidationTargetYear) {
-      return;
-    }
-    setSelectedVersion(version);
-    setSelectedValidationTargetYear(validationTargetYear);
-  };
-
-  const handleVersionChange = (version: string) => {
-    const availableYears =
-      overview?.availableValidationTargetYearsByVersion[version] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
-    selectVersionAndValidationYear(
-      version,
-      availableYears.includes(selectedValidationTargetYear)
-        ? selectedValidationTargetYear
-        : DEFAULT_VALIDATION_TARGET_YEAR
+  const scorecard = useMemo(() => buildValidationScorecard(summary?.metrics ?? []), [summary]);
+  const decomposition = useMemo(() => buildValidationLossDecomposition(summary?.metrics ?? []), [summary]);
+  // Both builders are pure functions of a metrics array, so the second model reuses them as-is.
+  const comparisonSummary = overview?.comparisonSummary ?? null;
+  const comparisonScorecard = useMemo(
+    () => buildValidationScorecard(comparisonSummary?.metrics ?? []),
+    [comparisonSummary]
+  );
+  const comparisonDecomposition = useMemo(
+    () => (comparisonSummary ? buildValidationLossDecomposition(comparisonSummary.metrics) : null),
+    [comparisonSummary]
+  );
+  const comparisonMetricById = useMemo(
+    () => new Map((comparisonSummary?.metrics ?? []).map((metric) => [metric.metricId, metric])),
+    [comparisonSummary]
+  );
+  const largestComparisonDifferences = useMemo(() => {
+    if (!comparisonSummary) return [];
+    return summary?.metrics
+      .flatMap((metric) => {
+        const comparisonMetric = comparisonMetricById.get(metric.metricId);
+        if (metric.metricLoss === null || comparisonMetric?.metricLoss === null || comparisonMetric?.metricLoss === undefined) {
+          return [];
+        }
+        return [{ metric, difference: comparisonMetric.metricLoss - metric.metricLoss }];
+      })
+      .sort((left, right) => Math.abs(right.difference) - Math.abs(left.difference))
+      .slice(0, 3) ?? [];
+  }, [comparisonMetricById, comparisonSummary, summary]);
+  // const chart2024 = useMemo(() => (overview ? buildTrendOption(overview, 2024, versionLabel) : null), [overview]);
+  // const chart2011 = useMemo(() => (overview ? buildTrendOption(overview, 2011, versionLabel) : null), [overview]);
+  const metricsByVersion = overview?.metricsByVersion ?? {};
+  /** Indicator list in theme order, labelled from the selected summary (all models share ids). */
+  const sortableMetrics = useMemo(() => {
+    const labelById = new Map((summary?.metrics ?? []).map((metric) => [metric.metricId, metric.label]));
+    return VALIDATION_POLICY_THEMES.flatMap((theme) =>
+      theme.metricIds.flatMap((metricId) => {
+        const label = labelById.get(metricId);
+        return label ? [{ metricId, label }] : [];
+      })
     );
+  }, [summary]);
+  // Keep every named model visible. The ranking helper places a model with no value for the
+  // selected indicator at the end instead of making that row disappear from either column.
+  const rankedVersions = useMemo(
+    () => (sortMetricId ? rankVersionsByMetric(metricsByVersion, orderedVersions, sortMetricId) : null),
+    [sortMetricId, metricsByVersion, orderedVersions]
+  );
+  const pickerVersions = rankedVersions ? rankedVersions.map((entry) => entry.version) : orderedVersions;
+  const evidenceContext = isScenarioContext
+    ? `&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`
+    : isSensitivityContext
+      ? `&from=sensitivity&draft=${encodeURIComponent(draftId)}&sensitivityStep=model-baseline`
+      : '';
+  const returnHref = isScenarioContext
+    ? `${RETURN_DESTINATIONS.scenario.path}?draft=${encodeURIComponent(draftId)}&step=model-version`
+    : `${RETURN_DESTINATIONS.sensitivity.path}?draft=${encodeURIComponent(draftId)}&step=model-baseline`;
+  const calibrationPageHref = comparisonVersion
+    ? `/model-evidence?view=calibration&mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonVersion)}${evidenceContext}`
+    : `/model-evidence?view=calibration&mode=single&version=${encodeURIComponent(selectedVersion)}${evidenceContext}`;
+
+  const selectVersionAndValidationYear = (version: string, year: number) => {
+    setSelectedVersion(version);
+    setSelectedValidationTargetYear(year);
   };
-
-  const handleChartClick = (rawParams: unknown) => {
-    if (!rawParams || typeof rawParams !== 'object') {
-      return;
-    }
-
-    const params = rawParams as ValidationChartClickParams;
-    if (typeof params.name !== 'string') {
-      return;
-    }
-
-    if (params.seriesName === TRACKED_VALIDATION_SERIES_NAME) {
-      selectVersionAndValidationYear(params.name, DEFAULT_VALIDATION_TARGET_YEAR);
-    } else if (params.seriesName === V0_REFERENCE_SERIES_NAME) {
-      selectVersionAndValidationYear(params.name, REFERENCE_VALIDATION_TARGET_YEAR);
-    }
+  const handleVersionChange = (version: string) => {
+    const years = overview?.availableValidationTargetYearsByVersion[version] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
+    if (version === comparisonVersion) setComparisonVersion('');
+    selectVersionAndValidationYear(version, years.includes(selectedValidationTargetYear) ? selectedValidationTargetYear : 2024);
+  };
+  // const handleChartClick = (year: 2024 | 2011) => (raw: unknown) => {
+  //   const point = raw as { name?: string };
+  //   if (point?.name) selectVersionAndValidationYear(point.name, year);
+  // };
+  const openMetricDiagnostic = (metricId: string) => {
+    const themeId = findValidationThemeId(metricId);
+    if (!themeId) return;
+    setIsOutcomeComparisonsOpen(true);
+    setOpenValidationThemeIds((current) => current.has(themeId) ? current : new Set(current).add(themeId));
+    setPendingMetricDiagnosticId(metricId);
+  };
+  const handleValidationThemeOpenChange = (themeId: string, open: boolean) => {
+    setOpenValidationThemeIds((current) => {
+      if (current.has(themeId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(themeId);
+      else next.delete(themeId);
+      return next;
+    });
   };
 
   return (
-    <section className="validation-layout validation-framework-layout">
-      <article className="results-card">
-        <h2>Validation</h2>
-        <div className="validation-intro-copy">
-          <p>
-            This page keeps the trend chart on the tracked 2024 timeline, overlays the original <code>v0</code>,
-            historical <code>v0o2</code> and optimised TuRBO <code>v0o7</code> 2011 validation comparisons, and lets you switch
-            the metric table between the 2024 summary and the available 2011 comparator for the selected version.
-            Other pre-<code>v1.0</code> optimised/candidate versions are hidden from validation.
-          </p>
-          {displayedValidationTargetYear === REFERENCE_VALIDATION_TARGET_YEAR && (
-            <p>
-              The 2011 validation summary keeps <code>core_hpiStd</code> benchmarked to the same
-              2005-01..2024-12 official std used in the 2024 view, while <code>core_hpiCyclePeriod</code> remains
-              2011-anchored.
-            </p>
-          )}
-          <p>
-            The line chart is a secondary overview for ranking and trend-checking only. Validation matters because a
-            housing-market ABM needs to be realistic against external evidence and robust across multiple seeds, not
-            just tuned to look good in a single run.
-          </p>
-          <p className="validation-formula">
-            <strong>Metric loss</strong> uses family-aware distance: log-ratio for positive levels, robust additive
-            distance for signed metrics, bounded-domain-normalized percentage-point distance for tenure shares, and
-            bounded low-is-better scoring for JSD, plus spread and seeds outside band components. Target bands still
-            determine pass, warn, and fail status.
-          </p>
-        </div>
-      </article>
-
-      {error && <p className="error-banner">{error}</p>}
-      {isWaitingForApi && (
-        <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds...</p>
+    <section className="validation-layout">
+      {selectedVersion && returnDestination && (
+        <EvidenceReturnPanel
+          className="validation-return-bar"
+          message={`You are checking validation evidence for an unfinished ${returnDestination.noun}.`}
+          returnHref={returnHref}
+          versions={pickerVersions}
+          currentVersion={selectedVersion}
+          inProgressVersions={inProgressSet}
+          onChooseModel={(version) => {
+            if (isScenarioContext) updateScenarioDraftModel(draftId, version);
+            else updateSensitivityDraftModel(draftId, version);
+          }}
+        />
       )}
-
-      <article className="results-card">
-        <div className="validation-overview-header">
-          <div>
-            <h3>Validation Loss Across Versions</h3>
-            <p className="validation-card-subtitle">
-              Lower validation loss means the model is closer to the external targets and more stable across seeds.
-              Click a 2024 validation point or a sparse selected v0-family 2011 validation point to load that version
-              and year in the metric results below.
+      <article className="results-card validation-introduction">
+        <div className="validation-introduction-top">
+          <div className="validation-introduction-copy">
+            <h2>Validation</h2>
+            <p>Compare the selected model with independent UK evidence, see which outcomes are credible or problematic, and check whether results hold across random seeds.</p>
+            <p className="validation-protocol-note">
+              Validation uses a fixed ten-seed, 3,500-step protocol; the first 500 steps are discarded. Runs launched on the Experiments page do not update these validation results.
+            </p>
+            <p className="validation-evidence-statement">
+              The evidence used to validate this model was from <strong>{selectedValidationTargetYear}</strong>.
             </p>
           </div>
+          <ValidationStatusLegend />
         </div>
-        {isLoading ? (
-          <p className="loading-banner">Loading validation overview...</p>
-        ) : chartOption ? (
-          <EChart option={chartOption} className="chart validation-chart" onClick={handleChartClick} />
-        ) : (
-          <p className="info-banner">No tracked validation summaries are available.</p>
-        )}
+
+        <div className="validation-model-picker-toolbar">
+          <label className="validation-selector">
+            <span>Sort models by</span>
+            <select value={sortMetricId} onChange={(event) => setSortMetricId(event.target.value)}>
+              <option value="">Version order</option>
+              {sortableMetrics.map((metric) => (
+                <option key={metric.metricId} value={metric.metricId}>{metric.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="validation-model-columns-scroll">
+          <div className="validation-model-columns" aria-label="Validation model selection">
+            <section className="validation-model-column" aria-labelledby="validation-primary-model-heading">
+              <div className="validation-model-column-heading">
+                <div>
+                  <span>Model 1</span>
+                  <h3 id="validation-primary-model-heading">Primary model</h3>
+                </div>
+              </div>
+              <ValidationModelOptions
+                versions={pickerVersions}
+                selectedVersion={selectedVersion}
+                name="validation-primary-model"
+                label="Primary validation model"
+                rankings={rankedVersions}
+                inProgressVersions={inProgressSet}
+                onChange={handleVersionChange}
+              />
+            </section>
+
+            <section
+              className={`validation-model-column validation-model-column-comparison ${isComparisonPickerOpen ? 'is-enabled' : 'is-disabled'}`}
+              aria-labelledby="validation-comparison-model-heading"
+              aria-disabled={!isComparisonPickerOpen}
+            >
+              <div className="validation-model-column-heading">
+                <div>
+                  <span>Model 2</span>
+                  <h3 id="validation-comparison-model-heading">Comparison model</h3>
+                </div>
+                <label className="comparison-enable-toggle validation-comparison-enable-toggle">
+                  <input
+                    type="checkbox"
+                    checked={isComparisonPickerOpen}
+                    onChange={(event) => {
+                      setIsComparisonPickerOpen(event.target.checked);
+                      if (!event.target.checked) setComparisonVersion('');
+                    }}
+                  />
+                  <span>Compare</span>
+                </label>
+              </div>
+              <ValidationModelOptions
+                versions={pickerVersions}
+                selectedVersion={comparisonVersion}
+                name="validation-comparison-model"
+                label="Comparison validation model"
+                rankings={rankedVersions}
+                disabled={!isComparisonPickerOpen}
+                unavailableVersion={selectedVersion}
+                inProgressVersions={inProgressSet}
+                onChange={setComparisonVersion}
+              />
+              <small className="validation-selector-note">
+                {isComparisonPickerOpen
+                  ? comparisonVersion ? 'One model selected for comparison.' : 'Choose one model to compare with the primary model.'
+                  : 'Check Compare to enable this column.'}
+              </small>
+            </section>
+          </div>
+        </div>
+        <p className="validation-calibration-guidance">
+          If you want to understand the difference between two models, visit the{' '}
+          <Link to={calibrationPageHref}>calibration page</Link>.
+        </p>
       </article>
 
-      <article className="results-card">
-        <h3>Validation Results by Metric</h3>
-        <p className="validation-card-subtitle">
-          Each row shows one validation metric for {summary?.version ?? selectedVersion} against{' '}
-          {displayedValidationTargetYear} targets, the model summary across seeds, the signed loss delta versus{' '}
-          <code>v0 2011</code> where negative is better and positive is worse, and the raw metric weight
-          supplied in the validation payload.
-        </p>
-        <div className="results-controls validation-mode-row">
-          <label className="validation-selector">
-            <span>Version</span>
-            <select value={selectedVersion} onChange={(event) => handleVersionChange(event.target.value)}>
-              {orderedValidationVersions.map((version) => (
-                <option key={version} value={version}>
-                  {formatValidationVersionOptionLabel(version)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="validation-selector">
-            <span>Validation Year</span>
-            <select
-              value={displayedValidationTargetYear}
-              onChange={(event) => setSelectedValidationTargetYear(Number.parseInt(event.target.value, 10))}
-            >
-              {availableValidationTargetYears.map((validationTargetYear) => (
-                <option key={validationTargetYear} value={validationTargetYear}>
-                  {formatValidationYearOptionLabel(validationTargetYear)}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <div className="results-controls validation-table-controls">
-          <label>
-            <span>Search metrics</span>
-            <input
-              type="search"
-              value={metricSearch}
-              onChange={(event) => setMetricSearch(event.target.value)}
-              placeholder="Search by metric or source"
-            />
-          </label>
-          <label>
-            <span>Sort by</span>
-            <select value={sortMode} onChange={(event) => setSortMode(event.target.value as ValidationSortMode)}>
-              <option value="highest_loss">Highest loss first</option>
-              <option value="lowest_loss">Lowest loss first</option>
-              <option value="metric_name">Metric name A-Z</option>
-              <option value="most_inside_band">Most inside-band seeds</option>
-              <option value="least_inside_band">Least inside-band seeds</option>
-            </select>
-          </label>
-          <div className="validation-control-summary">Showing {filteredMetrics.length} metrics</div>
-        </div>
-        {filteredMetrics.length === 0 ? (
-          <p className="info-banner validation-table-empty">No validation metrics match the current search term.</p>
-        ) : (
-          <div className="validation-table-wrap">
-            <table className="validation-metrics-table">
-              <thead>
-                <tr>
-                  <th>Metric</th>
-                  <th>Target value</th>
-                  <th>Target band</th>
-                  <th>Acceptance range</th>
-                  <th>Sim. mean</th>
-                  <th>Sim. IQR</th>
-                  <th>Seeds in band</th>
-                  <th>Loss delta vs v0 2011</th>
-                  <th>Loss delta % vs v0 2011</th>
-                  <th>Weight</th>
-                  <th>Loss</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredMetrics.map((metric) => {
-                  const isSourcesOpen = openMetricIdSet.has(metric.metricId);
+      {selectionNotice && <p className="info-banner">{selectionNotice}</p>}
+      {error && <p className="error-banner">Unable to load validation results: {error}</p>}
+      {isWaitingForApi && <p className="waiting-banner">Waiting for the API. Retrying every 2 seconds…</p>}
+      {isLoading && !summary && <p className="loading-banner">Loading validation overview…</p>}
 
+      {summary && (
+        <>
+          <CollapsibleSection
+            className="results-card validation-summary-card"
+            title="Summary card"
+            description="Overall validation results, strongest areas, and the largest gaps."
+            summary={comparisonSummary
+              ? `${summary.version} compared with ${comparisonSummary.version}`
+              : `${versionLabel(summary.version)} · ${summary.validationTargetYear} evidence`}
+            defaultOpen={false}
+          >
+            <div className="validation-overview-header">
+              <div>
+                <h3>
+                  {comparisonSummary
+                    ? `${summary.version} compared with ${comparisonSummary.version}`
+                    : `${versionLabel(summary.version)} scorecard`}
+                </h3>
+                <p>{summary.validationTargetYear} UK evidence · conclusions across ten fixed seeds</p>
+              </div>
+            </div>
+            <div className="kpi-grid validation-scorecard-grid">
+              <div className="kpi-card validation-composite-card">
+                <span>Comparative validation loss — lower is better</span>
+                <strong>
+                  {formatValidationScorecardValue(
+                    formatNumber(summary.overallCompositeLoss, 4),
+                    comparisonSummary ? formatNumber(comparisonSummary.overallCompositeLoss, 4) : null
+                  )}
+                </strong>
+                <small>Unweighted mean of {summary.metrics.length} metric losses.</small>
+              </div>
+              {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
+                <div className={`kpi-card validation-count-card validation-metric-${status}`} key={status}>
+                  <span>{status}</span>
+                  <strong>
+                    {formatValidationScorecardValue(
+                      scorecard.counts[status],
+                      comparisonSummary ? comparisonScorecard.counts[status] : null
+                    )}
+                  </strong>
+                  <small>metrics</small>
+                </div>
+              ))}
+              <div className="kpi-card">
+                <span>Average seeds inside target bands</span>
+                <strong>
+                  {formatValidationScorecardValue(
+                    formatInsideRate(scorecard.averageInsideRate),
+                    comparisonSummary ? formatInsideRate(comparisonScorecard.averageInsideRate) : null
+                  )}
+                </strong>
+                <small>Unsupported metrics excluded</small>
+              </div>
+            </div>
+            <div className="validation-loss-decomposition">
+              <h4>Where this model&rsquo;s error sits</h4>
+              <p className="validation-card-subtitle validation-decomposition-description">
+                Each theme&rsquo;s share of the total metric loss. A <strong>smaller</strong> share means this model version fits
+                the 2024 evidence better for that group of indicators.
+              </p>
+              {comparisonSummary && (
+                <div className="validation-decomposition-legend" aria-label="Theme loss bar colours">
+                  <span>
+                    <span className="validation-decomposition-swatch" style={{ background: BASELINE_COLOR }} aria-hidden="true" />
+                    {formatModelWithVersion(summary.version)}
+                  </span>
+                  <span>
+                    <span className="validation-decomposition-swatch" style={{ background: COMPARISON_COLOR }} aria-hidden="true" />
+                    {formatModelWithVersion(comparisonSummary.version)}
+                  </span>
+                </div>
+              )}
+              <ol className="validation-decomposition-list">
+                {decomposition.themes.map((theme) => {
+                  const comparisonTheme = comparisonDecomposition?.themes.find((item) => item.id === theme.id) ?? null;
                   return (
-                    <tr key={metric.metricId}>
-                      <td>
-                        <div className="validation-metric-cell">
-                          <strong>{metric.label}</strong>
-                          <button
-                            type="button"
-                            className="table-toggle validation-source-toggle"
-                            onClick={() => toggleMetricSources(metric.metricId)}
-                          >
-                            {isSourcesOpen ? 'Hide provenance & sources' : 'Provenance & sources'}
-                          </button>
-                          {isSourcesOpen && (
-                            <div className="validation-source-panel">
-                              <div className="validation-source-label">{metric.sourceLabel}</div>
-                              {buildSourceReferences(metric).map((reference) => (
-                                <div key={reference.key} className="validation-source-ref" title={reference.title}>
-                                  {reference.label}
-                                </div>
-                              ))}
-                              {formatLossFamily(metric) && (
-                                <div className="validation-source-note">{formatLossFamily(metric)}</div>
-                              )}
-                              {formatLossScaleBasis(metric) && (
-                                <div className="validation-source-note">{formatLossScaleBasis(metric)}</div>
-                              )}
-                              {metric.bandNotes && <div className="validation-source-note">{metric.bandNotes}</div>}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td>{formatTargetValue(metric)}</td>
-                      <td>{formatTargetBand(metric)}</td>
-                      <td>{formatAcceptanceRange(metric)}</td>
-                      <td>{formatNumber(metric.seedMean, 3)}</td>
-                      <td>
-                        {formatNumber(metric.p25, 3)} to {formatNumber(metric.p75, 3)}
-                      </td>
-                      <td>{formatInsideRate(metric.insideRate)}</td>
-                      <td className={lossDeltaClassName(metric.lossDeltaVsReference2011)}>
-                        {formatLossDelta(metric.lossDeltaVsReference2011)}
-                      </td>
-                      <td className={lossDeltaClassName(metric.lossDeltaPercentVsReference2011)}>
-                        {formatLossDeltaPercent(metric.lossDeltaPercentVsReference2011)}
-                      </td>
-                      <td>{formatMetricWeight(metric.metricWeight)}</td>
-                      <td
-                        className={`validation-loss-cell ${metric.metricLoss === null ? 'validation-loss-unsupported' : ''}`}
-                      >
-                        {formatLoss(metric.metricLoss)}
-                      </td>
-                    </tr>
+                    <li key={theme.id}>
+                      <span className="validation-decomposition-title">{theme.title}</span>
+                      <span className="validation-decomposition-track">
+                        <span
+                          className="validation-decomposition-bar"
+                          style={{ width: `${Math.max(1, theme.share * 100)}%`, background: BASELINE_COLOR }}
+                        />
+                        {comparisonTheme && (
+                          <span
+                            className="validation-decomposition-bar validation-decomposition-bar-comparison"
+                            style={{ width: `${Math.max(1, comparisonTheme.share * 100)}%`, background: COMPARISON_COLOR }}
+                          />
+                        )}
+                      </span>
+                      <strong>
+                        {formatNumber(theme.share * 100, 1)}%
+                        {comparisonTheme && <em>{formatNumber(comparisonTheme.share * 100, 1)}%</em>}
+                      </strong>
+                    </li>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </article>
+              </ol>
+            </div>
+            <div className="validation-largest-gaps">
+              <h4>{comparisonSummary ? 'Biggest differences between models' : 'Largest validation gaps'}</h4>
+              {comparisonSummary && (
+                <p className="validation-card-subtitle">
+                  How {formatModelWithVersion(comparisonSummary.version)} changes metric loss relative to{' '}
+                  {formatModelWithVersion(summary.version)}. Lower loss is better.
+                </p>
+              )}
+              {comparisonSummary ? (
+                largestComparisonDifferences.length > 0 ? (
+                  <ol>{largestComparisonDifferences.map(({ metric, difference }) => (
+                    <li key={metric.metricId}>
+                      <button type="button" onClick={() => openMetricDiagnostic(metric.metricId)}>
+                        <span>{metric.label}</span>
+                        <strong className={difference < 0 ? 'validation-gap-improved' : difference > 0 ? 'validation-gap-worsened' : ''}>
+                          {difference < 0 ? 'Improves' : difference > 0 ? 'Worsens' : 'No change'} {difference === 0 ? '' : `${formatLoss(Math.abs(difference))} loss`}
+                        </strong>
+                      </button>
+                    </li>
+                  ))}</ol>
+                ) : <p>No comparable metric losses are available.</p>
+              ) : scorecard.largestGaps.length > 0 ? (
+                <ol>{scorecard.largestGaps.map((metric) => (
+                  <li key={metric.metricId}>
+                    <button type="button" onClick={() => openMetricDiagnostic(metric.metricId)}>
+                      <span>{metric.label}</span><strong>{formatLoss(metric.metricLoss)}</strong>
+                    </button>
+                  </li>
+                ))}</ol>
+              ) : <p>No supported metric losses are available.</p>}
+            </div>
+          </CollapsibleSection>
+
+          {/*
+            Temporarily hidden from the analyst-facing Validation page. The full chart code is
+            retained here in case it is later reused as a secondary model-development history view.
+
+          <article className="results-card">
+            {selectedValidationTargetYear === 2011 ? (
+              <>
+                <h3>{REFERENCE_VALIDATION_SERIES_NAME}</h3>
+                <p className="validation-card-subtitle">
+                  Historical reference points for v0, v0o2, and v0o7. This is not a continuation of the 2024 timeline.
+                  Click a point to inspect that model, or switch Evidence year to 2024 for the recalibration trend.
+                </p>
+                {chart2011 ? <EChart option={chart2011} className="chart validation-chart" onClick={handleChartClick(2011)} /> : <p className="info-banner">No 2011 reference points are available.</p>}
+              </>
+            ) : (
+              <>
+                <h3>Models tested against 2024 UK evidence</h3>
+                <p className="validation-card-subtitle">Main recalibration trend. Click a point to inspect that model against 2024 evidence.</p>
+                {chart2024 ? <EChart option={chart2024} className="chart validation-chart" onClick={handleChartClick(2024)} /> : <p className="info-banner">No 2024 trend is available.</p>}
+              </>
+            )}
+          </article>
+          */}
+
+          <CollapsibleSection
+            className="results-card validation-outcome-diagnostics"
+            title="Outcome comparisons"
+            description="A closer look at how each model outcome compares with UK evidence."
+            summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}
+            open={isOutcomeComparisonsOpen}
+            onOpenChange={setIsOutcomeComparisonsOpen}
+          >
+            <div className="validation-overview-header">
+              <div>
+                <p>
+                  All metrics share one axis: how far the simulated mean sits from the empirical target, as a
+                  percentage. Beyond &plusmn;100% the marker is pinned to the edge and the exact figure is shown.
+                </p>
+              </div>
+            </div>
+            <div className="validation-range-legend" aria-label="Range graphic legend">
+              <span className="legend-source">Empirical target (0% off)</span>
+              <span className="legend-target">Target band</span>
+              <span className="legend-mean">Simulated mean</span>
+            </div>
+            {VALIDATION_POLICY_THEMES.map((theme) => {
+              const metricMap = new Map(summary.metrics.map((metric) => [metric.metricId, metric]));
+              const metrics = theme.metricIds.flatMap((metricId) => {
+                const metric = metricMap.get(metricId);
+                return metric ? [metric] : [];
+              });
+              // Every JSD metric lives in this one theme, so the shape-only explanation belongs to the
+              // theme rather than to a sub-group nested inside each of them.
+              const isShapeTheme =
+                metrics.length > 0 && metrics.every((metric) => !calculateValidationRangePositions(metric).scaled);
+              return (
+                <CollapsibleSection
+                  key={theme.id}
+                  className="validation-theme"
+                  title={theme.title}
+                  summary={describeThemeStatuses(metrics)}
+                  open={openValidationThemeIds.has(theme.id)}
+                  onOpenChange={(open) => handleValidationThemeOpenChange(theme.id, open)}
+                >
+                  {metrics.length === 0 && <p className="info-banner">No metrics available for this theme.</p>}
+                  {isShapeTheme && (
+                    <p className="validation-card-subtitle">
+                      Scored by how closely the whole simulated distribution matches the empirical one, so there
+                      is no single target to be off by. Compare these by loss.
+                    </p>
+                  )}
+                  {metrics.map((metric) => (
+                    <MetricRow
+                      metric={metric}
+                      comparisonMetric={comparisonMetricById.get(metric.metricId) ?? null}
+                      versionLabels={comparisonSummary ? { selected: summary.version, comparison: comparisonSummary.version } : undefined}
+                      key={metric.metricId}
+                    />
+                  ))}
+                </CollapsibleSection>
+              );
+            })}
+          </CollapsibleSection>
+
+          <CollapsibleSection
+            className="results-card validation-audit-disclosure"
+            title="Validation methodology"
+            description="How the model is tested, which evidence is used, and how results are scored."
+            summary="Protocol, evidence, and loss calculation"
+            defaultOpen={false}
+          >
+            <p>Validation asks how far the multi-seed model summary sits from an empirical target and whether seed outcomes consistently fall inside its target band.</p>
+            <h3>How validation loss is calculated</h3>
+            <p>Positive levels use log-ratio distance; signed metrics use robust additive distance; tenure shares use bounded-domain-normalised percentage-point distance; and JSD uses bounded low-is-better scoring. Spread and seeds outside the band also contribute. Target bands determine pass, warning, and fail status.</p>
+            <p>The weighted composite aggregates metric losses for comparative ranking. Its family-specific scales, transforms, distance, spread, and inside-band components are retained in the payload and metric audit detail; it is not a probability, confidence interval, or hypothesis-test statistic.</p>
+          </CollapsibleSection>
+        </>
+      )}
     </section>
   );
 }

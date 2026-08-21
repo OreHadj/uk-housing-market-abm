@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BasePolicyId,
   BasePolicyOption,
@@ -24,15 +24,32 @@ import {
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
   buildDefaultSensitivityRange,
-  buildSensitivityGeneralOverridesFromForm,
+  buildSensitivityGeneralModelControlOverridesFromForm,
   getDefaultExperimentBasePolicy,
   getPackageBaselineValues,
   isSameValue,
+  normalizeManualScenarioFormValues,
+  normalizeSensitivityFormValues,
   parseFormValue,
   toInitialFormValues,
   type FormValue
 } from '../../../lib/experimentRunDefaults';
 import { useExperimentLogs } from '../../run-experiments/useExperimentLogs';
+import {
+  clearScenarioDraft,
+  readScenarioDraft,
+  restoreScenarioDraft,
+  writeScenarioDraft,
+  type ScenarioDraftV1
+} from '../../../lib/scenarioDraft';
+import {
+  clearSensitivityDraft,
+  readSensitivityDraft,
+  restoreSensitivityDraft,
+  writeSensitivityDraft,
+  type SensitivityDraftV1
+} from '../../../lib/sensitivityDraft';
+import type { ExperimentType } from '../types';
 
 export interface ExperimentRunController {
   options: ModelRunOptionsPayload | null;
@@ -46,6 +63,8 @@ export interface ExperimentRunController {
   setManualMaxWorkers: (value: string) => void;
   maxWorkersCap?: number;
   warnings: ModelRunWarning[];
+  draftId: string;
+  draftNotice: string;
   sensitivityTitle: string;
   setSensitivityTitle: (value: string) => void;
   sensitivityBasePolicy: BasePolicyId;
@@ -98,10 +117,16 @@ export interface ExperimentRunController {
 }
 
 interface UseExperimentRunControllerOptions {
+  activeType: ExperimentType;
   selectedJobRef: string;
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
+  onManualRunAccepted?: () => void;
+  onSensitivityRunAccepted?: (experimentId: string) => void;
+  // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
+  followJobRef?: string;
+  draftId?: string;
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -195,10 +220,15 @@ function defaultMaxWorkers(totalRuns: number, workerCap?: number): string {
 }
 
 export function useExperimentRunController({
+  activeType,
   selectedJobRef,
   onSelectedJobRefChange,
   onOpenManualResults,
-  onOpenSensitivityResults
+  onOpenSensitivityResults,
+  onManualRunAccepted,
+  onSensitivityRunAccepted,
+  followJobRef,
+  draftId = ''
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -209,6 +239,8 @@ export function useExperimentRunController({
   const [manualMaxWorkers, setManualMaxWorkers] = useState<string>('1');
   const [manualMaxWorkersTouched, setManualMaxWorkersTouched] = useState<boolean>(false);
   const [warnings, setWarnings] = useState<ModelRunWarning[]>([]);
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftNotice, setDraftNotice] = useState('');
 
   const [sensitivityTitle, setSensitivityTitle] = useState<string>('');
   const [sensitivityBasePolicy, setSensitivityBasePolicyState] = useState<BasePolicyId>(DEFAULT_EXPERIMENT_BASE_POLICY_ID);
@@ -220,6 +252,7 @@ export function useExperimentRunController({
   const [sensitivityMaxWorkersTouched, setSensitivityMaxWorkersTouched] = useState<boolean>(false);
   const [sensitivityFormValues, setSensitivityFormValues] = useState<Record<string, FormValue>>({});
   const [sensitivityWarnings, setSensitivityWarnings] = useState<ModelRunWarning[]>([]);
+  const skipSensitivityRangeResetForPackage = useRef('');
 
   const [jobs, setJobs] = useState<ExperimentJobSummary[]>([]);
   const [manualSubmissionLockedBySensitivity, setManualSubmissionLockedBySensitivity] = useState<boolean>(false);
@@ -274,7 +307,7 @@ export function useExperimentRunController({
     Boolean(options?.executionEnabled && selectedJobRef)
   );
 
-  const refreshOptions = async (requestedBaseline?: string): Promise<ModelRunOptionsPayload | null> => {
+  const refreshOptions = async (requestedBaseline?: string, hydrateDraft = false): Promise<ModelRunOptionsPayload | null> => {
     setPageError('');
     setIsLoadingOptions(true);
 
@@ -283,7 +316,9 @@ export function useExperimentRunController({
       const defaultBasePolicy = getDefaultExperimentBasePolicy(payload);
       const defaultBasePolicyOption = payload.basePolicies.find((item) => item.id === defaultBasePolicy) ?? null;
       const initialValues = toInitialFormValues(payload.parameters, defaultBasePolicyOption);
-      const initialSensitivityValues = { ...initialValues, N_SIMS: '5' };
+      // Seeds per sampled point come from the shared builder default, so a sweep point is scored
+      // on the same seed depth as a scenario run.
+      const initialSensitivityValues = normalizeSensitivityFormValues(payload.parameters, initialValues);
       setOptions(payload);
       setSelectedBaseline(payload.requestedBaseline);
       setBasePolicyState(defaultBasePolicy);
@@ -293,6 +328,73 @@ export function useExperimentRunController({
       setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap));
       setManualMaxWorkersTouched(false);
       setWarnings([]);
+      if (activeType === 'manual' && draftId && hydrateDraft) {
+        const stored = readScenarioDraft(draftId);
+        if (stored) {
+          const storedBasePolicyOption = payload.basePolicies.find((item) => item.id === stored.basePolicy) ?? defaultBasePolicyOption;
+          const draftInitialValues = toInitialFormValues(payload.parameters, storedBasePolicyOption);
+          const fallback: ScenarioDraftV1 = {
+            version: 1, title: '', calibratedModel: payload.requestedBaseline, basePolicy: defaultBasePolicy,
+            formValues: draftInitialValues,
+            maxWorkers: defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap),
+          };
+          const restored = restoreScenarioDraft(stored, payload, fallback);
+          setSelectedBaseline(restored.draft.calibratedModel);
+          setBasePolicyState(restored.draft.basePolicy);
+          setTitle(restored.draft.title);
+          setFormValues(normalizeManualScenarioFormValues(restored.draft.formValues));
+          setManualMaxWorkers(restored.draft.maxWorkers);
+          setManualMaxWorkersTouched(true);
+          setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
+        }
+      }
+      if (activeType === 'sensitivity' && draftId && hydrateDraft) {
+        const stored = readSensitivityDraft(draftId);
+        if (stored) {
+          const storedBasePolicyOption = payload.basePolicies.find((item) => item.id === stored.basePolicy) ?? defaultBasePolicyOption;
+          const draftInitialValues = normalizeSensitivityFormValues(
+            payload.parameters,
+            toInitialFormValues(payload.parameters, storedBasePolicyOption)
+          );
+          const fallbackPackage =
+            payload.sensitivityPolicyPackages.find((item) => item.id === DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID) ??
+            payload.sensitivityPolicyPackages[0] ?? null;
+          const fallbackRange = fallbackPackage
+            ? buildDefaultSensitivityRange(fallbackPackage, storedBasePolicyOption)
+            : { min: '', max: '' };
+          const fallback: SensitivityDraftV1 = {
+            version: 1,
+            title: '',
+            calibratedModel: payload.requestedBaseline,
+            basePolicy: defaultBasePolicy,
+            policyPackageId: fallbackPackage?.id ?? '',
+            min: fallbackRange.min,
+            max: fallbackRange.max,
+            sampleCount: '5',
+            formValues: draftInitialValues,
+            maxWorkers: defaultMaxWorkers(
+              parsePositiveInteger(draftInitialValues.N_SIMS),
+              payload.sensitivityMaxWorkersCap
+            )
+          };
+          const restored = restoreSensitivityDraft(stored, payload, fallback);
+          setSelectedBaseline(restored.draft.calibratedModel);
+          setSensitivityBasePolicyState(restored.draft.basePolicy);
+          setSensitivityTitle(restored.draft.title);
+          setSensitivityPolicyPackageId(restored.draft.policyPackageId);
+          setSensitivityMin(restored.draft.min);
+          setSensitivityMax(restored.draft.max);
+          setSensitivitySampleCount(restored.draft.sampleCount);
+          setSensitivityFormValues(normalizeSensitivityFormValues(payload.parameters, restored.draft.formValues));
+          setSensitivityMaxWorkers(restored.draft.maxWorkers);
+          setSensitivityMaxWorkersTouched(true);
+          skipSensitivityRangeResetForPackage.current = restored.draft.policyPackageId;
+          setDraftNotice(restored.choicesChanged
+            ? 'Some saved choices are no longer available and were replaced with current defaults.'
+            : 'Sensitivity draft restored for this tab.');
+        }
+      }
+      setDraftHydrated(true);
       return payload;
     } catch (error) {
       setPageError((error as Error).message);
@@ -301,6 +403,48 @@ export function useExperimentRunController({
       setIsLoadingOptions(false);
     }
   };
+
+  useEffect(() => {
+    if (activeType !== 'manual' || !draftId || !draftHydrated || !options) return;
+    writeScenarioDraft(draftId, {
+      version: 1,
+      title,
+      calibratedModel: selectedBaseline,
+      basePolicy,
+      formValues,
+      maxWorkers: manualMaxWorkers
+    });
+  }, [activeType, basePolicy, draftHydrated, draftId, formValues, manualMaxWorkers, options, selectedBaseline, title]);
+
+  useEffect(() => {
+    if (activeType !== 'sensitivity' || !draftId || !draftHydrated || !options) return;
+    writeSensitivityDraft(draftId, {
+      version: 1,
+      title: sensitivityTitle,
+      calibratedModel: selectedBaseline,
+      basePolicy: sensitivityBasePolicy,
+      policyPackageId: sensitivityPolicyPackageId,
+      min: sensitivityMin,
+      max: sensitivityMax,
+      sampleCount: sensitivitySampleCount,
+      formValues: sensitivityFormValues,
+      maxWorkers: sensitivityMaxWorkers
+    });
+  }, [
+    activeType,
+    draftHydrated,
+    draftId,
+    options,
+    selectedBaseline,
+    sensitivityBasePolicy,
+    sensitivityFormValues,
+    sensitivityMax,
+    sensitivityMaxWorkers,
+    sensitivityMin,
+    sensitivityPolicyPackageId,
+    sensitivitySampleCount,
+    sensitivityTitle
+  ]);
 
   const refreshJobs = async () => {
     try {
@@ -333,7 +477,15 @@ export function useExperimentRunController({
     let retryTimer: number | undefined;
 
     const load = async () => {
-      const loadedOptions = await refreshOptions();
+      // A "Use this model" hand-off from Validation arrives as ?baseline=<version>. Honour it once
+      // on mount so the analyst returns to the form with the model they chose already selected.
+      const handedOffBaseline = new URLSearchParams(window.location.search).get('baseline')?.trim();
+      const savedDraftBaseline = draftId
+        ? activeType === 'manual'
+          ? readScenarioDraft(draftId)?.calibratedModel
+          : readSensitivityDraft(draftId)?.calibratedModel
+        : '';
+      const loadedOptions = await refreshOptions(handedOffBaseline || savedDraftBaseline || undefined, true);
       if (cancelled) {
         return;
       }
@@ -409,6 +561,11 @@ export function useExperimentRunController({
       return;
     }
 
+    if (skipSensitivityRangeResetForPackage.current === selectedSensitivityPackage.id) {
+      skipSensitivityRangeResetForPackage.current = '';
+      return;
+    }
+
     const defaults = buildDefaultSensitivityRange(selectedSensitivityPackage, selectedSensitivityBasePolicy);
     setSensitivityMin(defaults.min);
     setSensitivityMax(defaults.max);
@@ -445,6 +602,15 @@ export function useExperimentRunController({
     sensitivityMin,
     sensitivitySampleCount
   ]);
+
+  useEffect(() => {
+    if (!followJobRef || !followJobRef.startsWith('manual:')) {
+      return;
+    }
+    // Adopt a hand-off job (e.g. from Home's Default Run) as pending so the existing
+    // completion effect redirects to its results once it succeeds.
+    setPendingManualJobRef((current) => current || followJobRef);
+  }, [followJobRef]);
 
   useEffect(() => {
     if (!pendingManualJobRef) {
@@ -560,6 +726,12 @@ export function useExperimentRunController({
   };
 
   const onSensitivityFormValueChange = (parameter: ModelRunParameterDefinition, value: FormValue) => {
+    if (
+      parameter.key === 'TIME_TO_START_RECORDING_TRANSACTIONS' ||
+      (parameter.type === 'boolean' && parameter.key.startsWith('record'))
+    ) {
+      return;
+    }
     setSensitivityFormValues((current) => ({
       ...current,
       [parameter.key]: value
@@ -579,7 +751,11 @@ export function useExperimentRunController({
         continue;
       }
       const rawValue = formValues[parameter.key];
-      const parsedValue = parseFormValue(parameter, rawValue);
+      const parsedValue = parameter.key === 'recordCoreIndicators' ? true : parseFormValue(parameter, rawValue);
+      if (parameter.key === 'recordCoreIndicators') {
+        overrides.recordCoreIndicators = true;
+        continue;
+      }
       if (parameter.group === 'Central Bank policy') {
         overrides[parameter.key] = parsedValue;
         continue;
@@ -604,7 +780,7 @@ export function useExperimentRunController({
       throw new Error('Run options are not loaded yet.');
     }
 
-    return buildSensitivityGeneralOverridesFromForm(options.parameters, sensitivityFormValues);
+    return buildSensitivityGeneralModelControlOverridesFromForm(options.parameters, sensitivityFormValues);
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {
@@ -623,6 +799,8 @@ export function useExperimentRunController({
         return;
       }
 
+      setDraftHydrated(false);
+      clearScenarioDraft(draftId);
       setWarnings([]);
       setTitle('');
       if (response.job) {
@@ -630,6 +808,7 @@ export function useExperimentRunController({
         setPendingManualJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
+      onManualRunAccepted?.();
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);
@@ -640,7 +819,7 @@ export function useExperimentRunController({
 
   const onSubmitSensitivity = async (confirmWarnings: boolean) => {
     if (!selectedSensitivityPackage) {
-      setPageError('Select a policy package for sensitivity.');
+      setPageError('Select a policy instrument for the sensitivity analysis.');
       return;
     }
 
@@ -676,13 +855,18 @@ export function useExperimentRunController({
         return;
       }
 
+      setDraftHydrated(false);
+      clearSensitivityDraft(draftId);
       setSensitivityWarnings([]);
       setSensitivityTitle('');
+      let acceptedExperimentId = '';
       if (response.experiment) {
-        const jobRef = `sensitivity:${response.experiment.experimentId}`;
+        acceptedExperimentId = response.experiment.experimentId;
+        const jobRef = `sensitivity:${acceptedExperimentId}`;
         setPendingSensitivityJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
+      onSensitivityRunAccepted?.(acceptedExperimentId);
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);
@@ -763,6 +947,8 @@ export function useExperimentRunController({
     setManualMaxWorkers: onManualMaxWorkersChange,
     maxWorkersCap: options?.sensitivityMaxWorkersCap,
     warnings,
+    draftId,
+    draftNotice,
     sensitivityTitle,
     setSensitivityTitle,
     sensitivityBasePolicy,

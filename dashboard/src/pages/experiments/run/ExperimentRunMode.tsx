@@ -20,6 +20,13 @@ interface ExperimentRunModeProps {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
+  followJobRef?: string;
+  showRunManagement?: boolean;
+  draftId?: string;
+  initialScenarioStep?: number;
+  initialSensitivityStep?: number;
+  onManualRunAccepted?: () => void;
+  onSensitivityRunAccepted?: (experimentId: string) => void;
 }
 
 export function ExperimentRunMode({
@@ -32,13 +39,25 @@ export function ExperimentRunMode({
   selectedJobRef,
   onSelectedJobRefChange,
   onOpenManualResults,
-  onOpenSensitivityResults
+  onOpenSensitivityResults,
+  followJobRef,
+  showRunManagement = true,
+  draftId = '',
+  initialScenarioStep = 0,
+  initialSensitivityStep = 0,
+  onManualRunAccepted,
+  onSensitivityRunAccepted
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
+    activeType,
     selectedJobRef,
     onSelectedJobRefChange,
     onOpenManualResults,
-    onOpenSensitivityResults
+    onOpenSensitivityResults,
+    followJobRef,
+    draftId,
+    onManualRunAccepted,
+    onSensitivityRunAccepted
   });
   const [downloadingJobRef, setDownloadingJobRef] = useState<string>('');
   const [deletingJobRef, setDeletingJobRef] = useState<string>('');
@@ -47,6 +66,7 @@ export function ExperimentRunMode({
 
   const runActionsDisabled = controller.executionDisabled || !canWrite;
   const RunSetupComponent = experimentTypeRegistry[activeType].RunSetupComponent;
+  const workspaceJobs = controller.jobs.filter((job) => job.type === activeType);
 
   const downloadJobResults = async (job: ExperimentJobSummary) => {
     if (!canDownloadResults) {
@@ -111,14 +131,14 @@ export function ExperimentRunMode({
               baselineRunId: controller.pendingRunId
             })}
           >
-            View Experiment Results
+            View results
           </Link>
         </p>
       )}
 
       {controller.pendingSensitivityExperimentId && (
         <p className="waiting-banner">
-          Sensitivity experiment completed. Redirecting to results...{' '}
+          Sensitivity analysis completed. Redirecting to results...{' '}
           <Link
             to={buildExperimentsPath({
               ...DEFAULT_EXPERIMENT_ROUTE_STATE,
@@ -127,7 +147,7 @@ export function ExperimentRunMode({
               experimentId: controller.pendingSensitivityExperimentId
             })}
           >
-            View Experiment Results
+            View results
           </Link>
         </p>
       )}
@@ -158,35 +178,52 @@ export function ExperimentRunMode({
       )}
 
       <div className="run-exp-grid">
-        <RunSetupComponent controller={controller} runActionsDisabled={runActionsDisabled} />
-
-        <ExperimentQueueCard
-          jobs={controller.jobs}
-          isLoading={controller.isLoadingJobs}
-          selectedJobRef={selectedJobRef}
-          onSelectJobRef={onSelectedJobRefChange}
-          executionDisabled={runActionsDisabled}
-          authEnabled={authEnabled}
-          canDownloadResults={canDownloadResults}
-          canDeleteResults={canDeleteResults}
-          downloadingJobRef={downloadingJobRef}
-          deletingJobRef={deletingJobRef}
-          onCancelJob={(jobRef) => {
-            void controller.onCancelJob(jobRef);
-          }}
-          onDownloadJob={(job) => {
-            void downloadJobResults(job);
-          }}
-          onDeleteJob={(job) => {
-            void deleteJob(job);
-          }}
+        <RunSetupComponent
+          controller={controller}
+          runActionsDisabled={runActionsDisabled}
+          initialScenarioStep={initialScenarioStep}
+          initialSensitivityStep={initialSensitivityStep}
         />
 
-        <ExperimentLogCard
-          selectedJob={controller.selectedJob}
-          lines={controller.logLines}
-          progress={controller.logProgress}
-        />
+        {showRunManagement && (
+          <>
+            <ExperimentQueueCard
+              jobs={workspaceJobs}
+              workspaceType={activeType}
+              isLoading={controller.isLoadingJobs}
+              selectedJobRef={selectedJobRef}
+              onSelectJobRef={onSelectedJobRefChange}
+              executionDisabled={runActionsDisabled}
+              authEnabled={authEnabled}
+              canDownloadResults={canDownloadResults}
+              canDeleteResults={canDeleteResults}
+              downloadingJobRef={downloadingJobRef}
+              deletingJobRef={deletingJobRef}
+              onOpenResults={(job) => {
+                if (job.type === 'manual' && job.runId) {
+                  onOpenManualResults(job.runId);
+                } else if (job.type === 'sensitivity') {
+                  onOpenSensitivityResults(job.id);
+                }
+              }}
+              onCancelJob={(jobRef) => {
+                void controller.onCancelJob(jobRef);
+              }}
+              onDownloadJob={(job) => {
+                void downloadJobResults(job);
+              }}
+              onDeleteJob={(job) => {
+                void deleteJob(job);
+              }}
+            />
+
+            <ExperimentLogCard
+              selectedJob={controller.selectedJob}
+              lines={controller.logLines}
+              progress={controller.logProgress}
+            />
+          </>
+        )}
       </div>
     </section>
   );

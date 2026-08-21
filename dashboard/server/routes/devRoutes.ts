@@ -12,8 +12,13 @@ import {
   getResultsRunDetail,
   getResultsRunFiles,
   getResultsRuns,
-  getResultsSeries
+  getResultsSeries,
+  renameResultsRun
 } from '../lib/results';
+import {
+  getLendingDistribution,
+  getLendingDistributionCompare
+} from '../lib/lendingDistribution';
 import {
   cancelModelRunJob,
   clearModelRunJob,
@@ -228,6 +233,26 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
   });
 
+  app.post('/api/results/runs/:runId/title', async (req, res) => {
+    if (!context.requireExperimentsFeature(req, res)) {
+      return;
+    }
+    if (!context.requireWriteAccess(req, res)) {
+      return;
+    }
+
+    try {
+      const title = typeof req.body?.title === 'string' ? req.body.title : '';
+      if (context.remoteExecution) {
+        res.status(501).json({ error: 'Renaming runs is not supported for remotely executed results.' });
+        return;
+      }
+      res.json(renameResultsRun(context.runtimePaths, String(req.params.runId ?? ''), title));
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
   app.delete('/api/results/runs/:runId', async (req, res) => {
     if (!context.requireExperimentsFeature(req, res)) {
       return;
@@ -295,6 +320,44 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       const resolvedRunIds = resolveLocalResultsReadRunIds(context.runtimePaths, runIds);
       const payload = getResultsCompare(context.runtimePaths, resolvedRunIds, indicatorIds, window, smoothWindow);
       res.json(payload);
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  app.get('/api/results/runs/:runId/lending', async (req, res) => {
+    if (!context.requireExperimentsFeature(req, res)) {
+      return;
+    }
+    const runId = String(req.params.runId ?? '');
+    const window = String(req.query.window ?? 'full');
+
+    try {
+      if (context.remoteExecution) {
+        res.json(await context.remoteExecution.getRemoteManualResultLending(runId, window));
+        return;
+      }
+      const resolvedRunId = resolveLocalResultsReadRunId(context.runtimePaths, runId);
+      res.json(getLendingDistribution(context.runtimePaths, resolvedRunId, window));
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  app.get('/api/results/lending/compare', async (req, res) => {
+    if (!context.requireExperimentsFeature(req, res)) {
+      return;
+    }
+    const runIds = parseResultsCompareQueryValues(req.query, 'runId', 'runIds');
+    const window = String(req.query.window ?? 'full');
+
+    try {
+      if (context.remoteExecution) {
+        res.json(await context.remoteExecution.getRemoteManualResultLendingCompare(runIds, window));
+        return;
+      }
+      const resolvedRunIds = resolveLocalResultsReadRunIds(context.runtimePaths, runIds);
+      res.json(getLendingDistributionCompare(context.runtimePaths, resolvedRunIds, window));
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }

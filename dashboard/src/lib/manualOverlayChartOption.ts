@@ -2,8 +2,8 @@
 import type { EChartsOption } from 'echarts';
 import type { ResultsCompareIndicator, ResultsCompareSeries } from '../../shared/types';
 
-const BASELINE_COLOR = '#0b7285';
-const COMPARISON_COLOR = '#18958b';
+export const BASELINE_COLOR = '#0b7285';
+export const COMPARISON_COLOR = '#18958b';
 const FALLBACK_COLOR = '#495057';
 
 function formatOverlayValue(value: number, units: string): string {
@@ -54,7 +54,8 @@ function computeVisibleMean(points: ResultsCompareSeries['points']): number | nu
 export function buildManualOverlayOption(
   indicatorPayload: ResultsCompareIndicator,
   baselineRunId: string,
-  comparisonRunId: string
+  comparisonRunId: string,
+  selectedSeries?: Record<string, boolean>
 ): EChartsOption {
   const xValues = indicatorPayload.seriesByRun[0]?.points.map((point) => String(point.modelTime)) ?? [];
   const meanBySeriesName = new Map<string, number>();
@@ -130,7 +131,8 @@ export function buildManualOverlayOption(
       }
     },
     legend: {
-      top: 4
+      top: 4,
+      selected: selectedSeries
     },
     grid: {
       left: 72,

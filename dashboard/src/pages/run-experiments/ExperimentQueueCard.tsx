@@ -20,7 +20,7 @@ function formatStatus(status: ExperimentJobSummary['status']): string {
 }
 
 function typeLabel(type: ExperimentJobSummary['type']): string {
-  return type === 'manual' ? 'Manual' : 'Sensitivity';
+  return type === 'manual' ? 'Scenario' : 'Sensitivity analysis';
 }
 
 function isFinishedStatus(status: ExperimentJobSummary['status']): boolean {
@@ -29,6 +29,7 @@ function isFinishedStatus(status: ExperimentJobSummary['status']): boolean {
 
 interface ExperimentQueueCardProps {
   jobs: ExperimentJobSummary[];
+  workspaceType: ExperimentJobSummary['type'];
   isLoading: boolean;
   selectedJobRef: string;
   onSelectJobRef: (jobRef: string) => void;
@@ -38,6 +39,7 @@ interface ExperimentQueueCardProps {
   canDeleteResults: boolean;
   downloadingJobRef: string;
   deletingJobRef: string;
+  onOpenResults: (job: ExperimentJobSummary) => void;
   onCancelJob: (jobRef: string) => void;
   onDownloadJob: (job: ExperimentJobSummary) => void;
   onDeleteJob: (job: ExperimentJobSummary) => void;
@@ -45,6 +47,7 @@ interface ExperimentQueueCardProps {
 
 export function ExperimentQueueCard({
   jobs,
+  workspaceType,
   isLoading,
   selectedJobRef,
   onSelectJobRef,
@@ -54,23 +57,34 @@ export function ExperimentQueueCard({
   canDeleteResults,
   downloadingJobRef,
   deletingJobRef,
+  onOpenResults,
   onCancelJob,
   onDownloadJob,
   onDeleteJob
 }: ExperimentQueueCardProps) {
   return (
     <article className="results-card">
-      <h3>Experiment Queue</h3>
+      <h3>{workspaceType === 'manual' ? 'Scenario runs' : 'Sensitivity analysis history'}</h3>
       {isLoading ? (
         <p className="loading-banner">Loading experiment jobs...</p>
       ) : jobs.length === 0 ? (
-        <p className="info-banner">No experiment jobs submitted yet.</p>
+        <p className="info-banner">
+          {workspaceType === 'manual' ? 'No scenario runs submitted yet.' : 'No sensitivity analyses submitted yet.'}
+        </p>
       ) : (
         <ul className="job-list">
-          {jobs.map((job) => (
+          {jobs.map((job) => {
+            const canOpenResults =
+              job.status === 'succeeded' &&
+              (job.type === 'sensitivity' || Boolean(job.runId));
+            return (
             <li key={job.jobRef} className={`job-item ${selectedJobRef === job.jobRef ? 'focused' : ''}`}>
-              <button type="button" className="run-focus-btn" onClick={() => onSelectJobRef(job.jobRef)}>
-                {selectedJobRef === job.jobRef ? 'Viewing' : 'View'}
+              <button
+                type="button"
+                className="run-focus-btn"
+                onClick={() => canOpenResults ? onOpenResults(job) : onSelectJobRef(job.jobRef)}
+              >
+                {canOpenResults ? 'View results' : selectedJobRef === job.jobRef ? 'Viewing logs' : 'View logs'}
               </button>
               <strong>{job.title}</strong>
               <p>
@@ -95,28 +109,12 @@ export function ExperimentQueueCard({
 
               {isFinishedStatus(job.status) && (
                 <div className="job-actions-row">
-                  {job.type === 'manual' && job.status === 'succeeded' && job.runId && (
-                    <Link
-                      className="summary-link-inline"
-                      to={`/experiments?type=manual&mode=view&baselineRunId=${encodeURIComponent(job.runId)}`}
-                    >
-                      View Experiment Results
-                    </Link>
-                  )}
-                  {job.type === 'sensitivity' && job.status === 'succeeded' && (
-                    <Link
-                      className="summary-link-inline"
-                      to={`/experiments?type=sensitivity&mode=view&experimentId=${encodeURIComponent(job.id)}`}
-                    >
-                      View Experiment Results
-                    </Link>
-                  )}
                   {job.status === 'succeeded' && (
                     !canDownloadResults ? (
                       authEnabled ? (
                         <Link
                           className="summary-link-inline"
-                          to={`/login?next=${encodeURIComponent(`/experiments?type=${job.type}&mode=run`)}`}
+                          to={`/login?next=${encodeURIComponent(job.type === 'manual' ? '/scenarios' : '/sensitivity')}`}
                         >
                           Login to Download
                         </Link>
@@ -148,7 +146,8 @@ export function ExperimentQueueCard({
                 </div>
               )}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </article>

@@ -4,13 +4,23 @@ import type { ExperimentRunController } from './useExperimentRunController';
 interface ManualRunSetupPanelProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
+  initialScenarioStep?: number;
 }
 
-export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRunSetupPanelProps) {
+export function ManualRunSetupPanel({ controller, runActionsDisabled, initialScenarioStep = 0 }: ManualRunSetupPanelProps) {
   return (
     <ManualRunSetupCard
-      executionDisabled={runActionsDisabled}
-      isLoadingOptions={controller.isLoadingOptions || !controller.options}
+      formDisabled={controller.isSubmitting}
+      submissionDisabled={runActionsDisabled}
+      submissionDisabledReason={
+        controller.executionDisabled
+          ? controller.executionDisabledReason || 'Simulation execution is unavailable in this runtime.'
+          : 'Run submission requires write access in this runtime.'
+      }
+      isLoadingOptions={!controller.options}
+      draftId={controller.draftId}
+      draftNotice={controller.draftNotice}
+      initialStep={initialScenarioStep}
       selectedBaseline={controller.selectedBaseline}
       onBaselineChange={controller.onBaselineChange}
       basePolicies={controller.options?.basePolicies ?? []}
@@ -31,7 +41,7 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled }: ManualRu
       manualSubmissionLockedBySensitivity={controller.manualSubmissionLockedBySensitivity}
       lockMessage={
         controller.manualSubmissionLockedBySensitivity
-          ? `Manual runs are locked while sensitivity experiment ${controller.lockSensitivityId} is active.`
+          ? `Policy scenario runs are locked while policy sensitivity sweep ${controller.lockSensitivityId} is active.`
           : null
       }
       onSubmit={(confirmWarnings) => {

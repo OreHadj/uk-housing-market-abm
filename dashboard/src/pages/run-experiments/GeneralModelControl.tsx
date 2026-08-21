@@ -19,6 +19,9 @@ interface GeneralModelControlProps {
   onMaxWorkersChange?: (value: string) => void;
   maxWorkersHint?: string;
   showRecordSettings?: boolean;
+  defaultOpen?: boolean;
+  includeFixedControls?: boolean;
+  embedded?: boolean;
 }
 
 export function isRecordSetting(parameter: ModelRunParameterDefinition): boolean {
@@ -42,6 +45,13 @@ function shouldShowParameter(parameter: ModelRunParameterDefinition): boolean {
 }
 
 function displayParameter(parameter: ModelRunParameterDefinition, mode: ControlMode): ModelRunParameterDefinition {
+  if (mode === 'manual' && parameter.key === 'TIME_TO_START_RECORDING_TRANSACTIONS') {
+    return {
+      ...parameter,
+      title: 'Start recording at month'
+    };
+  }
+
   if (parameter.key === 'N_SIMS') {
     return {
       ...parameter,
@@ -94,24 +104,35 @@ export function GeneralModelControl({
   maxWorkersCap,
   onMaxWorkersChange,
   maxWorkersHint,
-  showRecordSettings = true
+  showRecordSettings = true,
+  defaultOpen = false,
+  includeFixedControls = false,
+  embedded = false
 }: GeneralModelControlProps) {
   const visibleParameters = parameters
-    .filter((parameter) => shouldShowParameter(parameter))
+    .filter((parameter) =>
+      includeFixedControls
+        ? parameter.group === 'General model control' && parameter.key !== 'SEED'
+        : shouldShowParameter(parameter)
+    )
     .map((parameter) => displayParameter(parameter, mode));
   const modelParameters = visibleParameters.filter((parameter) => !isRecordSetting(parameter));
   const recordParameters = visibleParameters.filter(isRecordSetting);
+  const optionalRecordParameters = mode === 'manual'
+    ? recordParameters.filter((parameter) => parameter.key !== 'recordCoreIndicators')
+    : [];
+  const primaryModelParameters = modelParameters.filter((parameter) =>
+    parameter.key === 'N_STEPS' || parameter.key === 'N_SIMS'
+  );
+  const remainingModelParameters = modelParameters.filter((parameter) =>
+    parameter.key !== 'N_STEPS' && parameter.key !== 'N_SIMS'
+  );
   const summaryCount = modelParameters.length + (showRecordSettings ? recordParameters.length : 0) + (onMaxWorkersChange ? 1 : 0);
 
-  return (
-    <CollapsibleSection
-      title="General model control"
-      defaultOpen
-      summary={`${summaryCount} controls`}
-      className="general-model-control"
-    >
+  const controls = (
+    <>
       <div className="run-param-grid">
-        {modelParameters.map((parameter) => (
+        {primaryModelParameters.map((parameter) => (
           <ParameterInput
             key={parameter.key}
             parameter={parameter}
@@ -136,21 +157,49 @@ export function GeneralModelControl({
             />
           </label>
         )}
+
+        {remainingModelParameters.map((parameter) => (
+          <ParameterInput
+            key={parameter.key}
+            parameter={parameter}
+            value={formValues[parameter.key]}
+            executionDisabled={executionDisabled}
+            mode={mode}
+            onChange={onFormValueChange}
+          />
+        ))}
       </div>
 
       {showRecordSettings && (
         <RecordSettingsControl
-          parameters={recordParameters}
+          mode={mode}
+          parameters={optionalRecordParameters}
           formValues={formValues}
           executionDisabled={executionDisabled}
           onFormValueChange={onFormValueChange}
         />
       )}
+    </>
+  );
+
+  if (embedded) {
+    return controls;
+  }
+
+  return (
+    <CollapsibleSection
+      title="General model control"
+      defaultOpen={defaultOpen}
+      summary={`${summaryCount} controls`}
+      className="general-model-control"
+    >
+      {controls}
     </CollapsibleSection>
   );
 }
 
 interface RecordSettingsControlProps {
+  mode: ControlMode;
   parameters: ModelRunParameterDefinition[];
   formValues: Record<string, FormValue>;
   executionDisabled: boolean;
@@ -158,34 +207,50 @@ interface RecordSettingsControlProps {
 }
 
 export function RecordSettingsControl({
+  mode,
   parameters,
   formValues,
   executionDisabled,
   onFormValueChange
 }: RecordSettingsControlProps) {
-  if (parameters.length === 0) {
-    return null;
+  if (mode === 'sensitivity') {
+    return (
+      <section className="sensitivity-recording-settings" aria-labelledby="sensitivity-recording-settings-heading">
+        <h4 id="sensitivity-recording-settings-heading">Recording settings</h4>
+        <p className="sensitivity-recording-note">
+          Transaction, bid-up, quality-band and household microdata files are unavailable for sensitivity analyses.
+          Each sampled run is reduced to dashboard outcome summaries, then its raw output directory is discarded.
+        </p>
+      </section>
+    );
   }
 
   return (
-    <CollapsibleSection
-      title="Record settings"
-      defaultOpen={false}
-      summary={`${parameters.length} controls`}
-      className="record-settings-control"
-    >
-      <div className="run-param-grid">
-        {parameters.map((parameter) => (
-          <ParameterInput
-            key={parameter.key}
-            parameter={parameter}
-            value={formValues[parameter.key]}
-            executionDisabled={executionDisabled}
-            mode="manual"
-            onChange={onFormValueChange}
-          />
-        ))}
-      </div>
-    </CollapsibleSection>
+    <>
+      <CollapsibleSection
+        title={mode === 'manual' ? 'Additional data exports' : 'Record settings'}
+        defaultOpen={false}
+        summary={mode === 'manual' ? 'Optional transaction and household-level files' : `${parameters.length} controls`}
+        className="record-settings-control"
+      >
+        {mode === 'manual' && (
+          <p className="additional-data-exports-intro">
+            Optional transaction and household-level files for analysis outside the dashboard. These exports can substantially increase file size and do not add charts to the current Results page.
+          </p>
+        )}
+        <div className="run-param-grid">
+          {parameters.map((parameter) => (
+            <ParameterInput
+              key={parameter.key}
+              parameter={parameter}
+              value={formValues[parameter.key]}
+              executionDisabled={executionDisabled}
+              mode={mode}
+              onChange={onFormValueChange}
+            />
+          ))}
+        </div>
+      </CollapsibleSection>
+    </>
   );
 }

@@ -28,6 +28,7 @@ import {
   isBasePolicyId
 } from '../../shared/policyCatalogue';
 import { getInProgressVersions, getVersions } from './service';
+import { loadDashboardInputVersionHistory } from './dashboardInputVersionHistory';
 import {
   appendLogLine,
   readLogSlice,
@@ -542,6 +543,33 @@ function normalizeOverrideValue(key: string, raw: unknown, type: ModelRunParamet
   return { typed: raw, serialized: String(raw) };
 }
 
+/**
+ * The `o` suffix marks an output calibration — a run that fitted the five unmeasurable
+ * behavioural parameters. Numeric-only versions are input/data snapshots that inherit them.
+ */
+export function isOutputCalibratedVersion(version: string): boolean {
+  return /o+\d*$/i.test(version.trim());
+}
+
+/**
+ * `validation_dataset` records which real-world evidence set a version was scored against:
+ * `w3` is the 2011 Wave 3 data, `r8` the 2024 Round 8 data. This is the only authoritative
+ * signal for "which era is this model", so it is read rather than inferred from the version id.
+ */
+function buildEvidenceYearIndex(pathsInput: RuntimePathInput): Map<string, 2011 | 2024> {
+  const index = new Map<string, 2011 | 2024>();
+  try {
+    for (const entry of loadDashboardInputVersionHistory(pathsInput)) {
+      const dataset = (entry.validation_dataset ?? '').trim().toLowerCase();
+      if (dataset === 'w3') index.set(entry.version_id, 2011);
+      else if (dataset === 'r8') index.set(entry.version_id, 2024);
+    }
+  } catch {
+    // A missing or malformed history file must not break run setup; callers treat null as unknown.
+  }
+  return index;
+}
+
 function buildSnapshotOptions(pathsInput: RuntimePathInput): {
   snapshots: ModelRunSnapshotOption[];
   defaultBaseline: string;
@@ -553,10 +581,13 @@ function buildSnapshotOptions(pathsInput: RuntimePathInput): {
   }
 
   const inProgressSet = new Set(getInProgressVersions(paths));
+  const evidenceByVersion = buildEvidenceYearIndex(paths);
   const snapshots = versions
     .map((version) => ({
       version,
-      status: inProgressSet.has(version) ? 'in_progress' : 'stable'
+      status: inProgressSet.has(version) ? 'in_progress' : 'stable',
+      evidenceYear: evidenceByVersion.get(version) ?? null,
+      outputCalibrated: isOutputCalibratedVersion(version)
     } satisfies ModelRunSnapshotOption))
     .reverse();
 

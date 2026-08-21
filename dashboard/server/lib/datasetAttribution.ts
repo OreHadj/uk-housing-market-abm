@@ -24,12 +24,18 @@ const DATASET_TAG_REGISTRY: Record<string, { fullName: string; order: number }> 
   arla: { fullName: 'ARLA rental market reports', order: 120 },
   rpi: { fullName: 'Retail Price Index', order: 130 },
   'output-calibrated': { fullName: 'Output-calibrated campaign', order: 200 },
+  // The version history tags the five unmeasurable behavioural parameters `output-calibration`.
+  // Without this entry they fall through to `unknown` and render as "Unknown source" — the exact
+  // opposite of what an analyst needs to know about them.
+  'output-calibration': { fullName: 'Fitted to model output — not measured', order: 205 },
   'r8-first-campaign': { fullName: 'R8-first calibration campaign', order: 210 },
   unknown: { fullName: 'Unknown source', order: 999 }
 };
 
 const COMMENT_TAG_PATTERNS: Array<{ tag: string; pattern: RegExp }> = [
-  { tag: 'was', pattern: /\bwealth and assets survey\b|\bwas\b/i },
+  // The acronym must stay case-sensitive: a case-insensitive \bwas\b matches the English word,
+  // so comments like "diagnostic fit was negative" were being attributed to the WAS survey.
+  { tag: 'was', pattern: /[Ww]ealth and [Aa]ssets [Ss]urvey|\bWAS\b|calibration\/was\// },
   { tag: 'nmg', pattern: /\bnmg\b|nmg survey/i },
   { tag: 'boe', pattern: /\bboe\b|bank of england/i },
   { tag: 'psd', pattern: /\bpsd\b|product sales database/i },

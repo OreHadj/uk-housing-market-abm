@@ -11,6 +11,7 @@ import type {
   ResultsFileType,
   ResultsIndicatorAvailability,
   ResultsIndicatorMeta,
+  ResultsPolicySetting,
   ResultsRunDetail,
   ResultsRunStatus,
   ResultsRunSummary,
@@ -26,6 +27,8 @@ import {
   type RuntimePaths
 } from './runtimePaths';
 import { isDashboardManagedRun } from './runOwnership';
+import { CENTRAL_BANK_POLICY_KEYS } from '../../shared/policyCatalogue';
+import { RUN_MANIFEST_FILE_NAME } from './runManifest';
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
@@ -310,8 +313,11 @@ const REQUIRED_PARSE_TARGET_COUNT = REQUIRED_CORE_FILES.size + 1;
 export const REQUIRED_RESULTS_PARSE_FILE_NAMES = [OUTPUT_FILE_NAME, ...REQUIRED_CORE_FILES];
 const EXPECTED_FULL_OUTPUT_ROW_COUNT = 2001;
 
+/** The loan-level sale file, parsed for the new-lending distributions (lendingDistribution.ts). */
+export const SALE_TRANSACTIONS_FILE_NAME = 'SaleTransactions-run1.csv';
+
 const TRANSACTION_FILES = new Set([
-  'SaleTransactions-run1.csv',
+  SALE_TRANSACTIONS_FILE_NAME,
   'RentalTransactions-run1.csv',
   'NBidUpFrequency-run1.csv'
 ]);
@@ -355,6 +361,11 @@ function setBoundedCacheValue<T>(cache: Map<string, CachedValue<T>>, key: string
     }
     cache.delete(oldestKey);
   }
+}
+
+/** Exported for lendingDistribution.ts, which resolves the same run folders. */
+export function resolveResultsRootPath(pathsInput: RuntimePathInput): string {
+  return resolveResultsRoot(pathsInput);
 }
 
 function resolveResultsRoot(pathsInput: RuntimePathInput): string {
@@ -711,6 +722,12 @@ function resolveFileCoverage(
     return { status: 'empty', note: 'File is empty.' };
   }
 
+  if (fileName === SALE_TRANSACTIONS_FILE_NAME) {
+    // Parsed for the new-lending distributions. Not parsed here: the manifest is built for
+    // every run on every listing, and this file is ~8 MB.
+    return { status: 'supported', note: 'Charted in New lending.' };
+  }
+
   if (fileType === 'transaction' || fileType === 'micro_snapshot') {
     return { status: 'unsupported', note: 'Manifest only (not charted).' };
   }
@@ -745,6 +762,11 @@ function listRunDirectories(resultsRoot: string): string[] {
     .readdirSync(resultsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name !== 'experiments')
     .map((entry) => entry.name);
+}
+
+/** Exported for lendingDistribution.ts; validates the run id and returns its folder. */
+export function ensureResultsRunPath(resultsRoot: string, runId: string): string {
+  return ensureRunExists(resultsRoot, runId);
 }
 
 function ensureRunExists(resultsRoot: string, runId: string): string {
@@ -1026,6 +1048,61 @@ function alignSeriesByModelTime(seriesByRun: Array<{ runId: string; points: Resu
   });
 }
 
+/**
+ * Reads the Central Bank policy a completed run was executed with, straight from the
+ * config.properties written into its results folder. This is the only record of the policy behind a
+ * result, so it is read back from the run itself rather than reconstructed from the request that
+ * created it. Returns an empty list when the file is missing or unreadable (older or external runs).
+ */
+/** Reads the scenario name recorded in a run manifest. Legacy/external runs may have none. */
+const MAX_RUN_TITLE_LENGTH = 120;
+
+function readRunTitle(runPath: string): string | null {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(runPath, RUN_MANIFEST_FILE_NAME), 'utf-8')) as {
+      run?: { title?: unknown };
+    };
+    const title = manifest.run?.title;
+    if (typeof title !== 'string') return null;
+    const trimmedTitle = title.trim();
+    return trimmedTitle === '' ? null : trimmedTitle;
+  } catch {
+    return null;
+  }
+}
+
+function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting[] {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(configPath, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  const values = new Map<string, number>();
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === '' || line.startsWith('#') || line.startsWith('!')) {
+      continue;
+    }
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex === -1) {
+      continue;
+    }
+    const key = line.slice(0, separatorIndex).trim();
+    const parsed = Number.parseFloat(line.slice(separatorIndex + 1).trim());
+    if (Number.isFinite(parsed)) {
+      values.set(key, parsed);
+    }
+  }
+
+  // Emit in catalogue order so the block reads the same way for every run, not in file order.
+  return CENTRAL_BANK_POLICY_KEYS.filter((key) => values.has(key)).map((key) => ({
+    key,
+    value: values.get(key) as number
+  }));
+}
+
 function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDiagnostics {
   const paths = resolveRuntimePaths(pathsInput);
   const resultsRoot = resolveResultsRoot(paths);
@@ -1034,7 +1111,10 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
   const { sizeBytes, fileCount } = computeFolderSizeAndFileCount(runPath);
   const { status, coverage } = computeRunStatusAndCoverage(runPath);
   const manifest = buildManifest(paths, runPath);
-  const configAvailable = fs.existsSync(path.join(runPath, 'config.properties'));
+  const configPath = path.join(runPath, 'config.properties');
+  const configAvailable = fs.existsSync(configPath);
+  const policySettings = readCentralBankPolicySettings(configPath);
+  const title = readRunTitle(runPath);
 
   const indicators: ResultsIndicatorAvailability[] = ALL_INDICATORS.map((indicator) => {
     const series = getRawSeriesForIndicator(runPath, indicator.id);
@@ -1056,6 +1136,7 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
 
   const summary: ResultsRunSummary = {
     runId,
+    title,
     path: formatRuntimePath(paths, runPath),
     modifiedAt: toIsoTime(runStats.mtime),
     createdAt: toIsoTime(runStats.birthtime),
@@ -1063,7 +1144,8 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
     fileCount,
     status,
     configAvailable,
-    parseCoverage: coverage
+    parseCoverage: coverage,
+    policySettings
   };
 
   const detail: ResultsRunDetail = {
@@ -1077,6 +1159,48 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
 
 export function getResultsIndicatorCatalog(): ResultsIndicatorMeta[] {
   return ALL_INDICATORS.map(toIndicatorMeta);
+}
+
+/**
+ * Renames a run by rewriting the title in its manifest. The manifest is the run's own record, so the
+ * name travels with the results folder rather than living in separate dashboard state. An empty title
+ * clears the name, and the run falls back to being identified by its id.
+ */
+export function renameResultsRun(
+  pathsInput: RuntimePathInput,
+  runId: string,
+  title: string
+): { runId: string; title: string | null } {
+  const paths = resolveRuntimePaths(pathsInput);
+  const resultsRoot = resolveResultsRoot(paths);
+  const runPath = ensureRunExists(resultsRoot, runId);
+  const manifestPath = path.join(runPath, RUN_MANIFEST_FILE_NAME);
+
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error(`Run "${runId}" has no dashboard manifest, so it cannot be renamed.`);
+  }
+
+  const trimmed = title.trim();
+  if (trimmed.length > MAX_RUN_TITLE_LENGTH) {
+    throw new Error(`Run name must be ${MAX_RUN_TITLE_LENGTH} characters or fewer.`);
+  }
+
+  let manifest: { run?: Record<string, unknown> };
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as { run?: Record<string, unknown> };
+  } catch (error) {
+    throw new Error(`Run "${runId}" has an unreadable manifest: ${(error as Error).message}`);
+  }
+  if (!manifest.run || typeof manifest.run !== 'object') {
+    throw new Error(`Run "${runId}" has a manifest with no run record, so it cannot be renamed.`);
+  }
+
+  const nextTitle = trimmed === '' ? null : trimmed;
+  manifest.run.title = nextTitle;
+  (manifest as { updatedAt?: string }).updatedAt = new Date().toISOString();
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+
+  return { runId, title: nextTitle };
 }
 
 export function getResultsRuns(pathsInput: RuntimePathInput): ResultsRunSummary[] {

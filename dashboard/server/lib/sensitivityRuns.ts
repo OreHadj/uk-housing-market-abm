@@ -94,6 +94,12 @@ const TERMINAL_STATUSES = new Set<SensitivityExperimentStatus>(['succeeded', 'fa
 const KPI_KEYS = ['mean', 'cv', 'annualisedTrend', 'range'] as const;
 const SENSITIVITY_RESULTS_WINDOW_TYPE = 'post_200' as const;
 const BASELINE_EPSILON = 1e-12;
+// A percentage difference is only meaningful when the baseline sits far enough from zero.
+// Growth-rate indicators (credit growth, quarterly house-price growth) oscillate around zero,
+// so an economically trivial absolute change becomes a headline percentage and dominates the
+// tornado ranking. Judge "far enough from zero" against the series' own P95-P5 spread, which
+// keeps the test scale-free across indicators measured in counts, ratios and percentages.
+const MIN_BASELINE_TO_SPREAD_RATIO = 0.05;
 
 interface PolicyBindingValues {
   bankInitialRate: number | null;
@@ -1596,10 +1602,34 @@ function validatePayload(
       throw new Error(`Sensitivity overrides are limited to General model control parameters: ${key}`);
     }
 
+    // Sensitivity retains only the derived core-indicator summaries. Ignore raw-recording controls
+    // supplied by older clients; the fixed policy below enables core indicators and disables every
+    // raw export flag before any sampled model process is launched.
+    if (
+      definition.key === 'TIME_TO_START_RECORDING_TRANSACTIONS' ||
+      (definition.type === 'boolean' && definition.key.startsWith('record'))
+    ) {
+      continue;
+    }
+
     const parsedOverride = normalizeSensitivityOverrideValue(key, rawValue, definition.type);
     normalizedGeneralOverrides.set(key, parsedOverride.serialized);
     valuesByKey.set(key, parsedOverride.typed);
     generalOverrides[key] = parsedOverride.typed;
+  }
+
+  for (const definition of parameters) {
+    if (
+      definition.group !== 'General model control' ||
+      definition.type !== 'boolean' ||
+      !definition.key.startsWith('record')
+    ) {
+      continue;
+    }
+    const enabled = definition.key === 'recordCoreIndicators';
+    normalizedGeneralOverrides.set(definition.key, String(enabled));
+    valuesByKey.set(definition.key, enabled);
+    generalOverrides[definition.key] = enabled;
   }
 
   if (!normalizedGeneralOverrides.has('N_SIMS')) {
@@ -1820,13 +1850,41 @@ function parseSeedCount(valuesByKey: Map<string, number | boolean>): number {
   return parseSeedCountValue(valuesByKey.get('N_SIMS') ?? 1, 'Seeds per sampled point');
 }
 
+/**
+ * True when the baseline mean is so close to zero, relative to the series' own spread, that a
+ * percentage difference against it carries no information. Falls back to the plain epsilon check
+ * when no usable spread is available.
+ */
+function isBaselineMeanNearZero(baseline: KpiMetricValues): boolean {
+  const mean = baseline.mean;
+  if (mean === null || !Number.isFinite(mean)) {
+    return true;
+  }
+  if (Math.abs(mean) < BASELINE_EPSILON) {
+    return true;
+  }
+  const spread = baseline.range;
+  if (spread === null || !Number.isFinite(spread) || spread <= 0) {
+    return false;
+  }
+  return Math.abs(mean) < MIN_BASELINE_TO_SPREAD_RATIO * spread;
+}
+
 function computeKpiPercentDiffFromBaseline(current: KpiMetricValues, baseline: KpiMetricValues): KpiMetricValues {
   const percentDiff = buildEmptyKpiValues();
+  // `mean` and `cv` both collapse when the baseline mean sits near zero: the first divides by it
+  // directly, the second is stdev/|mean|. `range` and `annualisedTrend` never divide by the mean,
+  // so they stay comparable and keep only the plain epsilon guard.
+  const meanNearZero = isBaselineMeanNearZero(baseline);
   for (const key of KPI_KEYS) {
     const currentValue = current[key];
     const baselineValue = baseline[key];
+    const dividesByMean = key === 'mean' || key === 'cv';
     percentDiff[key] =
-      currentValue === null || baselineValue === null || Math.abs(baselineValue) < BASELINE_EPSILON
+      currentValue === null ||
+      baselineValue === null ||
+      Math.abs(baselineValue) < BASELINE_EPSILON ||
+      (dividesByMean && meanNearZero)
         ? null
         : ((currentValue - baselineValue) / baselineValue) * 100;
   }
@@ -2386,7 +2444,7 @@ export function submitSensitivityExperiment(
   }
 
   if (Object.prototype.hasOwnProperty.call(payload as unknown as Record<string, unknown>, 'retainFullOutput')) {
-    throw new Error('retainFullOutput is no longer supported for sensitivity experiments; use record settings instead.');
+    throw new Error('retainFullOutput is no longer supported; sensitivity experiments retain core-indicator summaries only.');
   }
 
   const now = options.now ?? new Date();

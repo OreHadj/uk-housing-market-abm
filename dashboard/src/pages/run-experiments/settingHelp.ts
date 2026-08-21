@@ -4,14 +4,14 @@ import type { ModelRunParameterDefinition } from '../../../shared/types';
 export type ExperimentControlMode = 'manual' | 'sensitivity';
 
 export const SETTING_HELP = {
-  sensitivityPolicyParameter: 'Policy setting varied across the sweep. Choose the lever to test against the selected baseline.',
-  sensitivityPolicyPackage: 'One or more compatible monetary-policy levers varied together across the sweep.',
-  basePolicy: 'Central-bank settings applied after calibration inputs and before manual edits or sampled sweeps.',
+  sensitivityPolicyParameter: 'Policy instrument varied across the analysis. Choose the one to test against the selected baseline policy.',
+  sensitivityPolicyPackage: 'One or more related central-bank policy settings varied together across the analysis.',
+  basePolicy: 'The reference year supplies the starting value for every policy setting. Any setting you leave unchanged keeps that year’s value.',
   optionalExperimentTitle: 'Short label used to identify this experiment in results and logs.',
   optionalRunTitle: 'Short label used to identify this run in results and logs.',
-  calibrationParameterVersion: 'Baseline model inputs used before manual overrides or sensitivity sampling.',
-  minValue: 'Lowest sampled value for the selected policy setting.',
-  maxValue: 'Highest sampled value for the selected policy setting.',
+  calibrationParameterVersion: 'A saved configuration of model inputs and behavioural assumptions. Its behavioural parameters were adjusted until the model reflected patterns in observed UK housing statistics and survey data.',
+  minValue: 'Lowest sampled value for the selected policy instrument.',
+  maxValue: 'Highest sampled value for the selected policy instrument.',
   sampleCount:
     'Sampled values include the minimum and maximum. The baseline point is added when it is not already on the grid.',
   maxWorkers: 'Independent model runs allowed to execute in parallel. Higher values can finish faster and use more CPU.'
@@ -24,11 +24,11 @@ const PARAMETER_HELP_BY_KEY: Record<string, string> = {
   ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS:
     'Months included in rolling averages for core indicators. This smooths short-term variation.',
   TIME_TO_START_RECORDING_TRANSACTIONS:
-    'Time step when transaction-level output begins. Earlier recording creates larger files.',
-  recordTransactions: 'Writes every transaction event. Useful for audit trails, but can create large outputs.',
-  recordNBidUpFrequency: 'Writes bid-up frequency series for sale-market competition analysis.',
-  recordCoreIndicators: 'Writes the main result series used across Model Results. Usually keep enabled.',
-  recordQualityBandPrice: 'Writes price series by quality band for more detailed market diagnostics.',
+    'Month when transaction-level export begins. Earlier recording creates larger files and may affect performance.',
+  recordTransactions: 'Exports every transaction event for downloaded or external analysis. This can create very large files and affect performance.',
+  recordNBidUpFrequency: 'Exports bid-up frequency data for analysis outside the dashboard.',
+  recordCoreIndicators: 'Writes the main indicator series required by charts in the dashboard.',
+  recordQualityBandPrice: 'Exports prices by quality band for analysis outside the dashboard; this does not add dashboard charts.',
   recordHouseholdID: 'Writes household identifiers in microdata output. Useful for tracing agents across records.',
   recordEmploymentIncome: 'Writes household employment income in microdata output.',
   recordRentalIncome: 'Writes household rental income in microdata output.',

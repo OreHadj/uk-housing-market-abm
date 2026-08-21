@@ -5,6 +5,7 @@ import type {
   ModelRunParameterType,
   SensitivityPolicyPackageDefinition
 } from './types';
+import { formatExactPercent, formatPercent } from './policyDisplay';
 
 export const CENTRAL_BANK_POLICY_KEYS = [
   'CENTRAL_BANK_INITIAL_BASE_RATE',
@@ -20,12 +21,40 @@ export const CENTRAL_BANK_POLICY_KEYS = [
   'CENTRAL_BANK_ICR_HARD_MIN'
 ] as const;
 
-export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
+// Non-binding "off" sentinels for the FPC affordability cap and BTL ICR floor, as set by the 2024
+// base policy: a ~100%-of-income affordability cap never bites, and a zero ICR floor is a no-op. Both
+// the run-setup toggles (CentralBankPolicyInput.tsx) and the summaries below read these to describe a
+// cap as "off", so there is a single source of truth for what "off" means.
+export const CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL = 0.9999;
+export const CENTRAL_BANK_ICR_OFF_SENTINEL = 0;
+
+function describeAffordabilityCap(values: Record<string, number>): string {
+  const value = values.CENTRAL_BANK_AFFORDABILITY_HARD_MAX;
+  return value >= CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL
+    ? 'no separate FPC affordability cap'
+    : `an FPC affordability cap of ${formatPercent(value)} of income`;
+}
+
+function describeIcrFloor(values: Record<string, number>): string {
+  const value = values.CENTRAL_BANK_ICR_HARD_MIN;
+  return value <= CENTRAL_BANK_ICR_OFF_SENTINEL ? 'no separate FPC BTL ICR floor' : `an FPC BTL ICR floor of ${value}x`;
+}
+
+interface BasePolicyDefinition {
+  id: BasePolicyId;
+  title: string;
+  values: Record<string, number>;
+  // Built from the values so the displayed Bank Rate and cap statuses can never drift from what the
+  // model actually runs, using the same percentage formatter as the run-setup form.
+  buildSummary: (values: Record<string, number>) => string;
+}
+
+const BASE_POLICY_DEFINITIONS: BasePolicyDefinition[] = [
   {
     id: '2011',
-    title: '2011 base policy',
-    summary:
-      '2011 policy uses a 0.5% Bank Rate and central-bank mortgage limits aligned to lender limits, so the macroprudential constraints are mostly non-binding.',
+    title: '2011 baseline policy',
+    buildSummary: (values) =>
+      `2011 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate and central-bank mortgage limits aligned to lender limits, so the macroprudential constraints are mostly non-binding.`,
     values: {
       CENTRAL_BANK_INITIAL_BASE_RATE: 0.005,
       CENTRAL_BANK_LTV_HARD_MAX_FTB: 0.95,
@@ -42,9 +71,9 @@ export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
   },
   {
     id: '2024',
-    title: '2024 base policy',
-    summary:
-      '2024 policy uses a 5.10833333% Bank Rate, a 4.5x owner-occupier LTI flow limit with a 15% quota over 12 months, no separate FPC affordability cap, and no separate FPC BTL ICR floor.',
+    title: '2024 baseline policy',
+    buildSummary: (values) =>
+      `2024 policy uses a ${formatExactPercent(values.CENTRAL_BANK_INITIAL_BASE_RATE)} Bank Rate, a 4.5x owner-occupier LTI flow limit with a 15% quota over 12 months, ${describeAffordabilityCap(values)}, and ${describeIcrFloor(values)}.`,
     values: {
       CENTRAL_BANK_INITIAL_BASE_RATE: 0.0510833333,
       CENTRAL_BANK_LTV_HARD_MAX_FTB: 0.95,
@@ -60,6 +89,13 @@ export const BASE_POLICY_OPTIONS: BasePolicyOption[] = [
     }
   }
 ];
+
+export const BASE_POLICY_OPTIONS: BasePolicyOption[] = BASE_POLICY_DEFINITIONS.map((definition) => ({
+  id: definition.id,
+  title: definition.title,
+  values: definition.values,
+  summary: definition.buildSummary(definition.values)
+}));
 
 export const SENSITIVITY_POLICY_PACKAGES: SensitivityPolicyPackageDefinition[] = [
   {
@@ -166,6 +202,50 @@ export const DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID = 'owner_occupier_lti_soft_ma
 
 const LEGACY_2011_VERSIONS = new Set(['v0', 'v0o', 'v0oo', 'v0o1', 'v0o2', 'v0o3', 'v0o6', 'v0o7']);
 const CENTRAL_BANK_POLICY_KEY_SET = new Set<string>(CENTRAL_BANK_POLICY_KEYS);
+
+/** How a run's recorded policy relates to the baseline policy it most closely matches. */
+export interface RunPolicySummary {
+  basePolicyId: BasePolicyId | null;
+  basePolicyTitle: string | null;
+  deviations: Array<{ key: string; value: number; baseValue: number }>;
+}
+
+const POLICY_VALUE_EPSILON = 1e-9;
+
+/**
+ * Describes a run's recorded policy relative to the baseline it best matches, so a run can be
+ * identified by what it actually did rather than by whatever name it was given. The baseline is not
+ * stored on a completed run, so it is inferred as the option agreeing with the most settings.
+ */
+export function summariseRunPolicy(settings: ReadonlyArray<{ key: string; value: number }>): RunPolicySummary {
+  if (settings.length === 0) {
+    return { basePolicyId: null, basePolicyTitle: null, deviations: [] };
+  }
+
+  let best: { option: BasePolicyOption; matches: number } | null = null;
+  for (const option of BASE_POLICY_OPTIONS) {
+    const matches = settings.filter((setting) => {
+      const baseValue = Number(option.values[setting.key]);
+      return Number.isFinite(baseValue) && Math.abs(baseValue - setting.value) < POLICY_VALUE_EPSILON;
+    }).length;
+    if (!best || matches > best.matches) {
+      best = { option, matches };
+    }
+  }
+  if (!best) {
+    return { basePolicyId: null, basePolicyTitle: null, deviations: [] };
+  }
+
+  const deviations = settings.flatMap((setting) => {
+    const baseValue = Number(best.option.values[setting.key]);
+    if (!Number.isFinite(baseValue) || Math.abs(baseValue - setting.value) < POLICY_VALUE_EPSILON) {
+      return [];
+    }
+    return [{ key: setting.key, value: setting.value, baseValue }];
+  });
+
+  return { basePolicyId: best.option.id, basePolicyTitle: best.option.title, deviations };
+}
 
 export function getDefaultBasePolicyId(baseline: string): BasePolicyId {
   return LEGACY_2011_VERSIONS.has(baseline) ? '2011' : '2024';

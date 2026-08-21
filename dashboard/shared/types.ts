@@ -36,6 +36,109 @@ export interface ParameterCardMeta {
   dataFileConfigKeys?: string[];
   derivedScalars?: DerivedScalarMeta[];
   explanation: string;
+  keyMetadata: ParameterKeyMetadata[];
+}
+
+export type ParameterDerivation =
+  | 'empirically estimated'
+  | 'postulated'
+  | 'policy-set'
+  | 'technical/user-set'
+  | 'output-calibrated';
+
+export interface ParameterKeyMetadata {
+  key: string;
+  label: string;
+  unit: string;
+  valueType: 'number' | 'distribution' | 'curve' | 'file';
+  derivation: ParameterDerivation;
+  description: string;
+  sourceYear: string;
+}
+
+export interface CalibrationModelIdentity {
+  version: string;
+  name: string;
+  dataVintage: string;
+  fitVintage: string;
+  method: string;
+  inheritance: string | null;
+}
+
+export interface CalibrationParameterRecord {
+  key: string;
+  name: string;
+  value: number;
+  lower: number | null;
+  upper: number | null;
+  priorLower: number | null;
+  priorUpper: number | null;
+  meaning: string;
+  calibrationReason: string;
+  increaseEffect: string;
+  decreaseEffect: string;
+}
+
+interface CalibrationCampaignBase {
+  kind: 'refitted' | 'original' | 'inherited' | 'unavailable';
+  evidenceYear: number | null;
+  provenance: string[];
+}
+
+export interface RefittedCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'refitted';
+  evidenceYear: number;
+  startingVersion: string;
+  method: string;
+  tunedParameterCount: number;
+  targetOutcomeCount: number;
+  objective: string | null;
+  targetGroups: { name: string; indicators: string[]; count: number }[];
+  baselineLoss: number;
+  selectedLoss: number;
+  absoluteImprovement: number;
+  passedChecks: boolean;
+  selected: boolean;
+  guardrail: string | null;
+  seeds: number[] | null;
+  simulationSteps: number | null;
+  analysisWindow: { start: number; end: number } | null;
+  optimisationSettings: string[];
+  artifactPath: string;
+}
+
+export interface OriginalCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'original';
+  method: string;
+  status: 'Original published configuration';
+}
+
+export interface InheritedCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'inherited';
+  sourceVersion: string;
+  parametersUnchanged: true;
+}
+
+export interface UnavailableCalibrationCampaign extends CalibrationCampaignBase {
+  kind: 'unavailable';
+}
+
+export type CalibrationCampaign =
+  | RefittedCalibrationCampaign
+  | OriginalCalibrationCampaign
+  | InheritedCalibrationCampaign
+  | UnavailableCalibrationCampaign;
+
+export interface CalibrationModelOverview {
+  identity: CalibrationModelIdentity;
+  campaign: CalibrationCampaign;
+  parameters: CalibrationParameterRecord[];
+}
+
+export interface CalibrationOverviewResponse {
+  primary: CalibrationModelOverview;
+  comparison: CalibrationModelOverview | null;
+  sameEvidenceProfile: boolean;
 }
 
 export interface DataSourceInfo {
@@ -239,11 +342,6 @@ export interface HomePreviewItem {
   visualPayload: VisualPayload;
 }
 
-export interface HomePreviewPayload {
-  version: VersionId;
-  items: HomePreviewItem[];
-}
-
 export type ValidationMetricStatus = 'pass' | 'warn' | 'fail' | 'unsupported';
 export type ValidationMetricRequirement = 'required' | 'diagnostic';
 export type ValidationMetricMappingStatus = 'exact_match' | 'derived_match' | 'unsupported';
@@ -362,6 +460,18 @@ export interface ValidationCompositeTrendPayload {
   referencePoints: ValidationReferenceLine[];
 }
 
+/**
+ * Compact per-metric projection used to rank and compare models without shipping every
+ * version's full summary. Always scoped to one evidence year — mixing eras is meaningless.
+ */
+export interface ValidationMetricComparisonPoint {
+  metricId: string;
+  status: ValidationMetricStatus;
+  metricLoss: number | null;
+  seedMean: number;
+  sourceValue: number | null;
+}
+
 export interface ValidationOverviewPayload {
   availableVersions: string[];
   selectedVersion: string;
@@ -369,6 +479,10 @@ export interface ValidationOverviewPayload {
   availableValidationTargetYearsByVersion: Record<string, number[]>;
   trend: ValidationCompositeTrendPayload;
   selectedSummary: ValidationVersionSummary;
+  /** Keyed by version; only versions scored against `selectedValidationTargetYear` appear. */
+  metricsByVersion: Record<string, ValidationMetricComparisonPoint[]>;
+  /** Second model for compare mode. Null when none requested, or when it has no summary for this year. */
+  comparisonSummary: ValidationVersionSummary | null;
 }
 
 export type ResultsRunStatus = 'complete' | 'partial' | 'invalid';
@@ -422,8 +536,16 @@ export interface ResultsCoverageSummary {
   errorCount: number;
 }
 
+/** One Central Bank policy setting, as recorded in a completed run's config.properties. */
+export interface ResultsPolicySetting {
+  key: string;
+  value: number;
+}
+
 export interface ResultsRunSummary {
   runId: string;
+  /** Scenario name given when the run was created; null for runs with no readable manifest. */
+  title: string | null;
   path: string;
   modifiedAt: string;
   createdAt: string;
@@ -432,6 +554,8 @@ export interface ResultsRunSummary {
   status: ResultsRunStatus;
   configAvailable: boolean;
   parseCoverage: ResultsCoverageSummary;
+  /** Empty when the run predates policy recording, or its config could not be read. */
+  policySettings: ResultsPolicySetting[];
 }
 
 export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
@@ -440,16 +564,7 @@ export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
   note?: string;
 }
 
-export interface ResultsRunDetail {
-  runId: string;
-  path: string;
-  modifiedAt: string;
-  createdAt: string;
-  sizeBytes: number;
-  fileCount: number;
-  status: ResultsRunStatus;
-  configAvailable: boolean;
-  parseCoverage: ResultsCoverageSummary;
+export interface ResultsRunDetail extends ResultsRunSummary {
   indicators: ResultsIndicatorAvailability[];
   kpiSummary: KpiMetricSummary[];
 }
@@ -498,6 +613,209 @@ export interface ResultsComparePayload {
   window: ResultsCompareWindow;
   indicators: ResultsCompareIndicator[];
   kpiSummaryByRun: ResultsCompareKpiSummary[];
+}
+
+/**
+ * New-lending distributions, derived from a completed run's SaleTransactions-run1.csv.
+ *
+ * The aggregate indicators above report monthly means; these report the shape of the
+ * loan-level distribution behind them, which is what a flow limit actually acts on.
+ */
+
+export type LendingBorrowerType = 'FTB' | 'HM' | 'BTL';
+
+export type LendingMetricId = 'ltv' | 'lti' | 'dsti' | 'priceToIncome' | 'buyerAge';
+
+export type LendingUnavailableReason =
+  | 'no_transaction_file'
+  | 'recording_disabled'
+  | 'empty_file'
+  | 'parse_error'
+  | 'no_rows_in_window';
+
+export interface LendingHistogramBin {
+  lowerEdge: number;
+  upperEdge: number;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingHistogramSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  /** Rows above the top edge, folded into the last bin. */
+  overflowCount: number;
+  bins: LendingHistogramBin[];
+}
+
+export interface LendingHistogram {
+  metric: LendingMetricId;
+  title: string;
+  units: string;
+  binWidth: number;
+  lowerEdge: number;
+  upperEdge: number;
+  seriesByBorrowerType: LendingHistogramSeries[];
+}
+
+export interface LendingBand {
+  id: string;
+  label: string;
+  lowerEdge: number;
+  /** null for the open-ended top band. */
+  upperEdge: number | null;
+}
+
+export interface LendingBandShare {
+  bandId: string;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingBandSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  bands: LendingBandShare[];
+}
+
+export interface LendingBandGroup {
+  metric: 'ltv' | 'lti';
+  title: string;
+  units: string;
+  bands: LendingBand[];
+  seriesByBorrowerType: LendingBandSeries[];
+}
+
+export interface LendingQuintileTypeCell {
+  borrowerType: LendingBorrowerType;
+  highLtvCount: number;
+  highLtiCount: number;
+  /** Share of all high-LTV lending in the pool, in percent. */
+  highLtvShareOfAll: number;
+  highLtiShareOfAll: number;
+}
+
+export interface LendingQuintile {
+  quintile: number;
+  transactionCount: number;
+  priceLowerBound: number | null;
+  priceUpperBound: number | null;
+  highLtvCount: number;
+  highLtiCount: number;
+  highLtvShareOfAll: number;
+  highLtiShareOfAll: number;
+  byBorrowerType: LendingQuintileTypeCell[];
+}
+
+export interface LendingQuintileMatrix {
+  /** The four cut points of transactionPrice over the owner-occupier mortgaged pool. */
+  cutPoints: number[];
+  poolCount: number;
+  /** High-LTV is tested inclusively (>=); high-LTI exclusively (>), matching the paper. */
+  highLtvThreshold: number;
+  highLtiThreshold: number;
+  totalHighLtvCount: number;
+  totalHighLtiCount: number;
+  quintiles: LendingQuintile[];
+}
+
+export interface LendingJointCell {
+  ltvBin: number;
+  ltiBin: number;
+  count: number;
+  /** Share of its own borrower-type series, in percent. */
+  share: number;
+}
+
+export interface LendingJointSeries {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  /** Sparse: only non-empty cells are emitted. */
+  cells: LendingJointCell[];
+}
+
+export interface LendingJointGrid {
+  ltvEdges: number[];
+  ltiEdges: number[];
+  seriesByBorrowerType: LendingJointSeries[];
+}
+
+export interface LendingBorrowerTypeCount {
+  borrowerType: LendingBorrowerType;
+  count: number;
+}
+
+export interface LendingCounts {
+  transactions: number;
+  mortgaged: number;
+  /** Cash purchases (no mortgage principal), excluded from every ratio below. */
+  cashExcluded: number;
+  byBorrowerType: LendingBorrowerTypeCount[];
+}
+
+export interface LendingSummaryStats {
+  borrowerType: LendingBorrowerType;
+  count: number;
+  meanLtv: number | null;
+  medianLtv: number | null;
+  meanLti: number | null;
+  medianLti: number | null;
+  meanDsti: number | null;
+  /** BTL only; NaN for owner-occupiers in the source file. */
+  meanIcr: number | null;
+}
+
+export interface LendingWindowInfo {
+  requested: ResultsCompareWindow;
+  /** What was actually used: transactions are only recorded from a configured model time. */
+  effective: ResultsCompareWindow;
+  clamped: boolean;
+  startModelTime: number | null;
+  endModelTime: number | null;
+  /** TIME_TO_START_RECORDING_TRANSACTIONS, as read from the run's config.properties. */
+  recordingStartModelTime: number | null;
+  dataStartModelTime: number | null;
+  dataEndModelTime: number | null;
+}
+
+export interface LendingCap {
+  borrowerType: LendingBorrowerType;
+  metric: 'ltv' | 'lti' | 'dsti' | 'icr';
+  /** In the metric's own units: percent for LTV, a ratio otherwise. */
+  value: number;
+  units: string;
+  /** Which limit binds — the tighter of the Central Bank and the private bank limit. */
+  source: 'central_bank' | 'bank' | 'both';
+  /** Soft limits are flow limits: a capped share of new lending may exceed them. */
+  binding: 'hard' | 'soft';
+}
+
+export interface LendingDistributionPayload {
+  runId: string;
+  available: boolean;
+  unavailableReason?: LendingUnavailableReason;
+  note?: string;
+  window: LendingWindowInfo;
+  counts: LendingCounts;
+  /** Number of transaction files pooled; seedLabels is empty when read from the run root. */
+  seedCount: number;
+  seedLabels: string[];
+  caps: LendingCap[];
+  summaryByBorrowerType: LendingSummaryStats[];
+  histograms: LendingHistogram[];
+  bandGroups: LendingBandGroup[];
+  quintiles: LendingQuintileMatrix | null;
+  joint: LendingJointGrid | null;
+  /** Relative tolerance used when testing a value against a cap or bin edge. */
+  capTolerance: number;
+}
+
+export interface LendingDistributionComparePayload {
+  runIds: string[];
+  window: ResultsCompareWindow;
+  runs: LendingDistributionPayload[];
 }
 
 export interface ResultsStorageSummary {
@@ -556,6 +874,16 @@ export type BasePolicyId = '2011' | '2024';
 export interface ModelRunSnapshotOption {
   version: string;
   status: ModelRunSnapshotStatus;
+  /**
+   * Which era of real-world evidence this snapshot was scored against
+   * (`w3` = 2011 Wave 3, `r8` = 2024 Round 8). Null when the history file has no entry.
+   */
+  evidenceYear: 2011 | 2024 | null;
+  /**
+   * True when the five unmeasurable behavioural parameters were fitted for this version
+   * (the `o`-suffixed versions). False for input/data snapshots, which inherit them.
+   */
+  outputCalibrated: boolean;
 }
 
 export interface ModelRunParameterDefinition {

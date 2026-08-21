@@ -1,5 +1,5 @@
 import { Navigate } from 'react-router-dom';
 
 export function ModelResultsPage() {
-  return <Navigate to="/experiments?type=manual&mode=view" replace />;
+  return <Navigate to="/results?type=manual&mode=view" replace />;
 }

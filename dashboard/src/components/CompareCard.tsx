@@ -9,9 +9,7 @@ import {
   curveOption,
   curveSingleOption,
   formatChartNumber,
-  jointLayoutOverrides,
-  scalarOption,
-  scalarSingleOption
+  jointLayoutOverrides
 } from '../lib/compareChartOptions';
 
 interface CompareCardProps {
@@ -19,6 +17,7 @@ interface CompareCardProps {
   mode: 'single' | 'compare';
   inProgressVersions: string[];
   defaultExpanded?: boolean;
+  presentation?: 'card' | 'visualization';
 }
 
 const formatNumber = formatChartNumber;
@@ -182,8 +181,9 @@ function buildAdaptiveHeatmapLayout(
   });
 }
 
-export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = false }: CompareCardProps) {
-  const [isExpanded, setIsExpanded] = useState<boolean>(defaultExpanded);
+export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = false, presentation = 'card' }: CompareCardProps) {
+  const visualizationOnly = presentation === 'visualization';
+  const [isExpanded, setIsExpanded] = useState<boolean>(visualizationOnly || defaultExpanded);
   const [isTableOpen, setIsTableOpen] = useState<boolean>(false);
   const [isMoreInfoOpen, setIsMoreInfoOpen] = useState<boolean>(false);
 
@@ -253,7 +253,7 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
 
   return (
     <article className="compare-card">
-      <header className="compare-card-header">
+      {!visualizationOnly && <header className="compare-card-header">
         <button type="button" className="card-toggle" onClick={() => setIsExpanded((current) => !current)}>
           <span className="card-toggle-indicator">{isExpanded ? '▾' : '▸'}</span>
           <span>
@@ -261,16 +261,25 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
             <h3>{item.title}</h3>
           </span>
         </button>
-        <div className="card-status-pills">
+        {mode === 'compare' && <div className="card-status-pills">
           {hasInProgressOrigin && <span className="status-pill-in-progress">In progress</span>}
           <span className={`change-pill ${updated ? 'updated' : 'neutral'}`}>{updated ? 'Updated' : 'No change'}</span>
-        </div>
-      </header>
+        </div>}
+      </header>}
 
       {isExpanded && (
         <>
-          {(item.visualPayload.type === 'scalar' ||
-            item.visualPayload.type === 'binned_distribution' ||
+          {/*
+            Scalar cards hold one to three numbers. A bar chart of three scalars encodes nothing the
+            table does not, with fewer significant figures — and it forced mixed units onto a single
+            linear axis (e.g. 0.0565, 704.94 and 5.47e-7 under "Value (mixed units)"). The values are
+            now the content, shown directly rather than behind a toggle.
+          */}
+          {item.visualPayload.type === 'scalar' && (
+            <div className="card-section">{renderScalarTable(tableRows, mode)}</div>
+          )}
+
+          {(item.visualPayload.type === 'binned_distribution' ||
             item.visualPayload.type === 'lognormal_pair' ||
             item.visualPayload.type === 'power_law_pair' ||
             item.visualPayload.type === 'gaussian_pair' ||
@@ -278,33 +287,9 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
             item.visualPayload.type === 'buy_quad') && (
             <div className="card-section">
               <button type="button" className="table-toggle" onClick={() => setIsTableOpen((current) => !current)}>
-                {isTableOpen ? 'Hide parameter table' : 'Show parameter table'}
+                {isTableOpen ? 'Hide exact parameter values' : 'Exact parameter values'}
               </button>
               {isTableOpen && renderScalarTable(tableRows, mode)}
-            </div>
-          )}
-
-          {item.visualPayload.type === 'scalar' && (
-            <div className="card-section">
-              <EChart
-                option={
-                  mode === 'single'
-                    ? scalarSingleOption(
-                        item.visualPayload.values,
-                        rightVersionLabel,
-                        axisSpec.scalar.xTitle,
-                        axisSpec.scalar.yTitle
-                      )
-                    : scalarOption(
-                        item.visualPayload.values,
-                        leftVersionLabel,
-                        rightVersionLabel,
-                        axisSpec.scalar.xTitle,
-                        axisSpec.scalar.yTitle
-                      )
-                }
-                className="chart"
-              />
             </div>
           )}
 
@@ -716,16 +701,17 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
           )}
 
           <div className="card-description">
+            <strong>Policy relevance</strong>
             <p>{item.explanation}</p>
           </div>
 
-          <div className="card-section">
+          {!visualizationOnly && <div className="card-section">
             <button type="button" className="table-toggle" onClick={() => setIsMoreInfoOpen((current) => !current)}>
               {isMoreInfoOpen ? 'Hide provenance & sources' : 'Provenance & sources'}
             </button>
-          </div>
+          </div>}
 
-          {isMoreInfoOpen && (
+          {!visualizationOnly && isMoreInfoOpen && (
             <div className="card-meta">
               <dl>
                 {mode === 'single' ? (

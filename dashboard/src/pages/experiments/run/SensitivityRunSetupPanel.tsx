@@ -4,11 +4,18 @@ import type { ExperimentRunController } from './useExperimentRunController';
 interface SensitivityRunSetupPanelProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
+  initialSensitivityStep?: number;
 }
 
-export function SensitivityRunSetupPanel({ controller, runActionsDisabled }: SensitivityRunSetupPanelProps) {
+export function SensitivityRunSetupPanel({
+  controller,
+  runActionsDisabled,
+  initialSensitivityStep = 0
+}: SensitivityRunSetupPanelProps) {
   return (
     <SensitivitySetupCard
+      draftId={controller.draftId}
+      initialStep={initialSensitivityStep}
       executionDisabled={runActionsDisabled}
       isLoadingOptions={controller.isLoadingOptions || !controller.options}
       selectedBaseline={controller.selectedBaseline}
@@ -47,7 +54,7 @@ export function SensitivityRunSetupPanel({ controller, runActionsDisabled }: Sen
       sensitivitySubmissionLockedByManual={controller.sensitivitySubmissionLockedByManual}
       lockMessage={
         controller.sensitivitySubmissionLockedByManual
-          ? `Sensitivity experiments are locked while manual job ${controller.lockManualId} is active.`
+          ? `Sensitivity analyses are locked while scenario job ${controller.lockManualId} is active.`
           : null
       }
       hasActiveSensitivityJob={controller.hasActiveSensitivityJob}

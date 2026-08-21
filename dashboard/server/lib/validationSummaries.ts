@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   ValidationCompositeTrendPayload,
+  ValidationMetricComparisonPoint,
   ValidationReferenceLine,
   ValidationMetricSummary,
   ValidationOverviewPayload,
@@ -500,7 +501,8 @@ function addLossDeltaVsReference2011(
 export function getValidationOverview(
   pathsInput: RuntimePathInput,
   requestedVersion?: string,
-  requestedValidationTargetYear?: number
+  requestedValidationTargetYear?: number,
+  requestedComparisonVersion?: string
 ): ValidationOverviewPayload {
   const paths = resolveRuntimePaths(pathsInput);
   const availableVersions = listValidationSummaryVersions(paths).filter(isValidationOverviewVersion);
@@ -557,12 +559,52 @@ export function getValidationOverview(
     baselineReferenceSummary
   );
 
+  // Every version's summary is already in memory above, so the cross-version projection costs no
+  // extra IO for 2024. Scope it to the selected evidence year: 2024 comes from the tracked
+  // summaries, 2011 only from the versions that have a reference overlay.
+  const metricsByVersion: Record<string, ValidationMetricComparisonPoint[]> = {};
+  for (const version of availableVersions) {
+    if (!(availableValidationTargetYearsByVersion[version] ?? []).includes(selectedValidationTargetYear)) {
+      continue;
+    }
+    const sourceSummary =
+      selectedValidationTargetYear === 2011
+        ? readValidationReferenceSummary(paths, version)
+        : summaries.find((summary) => summary.version === version) ?? null;
+    if (!sourceSummary) {
+      continue;
+    }
+    metricsByVersion[version] = sourceSummary.metrics.map((metric) => ({
+      metricId: metric.metricId,
+      status: metric.status,
+      metricLoss: metric.metricLoss,
+      seedMean: metric.seedMean,
+      sourceValue: metric.sourceValue
+    }));
+  }
+
+  // Rendering a second model in the single-mode format needs the full summary (target band, IQR,
+  // labels), not the compact ranking projection. An unknown or wrong-era comparison resolves to
+  // null so the page falls back to single mode instead of erroring.
+  const comparisonVersion = requestedComparisonVersion?.trim() ?? '';
+  const comparisonSummary =
+    comparisonVersion &&
+    comparisonVersion !== selectedVersion &&
+    availableVersions.includes(comparisonVersion) &&
+    (availableValidationTargetYearsByVersion[comparisonVersion] ?? []).includes(selectedValidationTargetYear)
+      ? selectedValidationTargetYear === 2011
+        ? readValidationReferenceSummary(paths, comparisonVersion)
+        : summaries.find((summary) => summary.version === comparisonVersion) ?? null
+      : null;
+
   return {
     availableVersions,
     selectedVersion,
     selectedValidationTargetYear,
     availableValidationTargetYearsByVersion,
     trend,
-    selectedSummary: selectedSummaryView
+    selectedSummary: selectedSummaryView,
+    metricsByVersion,
+    comparisonSummary
   };
 }

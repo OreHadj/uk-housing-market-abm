@@ -7,9 +7,12 @@ import { fileURLToPath } from 'node:url';
 import {
   __resetModelRunManagerForTests,
   getModelRunJob,
+  getModelRunOptions,
+  prepareModelRunSubmission,
   submitModelRun
 } from '../server/lib/modelRuns.js';
 import { createDevelopmentRuntimePaths } from '../server/lib/runtimePaths.js';
+import { buildDefaultRunSubmitRequest } from '../src/lib/homeDefaultRun.js';
 import {
   __resetSensitivityRunsForTests,
   getSensitivityExperiment,
@@ -72,6 +75,28 @@ async function waitForCondition(label: string, predicate: () => boolean): Promis
 try {
   __resetModelRunManagerForTests();
   __resetSensitivityRunsForTests();
+
+  // Home "Default Run" preset: the payload builder must select the stable default baseline,
+  // the 2011 base policy, 3500 steps / 1 seed, a minimal record set, and no individual Central
+  // Bank levers — and must submit with zero warnings (acceptance criteria 1, 2 and 4).
+  const defaultRunOptions = getModelRunOptions(paths, undefined, true);
+  const defaultRunRequest = buildDefaultRunSubmitRequest(defaultRunOptions, new Date('2026-07-13T00:00:00.000Z'));
+  assert.equal(defaultRunRequest.baseline, defaultRunOptions.defaultBaseline, 'Default run must use the stable default baseline');
+  assert.equal(defaultRunRequest.basePolicy, '2011', 'Default run must use the 2011 base policy');
+  assert.equal(defaultRunRequest.overrides.N_STEPS, 3500, 'Default run must simulate 3500 steps');
+  assert.equal(defaultRunRequest.overrides.N_SIMS, 1, 'Default run must use a single seed');
+  assert.ok(
+    !Object.keys(defaultRunRequest.overrides).some((key) => key.startsWith('CENTRAL_BANK_')),
+    'Default run must not set Central Bank levers individually'
+  );
+  assert.notEqual(defaultRunRequest.overrides.recordCoreIndicators, false, 'Default run must keep core indicators on');
+  assert.equal(defaultRunRequest.overrides.recordTransactions, false, 'Default run must disable heavy transaction recording');
+  const defaultRunPrepared = prepareModelRunSubmission(
+    paths,
+    { ...defaultRunRequest, confirmWarnings: false },
+    { ignoreStorageCap: true }
+  );
+  assert.equal(defaultRunPrepared.accepted, true, 'Default run preset must submit without any warnings');
 
   const manualSubmit = submitModelRun(paths, {
     baseline: 'v0o7',
