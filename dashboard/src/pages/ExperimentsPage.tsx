@@ -5,7 +5,18 @@ import { ManualResultsView } from './experiments/view/ManualResultsView';
 import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
 import { ExperimentsLandingPage } from './ExperimentsLandingPage';
 import type { ExperimentType } from './experiments/types';
-import { clearScenarioDraft, createScenarioDraftId } from '../lib/scenarioDraft';
+import {
+  clearScenarioDraft,
+  createScenarioDraftId,
+  resumableScenarioDraftId,
+  setActiveScenarioDraftId
+} from '../lib/scenarioDraft';
+import {
+  clearSensitivityDraft,
+  createSensitivityDraftId,
+  resumableSensitivityDraftId,
+  setActiveSensitivityDraftId
+} from '../lib/sensitivityDraft';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -33,7 +44,7 @@ export function ExperimentsPage({
   const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
-  const draftId = workspace === 'manual' ? searchParams.get('draft')?.trim() ?? '' : '';
+  const draftId = searchParams.get('draft')?.trim() ?? '';
 
   const returnToExperiments = useCallback(() => {
     setIsSetupOpen(false);
@@ -41,9 +52,21 @@ export function ExperimentsPage({
   }, [navigate]);
 
   useEffect(() => {
-    if (workspace !== 'manual' || !isSetupOpen || draftId) return;
+    if (!isSetupOpen) return;
+    if (draftId) {
+      if (workspace === 'manual') setActiveScenarioDraftId(draftId);
+      else setActiveSensitivityDraftId(draftId);
+      return;
+    }
+    // Reopening picks up the draft the last close left behind; only discarding or submitting
+    // retires it, so a fresh id is minted just for a genuinely new scenario.
+    const nextDraftId = workspace === 'manual'
+      ? resumableScenarioDraftId() || createScenarioDraftId()
+      : resumableSensitivityDraftId() || createSensitivityDraftId();
+    if (workspace === 'manual') setActiveScenarioDraftId(nextDraftId);
+    else setActiveSensitivityDraftId(nextDraftId);
     const next = new URLSearchParams(searchParams);
-    next.set('draft', createScenarioDraftId());
+    next.set('draft', nextDraftId);
     setSearchParams(next, { replace: true });
   }, [draftId, isSetupOpen, searchParams, setSearchParams, workspace]);
 
@@ -61,20 +84,13 @@ export function ExperimentsPage({
       return;
     }
 
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        returnToExperiments();
-      }
-    };
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    window.addEventListener('keydown', closeOnEscape);
 
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [isSetupOpen, returnToExperiments]);
+  }, [isSetupOpen]);
 
   const copy = useMemo(() => workspace === 'manual' ? {
     heading: 'Policy scenarios',
@@ -114,16 +130,12 @@ export function ExperimentsPage({
         </div>
       </article>}
 
-      <div
-        hidden={!isSetupOpen}
-        className="scenario-create-modal-backdrop"
-        role="presentation"
-        onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            returnToExperiments();
-          }
-        }}
-      >
+      {/*
+        No click-outside and no Escape handler: a half-built experiment is expensive to lose, so the
+        setup closes only through Discard draft or the close button. Closing keeps the draft; it is
+        resumed on reopen and cleared only by discarding or by a successful submit.
+      */}
+      <div hidden={!isSetupOpen} className="scenario-create-modal-backdrop" role="presentation">
         <section
           className="scenario-create-modal"
           role="dialog"
@@ -137,9 +149,10 @@ export function ExperimentsPage({
               <p>{copy.modalDescription}</p>
             </div>
             <div className="scenario-modal-head-actions">
-              {workspace === 'manual' && draftId && (
+              {draftId && (
                 <button type="button" className="danger-button scenario-discard-draft-button" onClick={() => {
-                  clearScenarioDraft(draftId);
+                  if (workspace === 'manual') clearScenarioDraft(draftId);
+                  else clearSensitivityDraft(draftId);
                   returnToExperiments();
                 }}>Discard draft</button>
               )}
@@ -164,6 +177,7 @@ export function ExperimentsPage({
               showRunManagement={false}
               draftId={draftId}
               initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
+              initialSensitivityStep={searchParams.get('step') === 'model-baseline' ? 2 : 0}
               onManualRunAccepted={() => navigate('/results?type=manual')}
               onSensitivityRunAccepted={(id) => navigate(
                 `/results?type=sensitivity${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`

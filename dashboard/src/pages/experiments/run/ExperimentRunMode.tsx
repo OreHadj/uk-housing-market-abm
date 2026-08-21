@@ -24,6 +24,7 @@ interface ExperimentRunModeProps {
   showRunManagement?: boolean;
   draftId?: string;
   initialScenarioStep?: number;
+  initialSensitivityStep?: number;
   onManualRunAccepted?: () => void;
   onSensitivityRunAccepted?: (experimentId: string) => void;
 }
@@ -43,10 +44,12 @@ export function ExperimentRunMode({
   showRunManagement = true,
   draftId = '',
   initialScenarioStep = 0,
+  initialSensitivityStep = 0,
   onManualRunAccepted,
   onSensitivityRunAccepted
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
+    activeType,
     selectedJobRef,
     onSelectedJobRefChange,
     onOpenManualResults,
@@ -175,7 +178,12 @@ export function ExperimentRunMode({
       )}
 
       <div className="run-exp-grid">
-        <RunSetupComponent controller={controller} runActionsDisabled={runActionsDisabled} initialScenarioStep={initialScenarioStep} />
+        <RunSetupComponent
+          controller={controller}
+          runActionsDisabled={runActionsDisabled}
+          initialScenarioStep={initialScenarioStep}
+          initialSensitivityStep={initialSensitivityStep}
+        />
 
         {showRunManagement && (
           <>

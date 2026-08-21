@@ -2,6 +2,13 @@ import type { BasePolicyId, ModelRunOptionsPayload } from '../../shared/types';
 import type { FormValue } from './experimentRunDefaults';
 
 const STORAGE_PREFIX = 'scenario-draft:v1:';
+/**
+ * Which draft the scenario modal should resume. Draft bodies are keyed by a random id that only
+ * ever travels in the `?draft=` query param, so closing the modal — which returns to /experiments
+ * and drops the param — used to strand the saved draft under an id nothing could name again. This
+ * pointer is how reopening finds it.
+ */
+const ACTIVE_DRAFT_KEY = 'scenario-draft:v1:active';
 
 export interface ScenarioDraftV1 {
   version: 1;
@@ -50,7 +57,44 @@ export function writeScenarioDraft(draftId: string, draft: ScenarioDraftV1): voi
 }
 
 export function clearScenarioDraft(draftId: string): void {
-  if (draftId) sessionStorage.removeItem(scenarioDraftStorageKey(draftId));
+  if (!draftId) return;
+  sessionStorage.removeItem(scenarioDraftStorageKey(draftId));
+  // Discarding or submitting a draft must also retire the pointer, or the next open resumes an id
+  // whose body is gone.
+  if (readActiveScenarioDraftId() === draftId) {
+    clearActiveScenarioDraftId();
+  }
+}
+
+/** The draft to resume, or '' when there is no stored draft to return to. */
+export function readActiveScenarioDraftId(): string {
+  try {
+    return sessionStorage.getItem(ACTIVE_DRAFT_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setActiveScenarioDraftId(draftId: string): void {
+  try {
+    if (draftId) sessionStorage.setItem(ACTIVE_DRAFT_KEY, draftId);
+  } catch {
+    // Storage unavailable: the draft simply will not resume.
+  }
+}
+
+export function clearActiveScenarioDraftId(): void {
+  try {
+    sessionStorage.removeItem(ACTIVE_DRAFT_KEY);
+  } catch {
+    // Nothing to do.
+  }
+}
+
+/** A draft id worth resuming: one the pointer names and whose body is still readable. */
+export function resumableScenarioDraftId(): string {
+  const draftId = readActiveScenarioDraftId();
+  return draftId && readScenarioDraft(draftId) ? draftId : '';
 }
 
 export function updateScenarioDraftModel(draftId: string, calibratedModel: string): boolean {

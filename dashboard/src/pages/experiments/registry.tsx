@@ -10,6 +10,7 @@ export interface ExperimentRunRendererProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
   initialScenarioStep?: number;
+  initialSensitivityStep?: number;
 }
 
 export interface ExperimentViewRendererProps {

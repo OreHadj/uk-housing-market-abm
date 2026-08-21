@@ -560,7 +560,12 @@ export function SensitivityResultsView({
         ) : (
           <>
             {sweepSummary && (
-              <>
+              <CollapsibleSection
+                title="Summary"
+                summary={sweepSummary.instrument}
+                defaultOpen={false}
+                className="run-policy-disclosure sensitivity-run-summary-disclosure"
+              >
                 <p className="sensitivity-sweep-sentence">{sweepSummary.sentence}</p>
                 <dl className="sensitivity-summary-facts">
                   <div>
@@ -600,7 +605,7 @@ export function SensitivityResultsView({
                     <dd>{sweepSummary.maxWorkers}</dd>
                   </div>
                 </dl>
-              </>
+              </CollapsibleSection>
             )}
             {detail.failureReason && <p className="error-banner">Failure reason: {detail.failureReason}</p>}
 
@@ -608,6 +613,7 @@ export function SensitivityResultsView({
               <CollapsibleSection
                 title="Policy settings used"
                 summary={`${CENTRAL_BANK_POLICY_KEYS.length} Central Bank settings · ${sweptPolicy.sweptCount} varied`}
+                defaultOpen={false}
                 className="run-policy-disclosure sensitivity-policy-disclosure"
               >
                 <div className="policy-settings-table-wrap">

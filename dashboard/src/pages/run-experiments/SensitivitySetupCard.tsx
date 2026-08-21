@@ -18,6 +18,7 @@ import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
 
 interface SensitivitySetupCardProps {
+  draftId?: string;
   initialStep?: number;
   executionDisabled: boolean;
   isLoadingOptions: boolean;
@@ -163,6 +164,7 @@ export function validateSensitivityRunSettings(
 }
 
 export function SensitivitySetupCard({
+  draftId = '',
   initialStep = 0,
   executionDisabled,
   isLoadingOptions,
@@ -440,7 +442,7 @@ export function SensitivitySetupCard({
                   <p className="scenario-field-links">
                     <Link
                       className="summary-link-inline"
-                      to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}`}
+                      to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}&from=sensitivity&draft=${encodeURIComponent(draftId)}&sensitivityStep=model-baseline`}
                     >
                       View this model&rsquo;s assumptions
                     </Link>
@@ -448,7 +450,7 @@ export function SensitivitySetupCard({
                       className="summary-link-inline"
                       to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${
                         selectedSnapshot?.evidenceYear ?? 2024
-                      }&from=sensitivity`}
+                      }&from=sensitivity&draft=${encodeURIComponent(draftId)}&sensitivityStep=model-baseline`}
                     >
                       Compare how models fit the evidence
                     </Link>
@@ -587,26 +589,18 @@ export function SensitivitySetupCard({
                     </button>
                   )}
                   {activeStep === SENSITIVITY_STEPS.length - 1 && (
-                    <>
-                      <button
-                        type="button"
-                        className="primary-button scenario-create-button"
-                        disabled={submissionBlocked}
-                        onClick={() => submitFromReview(false)}
-                      >
-                        {isSubmitting ? 'Starting...' : 'Start sensitivity analysis'}
-                      </button>
-                      {warnings.length > 0 && (
-                        <button
-                          type="button"
-                          className="secondary-button"
-                          disabled={submissionBlocked}
-                          onClick={() => submitFromReview(true)}
-                        >
-                          Confirm and start
-                        </button>
-                      )}
-                    </>
+                    <button
+                      type="button"
+                      className="primary-button scenario-create-button"
+                      disabled={submissionBlocked}
+                      onClick={() => submitFromReview(warnings.length > 0)}
+                    >
+                      {isSubmitting
+                        ? 'Starting...'
+                        : warnings.length > 0
+                          ? 'Confirm and start'
+                          : 'Start sensitivity analysis'}
+                    </button>
                   )}
                 </div>
               </div>

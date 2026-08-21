@@ -1149,40 +1149,6 @@ export function ManualResultsView({
 
       <div className="results-main results-main-full">
           <article className="results-card manual-results-summary-card">
-            <div className="results-card-head">
-              <h2>{baselineSummary ? getRunPrimaryLabel(baselineSummary) : 'Policy run'}</h2>
-              <span className="manual-results-mode-pill">{mode === 'compare' ? 'Comparing runs' : 'Single run'}</span>
-            </div>
-            {baselineSummary ? (
-              <dl className="manual-results-provenance">
-                <div>
-                  <dt>Calibrated model</dt>
-                  <dd>{getRunModelVersion(baselineSummary) ?? 'Not recorded'}</dd>
-                </div>
-                <div>
-                  <dt>Reference policy</dt>
-                  <dd>
-                    {summariseRunPolicy(baselineSummary.policySettings).basePolicyId
-                      ? `${summariseRunPolicy(baselineSummary.policySettings).basePolicyId} policy`
-                      : 'Not recorded'}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Policy settings</dt>
-                  <dd>
-                    {(() => {
-                      const policy = summariseRunPolicy(baselineSummary.policySettings);
-                      if (!policy.basePolicyId) return 'Not recorded';
-                      if (policy.deviations.length === 0) return 'No changes';
-                      return `${policy.deviations.length} ${policy.deviations.length === 1 ? 'setting' : 'settings'} changed`;
-                    })()}
-                  </dd>
-                </div>
-              </dl>
-            ) : (
-              <p>Choose the completed policy run whose results you want to inspect.</p>
-            )}
-
             <div className="comparison-run-pickers">
               <label>
                 <span>Selected policy run</span>
@@ -1249,12 +1215,12 @@ export function ManualResultsView({
             </label>
 
             {baselineDetail && policySettings.length > 0 && (
-              <div className="run-policy-disclosure">
-                <div className="run-policy-head">
-                  <strong>Policy settings used</strong>
-                  <small>{policySettingsSummary}</small>
-                </div>
-
+              <CollapsibleSection
+                title="Policy settings used"
+                summary={policySettingsSummary}
+                defaultOpen={false}
+                className="run-policy-disclosure"
+              >
                 <div className="run-policy-provenance" aria-label="Policy run provenance">
                   {[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])].map((run) => {
                     const referencePolicy = summariseRunPolicy(run.policySettings).basePolicyId;
@@ -1312,7 +1278,7 @@ export function ManualResultsView({
                       </tbody>
                     </table>
                 </div>
-              </div>
+              </CollapsibleSection>
             )}
 
             <div className="summary-links">

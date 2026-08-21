@@ -4,70 +4,15 @@ import type { CalibrationModelOverview, CalibrationOverviewResponse, CompareResp
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
 import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
+import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
 import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
-import { buildModelOptions, formatModelName, formatModelSubtitle, getDefaultModelVersion } from '../lib/modelAnchors';
+import { buildModelOptions, getDefaultModelVersion } from '../lib/modelAnchors';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
+import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
+import { ValidationModelOptions } from './ValidationPage';
 
 type ViewMode = 'single' | 'compare';
 const FITTED_IDS = new Set(['rent_purchase_choice', 'btl_probability_multiplier', 'btl_choice_intensity', 'market_average_price_decay']);
-
-/**
- * The four model anchors differ on two axes — the era of the input data and the era of the evidence
- * the behavioural parameters were fitted to. These are the pairs that move one axis at a time (plus
- * the cumulative one), so a difference can be attributed to a single cause. Any other pair confounds
- * the two, which is what the advanced selectors are for.
- *
- * `left` must be the earlier version: the compare API lists provenance for the range between the two
- * versions, so a reversed pair reports no changes.
- */
-interface ComparisonPreset {
-  left: string;
-  right: string;
-  /** What the pair isolates. Shown under the selector, since the option text carries only identity. */
-  question: string;
-}
-
-const PRESETS: readonly ComparisonPreset[] = [
-  {
-    left: 'v0',
-    right: 'v0o7',
-    question: 'Isolates the behavioural refit. Both models read the same 2011 inputs and target the same 2011 evidence, so only the five fitted parameters differ.'
-  },
-  {
-    left: 'v0',
-    right: 'v4.26',
-    question: 'Isolates the updated empirical inputs. The behaviour stays fitted to 2011 evidence in both models, so differences come from the 2024 data alone.'
-  },
-  {
-    left: 'v4.26',
-    right: 'v5o3',
-    question: 'Isolates the behavioural refit on current data. Both models read the same 2024 inputs; only the evidence the parameters were fitted to differs.'
-  },
-  {
-    left: 'v0',
-    right: 'v5o3',
-    question: 'The cumulative historical update: 2024 inputs and behaviour refitted to 2024 evidence. Differences cannot be attributed to either change on its own.'
-  }
-];
-
-const CUSTOM_COMPARISON_NOTE =
-  'A custom pair. Differences may combine an input-data update and a behavioural refit, so they cannot be attributed to one cause.';
-
-function formatPresetLabel(preset: ComparisonPreset): string {
-  return `${formatModelName(preset.left)} (${preset.left}) → ${formatModelName(preset.right)} (${preset.right})`;
-}
-
-/**
- * The preset to open when comparison is switched on: one that keeps the model already being read as
- * the primary, so ticking the box adds a baseline rather than changing the subject. Falls back to a
- * preset that starts from it, then to the first available pair.
- */
-function defaultPresetFor(version: string, available: readonly string[]): ComparisonPreset | undefined {
-  const offered = PRESETS.filter((preset) => available.includes(preset.left) && available.includes(preset.right));
-  return offered.find((preset) => preset.right === version)
-    ?? offered.find((preset) => preset.left === version)
-    ?? offered[0];
-}
 
 function fmt(value: number | null): string {
   if (value === null) return 'Not recorded';
@@ -142,20 +87,14 @@ function derivationDescription(derivation: ParameterCardMeta['keyMetadata'][numb
   }
 }
 
-/**
- * A page-level section that folds away. `CollapsibleSection` can't be reused here: its title slot is
- * inside the toggle button, which may only hold phrasing content, and these sections need to keep
- * their eyebrow and `h2` so the page keeps its heading outline. The heading wraps the button instead.
- */
+/** A page-level section that keeps a semantic heading while matching Validation's disclosures. */
 function CalibrationSection({
-  eyebrow,
   title,
   summary,
   defaultOpen,
   className,
   children
 }: {
-  eyebrow: string;
   title: string;
   /** Stays visible when collapsed, so the fold never hides what is inside. */
   summary: string;
@@ -169,7 +108,6 @@ function CalibrationSection({
   return <section className={['calibration-collapsible', isOpen ? 'is-open' : 'is-collapsed', className].filter(Boolean).join(' ')}>
     <div className="section-heading-row calibration-collapsible-head">
       <div>
-        <p className="eyebrow">{eyebrow}</p>
         <h2>
           <button type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={() => setIsOpen((current) => !current)}>
             <span className="calibration-collapsible-indicator" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
@@ -191,18 +129,6 @@ function countChangedParameters(overview: CalibrationOverviewResponse): number |
     const other = compared.parameters.find((candidate) => candidate.key === parameter.key);
     return other !== undefined && other.value !== parameter.value;
   }).length;
-}
-
-function ModelFacts({ model }: { model: CalibrationModelOverview }) {
-  return <div className="calibration-model-facts">
-    <h3>{model.identity.name} <span>{model.identity.version}</span></h3>
-    <dl>
-      <div><dt>Data vintage</dt><dd>{model.identity.dataVintage}</dd></div>
-      <div><dt>Fit vintage</dt><dd>{model.identity.fitVintage}</dd></div>
-      <div><dt>Method</dt><dd>{model.identity.method}</dd></div>
-    </dl>
-    {model.identity.inheritance && <p>{model.identity.inheritance}</p>}
-  </div>;
 }
 
 function FittedParameterCard({
@@ -249,11 +175,9 @@ export function ComparePage() {
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgress, setInProgress] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<ParameterCardMeta[]>([]);
-  const [mode, setMode] = useState<ViewMode>('single');
+  const [comparisonEnabled, setComparisonEnabledState] = useState(false);
   const [selected, setSelected] = useState('');
   const [left, setLeft] = useState('');
-  const [right, setRight] = useState('');
-  const [customComparison, setCustomComparison] = useState(false);
   const [overview, setOverview] = useState<CalibrationOverviewResponse | null>(null);
   const [comparison, setComparison] = useState<CompareResponse | null>(null);
   const [inspectionItem, setInspectionItem] = useState<CompareResponse['items'][number] | null>(null);
@@ -261,9 +185,13 @@ export function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState('');
-  const scenarioDraftId = params.get('from') === 'scenario' ? params.get('draft')?.trim() ?? '' : '';
-  const hasScenarioContext = Boolean(scenarioDraftId && readScenarioDraft(scenarioDraftId));
-  const returnVersion = mode === 'single' ? selected : right;
+  const mode: ViewMode = comparisonEnabled && left && left !== selected ? 'compare' : 'single';
+  const returnSource = params.get('from')?.trim() ?? '';
+  const evidenceDraftId = params.get('draft')?.trim() ?? '';
+  const hasScenarioContext = returnSource === 'scenario' && Boolean(evidenceDraftId && readScenarioDraft(evidenceDraftId));
+  const hasSensitivityContext = returnSource === 'sensitivity' && Boolean(evidenceDraftId && readSensitivityDraft(evidenceDraftId));
+  const hasSetupContext = hasScenarioContext || hasSensitivityContext;
+  const returnVersion = selected;
 
   useEffect(() => {
     if (!inspectionItem) return;
@@ -279,42 +207,48 @@ export function ComparePage() {
     void Promise.all([fetchVersions(), fetchCatalog()]).then(([versionPayload, catalogue]) => {
       if (cancelled) return;
       const available = versionPayload.versions;
-      const initialMode: ViewMode = params.get('mode') === 'compare' ? 'compare' : 'single';
+      const initialComparisonEnabled = params.get('mode') === 'compare';
       const defaultVersion = getDefaultModelVersion(available, versionPayload.inProgressVersions);
-      const requested = params.get('version') ?? '';
+      const requested = initialComparisonEnabled ? params.get('right') ?? '' : params.get('version') ?? '';
+      const primaryVersion = available.includes(requested) ? requested : defaultVersion;
+      const requestedComparison = params.get('left') ?? '';
       setVersions(available); setInProgress(versionPayload.inProgressVersions); setCatalog(catalogue);
-      setMode(initialMode);
-      setSelected(available.includes(requested) ? requested : defaultVersion);
-      const requestedLeft = available.includes(params.get('left') ?? '') ? params.get('left')! : (available.includes('v0') ? 'v0' : available[0] ?? '');
-      let requestedRight = available.includes(params.get('right') ?? '') ? params.get('right')! : defaultVersion;
-      if (requestedRight === requestedLeft) requestedRight = defaultVersion !== requestedLeft
-        ? defaultVersion
-        : available.find((version) => version !== requestedLeft) ?? requestedRight;
-      setLeft(requestedLeft);
-      setRight(requestedRight);
-      setCustomComparison(initialMode === 'compare' && !PRESETS.some((preset) => preset.left === requestedLeft && preset.right === requestedRight));
+      setComparisonEnabledState(initialComparisonEnabled);
+      setSelected(primaryVersion);
+      setLeft(
+        initialComparisonEnabled && available.includes(requestedComparison) && requestedComparison !== primaryVersion
+          ? requestedComparison
+          : ''
+      );
     }).catch((reason) => { setError((reason as Error).message); setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (!selected || (mode === 'compare' && (!left || !right)) || catalog.length === 0) return;
+    if (!selected || catalog.length === 0) return;
     const next = new URLSearchParams(params);
-    next.set('mode', mode);
-    if (mode === 'single') { next.set('version', selected); next.delete('left'); next.delete('right'); }
-    else { next.set('left', left); next.set('right', right); next.delete('version'); }
+    next.set('mode', comparisonEnabled ? 'compare' : 'single');
+    if (!comparisonEnabled) {
+      next.set('version', selected);
+      next.delete('left');
+      next.delete('right');
+    } else {
+      next.set('right', selected);
+      if (left && left !== selected) next.set('left', left);
+      else next.delete('left');
+      next.delete('version');
+    }
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
 
     let cancelled = false;
     let timer: number | undefined;
     const load = async () => {
       setLoading(true); setWaiting(false); setError('');
-      const primary = mode === 'single' ? selected : right;
       const other = mode === 'compare' ? left : undefined;
       try {
         const [overviewPayload, comparePayload] = await Promise.all([
-          fetchCalibrationOverview(primary, other),
-          fetchCompare(mode === 'single' ? selected : left, primary, catalog.map((item) => item.id), mode === 'single' ? 'through_right' : 'range')
+          fetchCalibrationOverview(selected, other),
+          fetchCompare(mode === 'single' ? selected : left, selected, catalog.map((item) => item.id), mode === 'single' ? 'through_right' : 'range')
         ]);
         if (!cancelled) { setOverview(overviewPayload); setComparison(comparePayload); }
       } catch (reason) {
@@ -325,14 +259,8 @@ export function ComparePage() {
     };
     void load();
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-  }, [mode, selected, left, right, catalog]);
+  }, [comparisonEnabled, mode, selected, left, catalog]);
 
-  const fittedByKey = useMemo(() => {
-    const items = comparison?.items.filter((item) => FITTED_IDS.has(item.id)) ?? [];
-    const map = new Map<string, { left: number; right: number }>();
-    for (const item of items) if (item.visualPayload.type === 'scalar') for (const value of item.visualPayload.values) map.set(value.key, value);
-    return map;
-  }, [comparison]);
   const referenceGroups = useMemo(() => {
     const term = search.trim().toLowerCase();
     const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id))
@@ -345,36 +273,49 @@ export function ComparePage() {
   // section still reports the whole model rather than the current query.
   const referenceItems = useMemo(() => (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id)), [comparison]);
   const optionSet = useMemo(() => new Set(inProgress), [inProgress]);
-  const singleOptions = buildModelOptions(versions, selected, optionSet);
-  const leftOptions = buildModelOptions(versions, left, optionSet);
-  const rightOptions = buildModelOptions(versions, right, optionSet);
+  const pickerVersions = useMemo(() => {
+    const offered = buildModelOptions(versions, selected, optionSet).map((option) => option.version);
+    return left && versions.includes(left) && !offered.includes(left) ? [...offered, left] : offered;
+  }, [left, optionSet, selected, versions]);
   const validationYear = overview?.primary.campaign.evidenceYear ?? 2024;
-  const selectedPresetIndex = PRESETS.findIndex((preset) => preset.left === left && preset.right === right);
-  const activePreset = (customComparison || selectedPresetIndex < 0) ? undefined : PRESETS[selectedPresetIndex];
-  const evidenceContext = hasScenarioContext ? `&from=scenario&draft=${encodeURIComponent(scenarioDraftId)}&scenarioStep=model-version` : '';
+  const evidenceContext = hasScenarioContext
+    ? `&from=scenario&draft=${encodeURIComponent(evidenceDraftId)}&scenarioStep=model-version`
+    : hasSensitivityContext
+      ? `&from=sensitivity&draft=${encodeURIComponent(evidenceDraftId)}&sensitivityStep=model-baseline`
+      : '';
+  const returnHref = hasScenarioContext
+    ? `/scenarios/new?draft=${encodeURIComponent(evidenceDraftId)}&step=model-version`
+    : `/sensitivity/new?draft=${encodeURIComponent(evidenceDraftId)}&step=model-baseline`;
 
   const setComparisonEnabled = (enabled: boolean) => {
-    if (!enabled) {
-      // Keep reading about the same model: `right` is the primary while comparing.
-      if (right) setSelected(right);
-      setMode('single');
-      return;
-    }
-    const preset = defaultPresetFor(selected, versions);
-    if (preset) {
-      setLeft(preset.left);
-      setRight(preset.right);
-      setCustomComparison(false);
-    }
-    setMode('compare');
+    setComparisonEnabledState(enabled);
+    if (!enabled) setLeft('');
+  };
+
+  const selectPrimaryModel = (version: string) => {
+    setSelected(version);
+    if (version === left) setLeft('');
   };
 
   return <section className="calibration-layout calibration-workspace">
-    {hasScenarioContext && returnVersion && <aside className="evidence-context-banner"><p>You are reviewing calibration evidence for an unfinished policy scenario.</p><div><Link className="secondary-button" to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}&step=model-version`}>Return without changing model</Link><Link className="primary-button" onClick={() => updateScenarioDraftModel(scenarioDraftId, returnVersion)} to={`/scenarios/new?draft=${encodeURIComponent(scenarioDraftId)}&step=model-version`}>Use {formatModelName(returnVersion)} and return</Link></div></aside>}
-    <header className="calibration-page-head"><div><p className="eyebrow">Model evidence</p><h1>Calibration</h1><p>Understand why the model needs fitted behaviour, what was fitted, and which other assumptions it carries.</p></div></header>
-    <section className="summary-panel calibration-introduction calibration-description">
-      <div>
-        <h2>Calibration assumptions</h2>
+    {hasSetupContext && returnVersion && <EvidenceReturnPanel
+      className="evidence-context-banner"
+      message={hasScenarioContext
+        ? 'You are reviewing calibration evidence for an unfinished policy scenario.'
+        : 'You are reviewing calibration evidence for an unfinished sensitivity analysis.'}
+      returnHref={returnHref}
+      versions={pickerVersions}
+      currentVersion={returnVersion}
+      inProgressVersions={optionSet}
+      onChooseModel={(version) => {
+        if (hasScenarioContext) updateScenarioDraftModel(evidenceDraftId, version);
+        else updateSensitivityDraftModel(evidenceDraftId, version);
+      }}
+    />}
+    <article className="results-card calibration-evidence-introduction">
+      <div className="validation-introduction-copy">
+        <h2>Calibration</h2>
+        <p>Understand why the model needs fitted behaviour, what was fitted, and which other assumptions it carries.</p>
         <p>
           The model combines inputs measured directly from UK data with behavioural parameters that cannot be
           observed directly. Household demographics and incomes, for example, can be set using published
@@ -383,51 +324,68 @@ export function ComparePage() {
           supporting them.
         </p>
       </div>
-    </section>
-    <div className="calibration-controls results-card" aria-label="Calibration view controls">
-      <div className="calibration-controls-row">
-        {mode === 'single' ? <label><span className="control-label">Model</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>{singleOptions.map((option) => <option key={option.version} value={option.version}>{option.label}</option>)}</select><small>{formatModelSubtitle(selected)}</small></label> : <div className="calibration-comparison-question">
-          <label>
-            <span className="control-label">Comparison</span>
-            <select value={selectedPresetIndex >= 0 && !customComparison ? String(selectedPresetIndex) : 'custom'} onChange={(event) => {
-              if (event.target.value === 'custom') { setCustomComparison(true); return; }
-              const preset = PRESETS[Number(event.target.value)];
-              if (preset) { setLeft(preset.left); setRight(preset.right); setCustomComparison(false); }
-            }}>
-              {PRESETS.filter((preset) => versions.includes(preset.left) && versions.includes(preset.right)).map((preset) => {
-                const index = PRESETS.indexOf(preset);
-                return <option value={index} key={`${preset.left}-${preset.right}`}>{formatPresetLabel(preset)}</option>;
-              })}
-              <option value="custom">Advanced: choose any two models</option>
-            </select>
-            <small>{activePreset?.question ?? CUSTOM_COMPARISON_NOTE}</small>
-          </label>
-          <div className="calibration-selected-pair" aria-live="polite">
-            <span>From <strong>{formatModelName(left)} ({left})</strong></span><i aria-hidden="true">→</i><span>To <strong>{formatModelName(right)} ({right})</strong></span>
-          </div>
-          <details className="calibration-custom-comparison" open={customComparison} onToggle={(event) => setCustomComparison(event.currentTarget.open)}>
-            <summary>Advanced custom comparison</summary>
-            <p>For configuration audits where a curated analytical comparison does not answer the question. Pick the earlier version as the “From” model: provenance covers the changes between the two, so a reversed pair reports none.</p>
-            <div>
-              <label><span className="control-label">From model</span><select value={left} onChange={(event) => setLeft(event.target.value)}>{leftOptions.map((option) => <option key={option.version} value={option.version} disabled={option.version === right}>{option.label}</option>)}</select></label>
-              <label><span className="control-label">To model</span><select value={right} onChange={(event) => setRight(event.target.value)}>{rightOptions.map((option) => <option key={option.version} value={option.version} disabled={option.version === left}>{option.label}</option>)}</select></label>
+    </article>
+    <section className="calibration-model-picker" aria-label="Calibration model selection">
+      <div className="validation-model-columns-scroll">
+        <div className="validation-model-columns">
+          <section className="validation-model-column" aria-labelledby="calibration-primary-model-heading">
+            <div className="validation-model-column-heading">
+              <div>
+                <span>Model 1</span>
+                <h3 id="calibration-primary-model-heading">Primary model</h3>
+              </div>
             </div>
-          </details>
-        </div>}
+            <ValidationModelOptions
+              versions={pickerVersions}
+              selectedVersion={selected}
+              name="calibration-primary-model"
+              label="Primary calibration model"
+              inProgressVersions={optionSet}
+              onChange={selectPrimaryModel}
+            />
+          </section>
+
+          <section
+            className={`validation-model-column validation-model-column-comparison ${comparisonEnabled ? 'is-enabled' : 'is-disabled'}`}
+            aria-labelledby="calibration-comparison-model-heading"
+            aria-disabled={!comparisonEnabled}
+          >
+            <div className="validation-model-column-heading">
+              <div>
+                <span>Model 2</span>
+                <h3 id="calibration-comparison-model-heading">Comparison model</h3>
+              </div>
+              <label className="comparison-enable-toggle validation-comparison-enable-toggle">
+                <input
+                  type="checkbox"
+                  checked={comparisonEnabled}
+                  disabled={versions.length < 2}
+                  onChange={(event) => setComparisonEnabled(event.target.checked)}
+                />
+                <span>Compare</span>
+              </label>
+            </div>
+            <ValidationModelOptions
+              versions={pickerVersions}
+              selectedVersion={left}
+              name="calibration-comparison-model"
+              label="Comparison calibration model"
+              disabled={!comparisonEnabled}
+              unavailableVersion={selected}
+              inProgressVersions={optionSet}
+              onChange={setLeft}
+            />
+            <small className="validation-selector-note">
+              {comparisonEnabled
+                ? left ? 'One model selected for comparison.' : 'Choose one model to compare with the primary model.'
+                : 'Check Compare to enable this column.'}
+            </small>
+          </section>
+        </div>
       </div>
-      <label className="comparison-enable-toggle">
-        <input
-          type="checkbox"
-          checked={mode === 'compare'}
-          disabled={versions.length < 2}
-          onChange={(event) => setComparisonEnabled(event.target.checked)}
-        />
-        <span>Compare with another model</span>
-      </label>
-    </div>
+    </section>
     {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
     {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <>
-    <div className="calibration-columns">
       <main className="calibration-main">
         <section className="results-card calibration-campaign"><div className="section-heading-row"><div><p className="eyebrow">Calibration campaign</p><h2>Why output calibration is necessary</h2></div><Link className="secondary-button" to={`/validation?version=${encodeURIComponent(overview.primary.identity.version)}&evidenceYear=${validationYear}${evidenceContext}`}>View indicator-level fit</Link></div><p>The five behavioural parameters below describe latent choices and model memory; they cannot be measured directly. Output calibration searches for values whose simulated outcomes collectively reproduce documented evidence.</p>{overview.primary.identity.inheritance && <p className="inheritance-note">{overview.primary.identity.inheritance}</p>}
           <div className="campaign-grid"><div><span>Evidence / fit year</span><strong>{overview.primary.campaign.evidenceYear ?? 'Not recorded'}</strong></div><div><span>Method</span><strong>{overview.primary.campaign.method}</strong></div><div className="wide"><span>Objective</span><strong>{overview.primary.campaign.objective}</strong></div><div><span>Before loss</span><strong>{fmt(overview.primary.campaign.baselineLoss)}</strong></div><div><span>After loss</span><strong>{fmt(overview.primary.campaign.selectedLoss)}</strong></div><div><span>Improvement</span><strong>{fmt(overview.primary.campaign.improvement)}</strong></div><div><span>Promotion</span><strong>{overview.primary.campaign.promotion}</strong></div><div className="wide"><span>Guardrail result</span><strong>{overview.primary.campaign.guardrail}</strong></div></div>
@@ -437,7 +395,6 @@ export function ComparePage() {
         </section>
         <CalibrationSection
           className="calibration-parameters"
-          eyebrow="Output-calibrated"
           title="Five fitted behavioural parameters"
           summary={countChangedParameters(overview) === null
             ? `${overview.primary.parameters.length} parameters`
@@ -456,11 +413,8 @@ export function ComparePage() {
           )}
         </CalibrationSection>
       </main>
-      <aside className="calibration-sticky-summary results-card"><p className="eyebrow">Selected model{mode === 'compare' ? 's' : ''}</p>{mode === 'compare' && overview.comparison && <ModelFacts model={overview.comparison} />}<ModelFacts model={overview.primary} /><h3>Fitted values</h3>{overview.primary.parameters.map((parameter) => <div className="sticky-value" key={parameter.key}><span>{parameter.name}</span><strong>{mode === 'compare' && fittedByKey.get(parameter.key) ? `${fmt(fittedByKey.get(parameter.key)!.left)} → ` : ''}{fmt(parameter.value)}</strong></div>)}</aside>
-    </div>
     <CalibrationSection
-      className="results-card assumption-reference assumption-reference-full"
-      eyebrow="Reference"
+      className="assumption-reference assumption-reference-full"
       title="Other model assumptions"
       summary={mode === 'compare'
         ? `${referenceItems.length} assumptions · ${referenceItems.filter((item) => !item.unchanged).length} changed`

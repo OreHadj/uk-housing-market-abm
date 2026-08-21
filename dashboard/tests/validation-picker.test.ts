@@ -3,7 +3,11 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { MODEL_ANCHORS } from '../src/lib/modelAnchors.js';
-import { ValidationModelOptions, ValidationPage } from '../src/pages/ValidationPage.js';
+import {
+  formatValidationScorecardValue,
+  ValidationModelOptions,
+  ValidationPage
+} from '../src/pages/ValidationPage.js';
 
 function renderValidation(entry: string): string {
   return renderToStaticMarkup(
@@ -57,6 +61,9 @@ assert.equal(
 const compareMarkup = renderValidation('/validation?version=v5o3&evidenceYear=2024&comparisonVersion=v4.26');
 assert.ok(compareMarkup.includes('validation-model-column-comparison is-enabled'));
 assert.ok(compareMarkup.includes('aria-disabled="false"'));
+assert.equal(formatValidationScorecardValue(5, 3), '5 vs 3');
+assert.equal(formatValidationScorecardValue('60%', '40%'), '60% vs 40%');
+assert.equal(formatValidationScorecardValue(5), '5');
 assert.ok(
   compareMarkup.includes(
     '/model-evidence?view=calibration&amp;mode=compare&amp;left=v5o3&amp;right=v4.26'

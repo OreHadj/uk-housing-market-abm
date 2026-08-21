@@ -8495,11 +8495,10 @@ assert.ok(
     manualResultsViewSource.includes('return getRunPrimaryLabel(run);') &&
     manualResultsViewSource.includes('<dt>Calibrated model</dt>') &&
     manualResultsViewSource.includes('<dt>Reference policy</dt>') &&
-    manualResultsViewSource.includes('<dt>Policy settings</dt>') &&
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
     manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
     manualResultsViewSource.includes('Run ID:'),
-  'Manual result labels should show the experiment name alone and keep provenance in labelled summary fields'
+  'Manual result labels should show the experiment name alone and keep technical provenance in the policy details'
 );
 assert.ok(
   manualResultsViewSource.includes("Dotted lines show each selected run&apos;s mean."),
@@ -8556,6 +8555,33 @@ assert.ok(
     sensitivityResultsViewSource.includes('window.prompt') &&
     sensitivityResultsViewSource.includes('deleteSensitivityExperiment'),
   'Sensitivity results deletion should confirm and prompt for remote delete key before calling the delete API'
+);
+assert.ok(
+  manualResultsViewSource.includes('title="Policy settings used"') &&
+    manualResultsViewSource.includes('summary={policySettingsSummary}') &&
+    manualResultsViewSource.includes('defaultOpen={false}') &&
+    sensitivityResultsViewSource.includes('title="Policy settings used"') &&
+    sensitivityResultsViewSource.includes('defaultOpen={false}'),
+  'Policy settings used should be collapsed dropdowns in both policy and sensitivity results'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.run-policy-disclosure.collapsible-section') &&
+    manualResultsStylesSource.includes('.run-policy-disclosure > .collapsible-section-toggle') &&
+    manualResultsStylesSource.includes('.run-policy-disclosure > .collapsible-section-body'),
+  'Policy settings disclosures should use the integrated arrow treatment in both result views'
+);
+assert.ok(
+  !manualResultsViewSource.includes('manual-results-provenance') &&
+    !manualResultsViewSource.includes('manual-results-mode-pill') &&
+    manualResultsStylesSource.includes('.manual-results-summary-card > .comparison-run-pickers'),
+  'Policy results should begin with run selection instead of repeating a changing selected-run summary'
+);
+assert.ok(
+  sensitivityResultsViewSource.includes('title="Summary"') &&
+    sensitivityResultsViewSource.includes('summary={sweepSummary.instrument}') &&
+    sensitivityResultsViewSource.includes('className="run-policy-disclosure sensitivity-run-summary-disclosure"') &&
+    sensitivityResultsViewSource.includes('className="sensitivity-summary-facts"'),
+  'Sensitivity run facts should be retained inside an integrated collapsed Summary disclosure'
 );
 
 const experimentQueueCardSource = fs.readFileSync(
@@ -9020,10 +9046,43 @@ assert.ok(
 }
 assert.ok(
   validationPageSource.includes('Comparative validation loss — lower is better') &&
-    validationPageSource.includes('Composite loss has no standalone statistical interpretation') &&
+    validationPageSource.includes('Unweighted mean of {summary.metrics.length} metric losses.') &&
+    !validationPageSource.includes('see the breakdown below') &&
+    validationPageSource.includes('it is not a probability, confidence interval, or hypothesis-test statistic') &&
     validationPageSource.includes('Average seeds inside target bands') &&
     validationPageSource.includes('Largest validation gaps'),
   'Validation page should lead with the selected-model diagnostic scorecard'
+);
+assert.ok(
+  validationPageSource.includes('validation-decomposition-description') &&
+    validationPageSource.includes('validation-decomposition-legend') &&
+    validationPageSource.includes('style={{ background: BASELINE_COLOR }}') &&
+    validationPageSource.includes('style={{ background: COMPARISON_COLOR }}') &&
+    manualResultsStylesSource.includes('.validation-decomposition-description') &&
+    manualResultsStylesSource.includes('max-width: none;') &&
+    !validationPageSource.includes('Largest share of error:'),
+  'Validation comparison should use a full-width decomposition description, identify both bar colours, and omit the redundant extrema summary'
+);
+assert.ok(
+  validationPageSource.includes('formatValidationScorecardValue') &&
+    validationPageSource.includes('comparisonSummary ? comparisonScorecard.counts[status] : null') &&
+    !validationPageSource.includes('validation-score-comparison-table'),
+  'Validation comparison should retain the scorecard boxes and show paired values instead of a table'
+);
+assert.ok(
+  manualResultsStylesSource.includes('minmax(12.5rem, 1.35fr)') &&
+    manualResultsStylesSource.includes('minmax(15rem, 1.6fr)') &&
+    manualResultsStylesSource.includes('.validation-scorecard-grid .kpi-card:last-child > strong') &&
+    manualResultsStylesSource.includes('white-space: nowrap;'),
+  'Validation scorecard should trade composite-card width for a wider single-line seeds comparison card'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-summary-card"') &&
+    validationPageSource.includes('title="Summary card"') &&
+    validationPageSource.includes('`${summary.version} compared with ${comparisonSummary.version}`') &&
+    validationPageSource.includes('defaultOpen={false}') &&
+    manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-title'),
+  'The complete validation scorecard should sit inside a collapsed Summary card disclosure'
 );
 assert.ok(
   validationPageSource.includes('Models tested against 2024 UK evidence') &&
@@ -9044,28 +9103,56 @@ assert.ok(
 );
 assert.ok(
   validationPageSource.includes('validation-target-band') &&
-    validationPageSource.includes('validation-iqr') &&
     validationPageSource.includes('validation-mean-marker') &&
     validationPageSource.includes('validation-source-marker') &&
-    validationPageSource.includes('calculateValidationRangePositions'),
-  'Validation metric rows should distinguish target, IQR, mean, and optional source markers'
+    validationPageSource.includes('calculateValidationRangePositions') &&
+    !validationPageSource.includes('validation-iqr'),
+  'Validation strips should plot target band, mean, and source only — IQR is a number in the row detail'
 );
 assert.ok(
-  validationPageSource.includes('<details className={`validation-metric-row') &&
+  /^\s*<details\b[^>]*validation-metric-row/m.test(validationPageSource) &&
     validationPageSource.includes('Secondary cross-year comparison') &&
-    validationPageSource.includes('Technical results table') &&
     validationPageSource.includes('Validation methodology') &&
     validationPageSource.includes('How validation loss is calculated'),
   'Validation page should use semantic progressive disclosure and keep cross-year deltas secondary'
 );
+// The technical table duplicated every metric: its fields were a strict subset of the row detail,
+// which additionally carries loss-delta percent, loss/additive scale, and band notes. One rendering.
 assert.ok(
-  validationPageSource.includes('<th>Metric</th><th>Empirical target</th><th>Simulation</th><th>Seeds in band</th><th>Loss</th><th>Details</th>') &&
-    validationPageSource.includes('validation-table-detail-disclosure') &&
-    validationPageSource.includes('Loss change vs original 2011 benchmark') &&
+  !validationPageSource.includes('validation-metrics-table') &&
+    !validationPageSource.includes('Technical results table') &&
+    validationPageSource.includes('loss change versus original 2011 benchmark') &&
     validationPageSource.includes('Sources and provenance') &&
-    !validationPageSource.includes('±25% context range') &&
-    !validationPageSource.includes('<th>Loss delta % vs v0 2011</th>'),
-  'Validation technical table should use six compact columns and disclose secondary audit fields on demand'
+    validationPageSource.includes('Simulated IQR'),
+  'Validation should render each metric once, with the audit fields kept in the row detail'
+);
+assert.ok(
+  validationPageSource.includes('describeThemeStatuses') &&
+    validationPageSource.includes('<CollapsibleSection') &&
+    /className="validation-theme"[\s\S]*?summary=\{describeThemeStatuses\(metrics\)\}[\s\S]*?defaultOpen=\{false\}/.test(validationPageSource) &&
+    !validationPageSource.includes("metrics.some((metric) => metric.status === 'fail')") &&
+    validationPageSource.includes('Seeds in band'),
+  'Outcome diagnostics should group themes into sections that are all collapsed by default'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-outcome-diagnostics"') &&
+    validationPageSource.includes('title="Outcome diagnostics"') &&
+    validationPageSource.includes('summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}') &&
+    validationPageSource.includes('defaultOpen={false}'),
+  'Outcome diagnostics should itself be a collapsed disclosure with a useful metric summary'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.validation-outcome-diagnostics > .collapsible-section-toggle .collapsible-section-title') &&
+    manualResultsStylesSource.includes('.validation-audit-disclosure > .collapsible-section-toggle .collapsible-section-title') &&
+    manualResultsStylesSource.includes('font-size: 1.17em;'),
+  'Outcome diagnostics should match the Validation methodology heading typography'
+);
+assert.ok(
+  validationPageSource.includes('className="results-card validation-audit-disclosure"') &&
+    validationPageSource.includes('title="Validation methodology"') &&
+    validationPageSource.includes('summary="Protocol, evidence, and loss calculation"') &&
+    validationPageSource.includes('defaultOpen={false}'),
+  'Validation methodology should use the shared disclosure with a left-side state arrow'
 );
 assert.ok(
   validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
@@ -9101,6 +9188,45 @@ assert.ok(
 );
 
 const comparePageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ComparePage.tsx'), 'utf-8');
+assert.ok(
+    comparePageSource.includes('className="results-card calibration-evidence-introduction"') &&
+    comparePageSource.includes('className="validation-introduction-copy"') &&
+    comparePageSource.includes('<h2>Calibration</h2>') &&
+    !comparePageSource.includes('Calibration assumptions') &&
+    !comparePageSource.includes('calibration-assumptions-copy') &&
+    !comparePageSource.includes('calibration-page-head') &&
+    !comparePageSource.includes('summary-panel calibration-introduction calibration-description') &&
+    comparePageSource.includes('className="assumption-reference assumption-reference-full"') &&
+    !comparePageSource.includes('className="results-card assumption-reference assumption-reference-full"') &&
+    manualResultsStylesSource.includes('.calibration-evidence-introduction.results-card') &&
+    manualResultsStylesSource.includes('.calibration-collapsible-head h2') &&
+    manualResultsStylesSource.includes('font-size: 1.17em;') &&
+    manualResultsStylesSource.includes('.calibration-collapsible') &&
+    manualResultsStylesSource.includes('.assumption-reference-full') &&
+    !comparePageSource.includes('eyebrow="Output-calibrated"') &&
+    !comparePageSource.includes('eyebrow="Reference"'),
+  'Calibration should use validation typography and integrated borderless disclosures without extra eyebrow labels'
+);
+assert.ok(
+  comparePageSource.includes("import { ValidationModelOptions } from './ValidationPage';") &&
+    comparePageSource.includes('className="calibration-model-picker"') &&
+    comparePageSource.includes('name="calibration-primary-model"') &&
+    comparePageSource.includes('name="calibration-comparison-model"') &&
+    comparePageSource.includes("comparisonEnabled ? 'is-enabled' : 'is-disabled'") &&
+    comparePageSource.includes('disabled={!comparisonEnabled}') &&
+    comparePageSource.includes('unavailableVersion={selected}') &&
+    comparePageSource.includes('checked={comparisonEnabled}') &&
+    !comparePageSource.includes('Advanced custom comparison') &&
+    !comparePageSource.includes('calibration-selected-pair') &&
+    manualResultsStylesSource.includes('.calibration-model-picker { min-width: 0; }'),
+  'Calibration should reuse Validation model cards and enable the visible comparison column with a checkbox'
+);
+assert.ok(
+  !comparePageSource.includes('calibration-selected-model-summary') &&
+    !comparePageSource.includes("title={mode === 'compare' ? 'Selected models' : 'Selected model'}") &&
+    !manualResultsStylesSource.includes('.calibration-selected-model-summary'),
+  'Calibration should rely on the visible model pickers without a duplicate selected-models section'
+);
 assert.ok(
   comparePageSource.includes("const DEFAULT_OPEN_COMPARE_CARD_IDS = new Set<string>([") &&
     comparePageSource.includes("'house_price_lognormal'") &&

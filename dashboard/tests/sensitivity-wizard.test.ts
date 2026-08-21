@@ -144,6 +144,7 @@ assert.equal('TIME_TO_START_RECORDING_TRANSACTIONS' in sensitivityOverrides, fal
 assert.equal(sensitivityOverrides.N_SIMS, 5);
 
 const commonProps = {
+  draftId: 'sensitivity-draft-test',
   executionDisabled: false,
   isLoadingOptions: false,
   selectedBaseline: snapshot.version,
@@ -198,6 +199,12 @@ assert.ok(
     firstStepMarkup.includes('>→</span>'),
   'Back and Continue should render as accessible directional arrows'
 );
+assert.ok(
+  firstStepMarkup.includes('from=sensitivity') &&
+    firstStepMarkup.includes('draft=sensitivity-draft-test') &&
+    firstStepMarkup.includes('sensitivityStep=model-baseline'),
+  'Sensitivity evidence links should carry their draft and return-step context'
+);
 for (const label of ['Experiment details', 'Define the sweep', 'Model and baseline', 'Run and recording', 'Review and start']) {
   assert.ok(firstStepMarkup.includes(label), `Expected sensitivity step ${label}`);
 }
@@ -230,6 +237,11 @@ const warningMarkup = renderToStaticMarkup(
   )
 );
 assert.ok(warningMarkup.includes('Confirm and start') && warningMarkup.includes('This run may take longer.'));
+assert.equal(
+  warningMarkup.includes('Start sensitivity analysis'),
+  false,
+  'Warning confirmation should replace the start action instead of rendering a duplicate button'
+);
 
 const prepared = prepareSensitivityExperimentSubmission(
   createDevelopmentRuntimePaths(repoRoot),

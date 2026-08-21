@@ -20,8 +20,19 @@ import {
   formatModelName,
   formatModelSubtitle
 } from '../lib/modelAnchors';
+import { CollapsibleSection } from '../components/CollapsibleSection';
+import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
 import { BASELINE_COLOR, COMPARISON_COLOR } from '../lib/manualOverlayChartOption';
+
+/**
+ * The simulated-mean marker when only one model is on the axis. Deliberately not BASELINE_COLOR:
+ * that teal is the target band's own colour, so the marker vanished into the band it sits on. Ink
+ * reads against both the band and the page, and cannot be mistaken for a status colour the way the
+ * previous orange now would be, `warn` having moved to orange.
+ */
+const MEAN_MARKER_COLOR = '#112018';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
+import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
 
 const DEFAULT_VALIDATION_TARGET_YEAR = 2024;
 
@@ -115,15 +126,11 @@ function formatModelWithVersion(version: string): string {
   return name === version ? version : `${name} (${version})`;
 }
 
-function formatStatusCountDifference(
-  status: ValidationMetricStatus,
-  selectedCount: number,
-  comparisonCount: number
+export function formatValidationScorecardValue(
+  primary: string | number,
+  comparison?: string | number | null
 ): string {
-  const difference = comparisonCount - selectedCount;
-  if (difference === 0) return 'Same';
-  const noun = status === 'pass' ? 'passes' : status === 'warn' ? 'warnings' : status === 'fail' ? 'failures' : 'unsupported';
-  return `${difference > 0 ? '+' : '−'}${Math.abs(difference)} ${noun}`;
+  return comparison === null || comparison === undefined ? String(primary) : `${primary} vs ${comparison}`;
 }
 
 /**
@@ -151,8 +158,6 @@ export function deviationToPosition(percent: number): number {
 export interface ValidationRangePositions {
   targetStart: number | null;
   targetEnd: number | null;
-  iqrStart: number;
-  iqrEnd: number;
   mean: number;
   source: number | null;
   deviationPercent: number | null;
@@ -163,13 +168,11 @@ export interface ValidationRangePositions {
 export function calculateValidationRangePositions(metric: ValidationMetricSummary): ValidationRangePositions {
   const source = metric.sourceValue;
   // Distribution-shape metrics (JSD) have no single empirical target, so a percentage
-  // deviation is undefined for them. They are rendered in their own sub-group instead.
+  // deviation is undefined for them. Their rows carry a note instead of a strip.
   if (source === null || !Number.isFinite(source) || source === 0) {
     return {
       targetStart: null,
       targetEnd: null,
-      iqrStart: 50,
-      iqrEnd: 50,
       mean: 50,
       source: null,
       deviationPercent: null,
@@ -178,13 +181,9 @@ export function calculateValidationRangePositions(metric: ValidationMetricSummar
     };
   }
   const deviationPercent = toDeviationPercent(metric.seedMean, source);
-  const iqrLow = toDeviationPercent(Math.min(metric.p25, metric.p75), source);
-  const iqrHigh = toDeviationPercent(Math.max(metric.p25, metric.p75), source);
   return {
     targetStart: metric.targetBand ? deviationToPosition(toDeviationPercent(metric.targetBand.lower, source)) : null,
     targetEnd: metric.targetBand ? deviationToPosition(toDeviationPercent(metric.targetBand.upper, source)) : null,
-    iqrStart: deviationToPosition(iqrLow),
-    iqrEnd: deviationToPosition(iqrHigh),
     mean: deviationToPosition(deviationPercent),
     source: 50,
     deviationPercent,
@@ -483,26 +482,15 @@ function MetricSeries({
   title: string;
 }) {
   return (
-    <>
-      <div
-        className="validation-iqr"
-        style={{
-          left: `${positions.iqrStart}%`,
-          width: `${Math.max(1, positions.iqrEnd - positions.iqrStart)}%`,
-          background: colour,
-          borderColor: colour
-        }}
-      />
-      <span
-        className={positions.meanOverflow ? 'validation-mean-marker validation-mean-overflow' : 'validation-mean-marker'}
-        style={
-          positions.meanOverflow
-            ? { left: `${positions.mean}%`, borderLeftColor: colour }
-            : { left: `${positions.mean}%`, background: colour }
-        }
-        title={title}
-      />
-    </>
+    <span
+      className={positions.meanOverflow ? 'validation-mean-marker validation-mean-overflow' : 'validation-mean-marker'}
+      style={
+        positions.meanOverflow
+          ? { left: `${positions.mean}%`, borderLeftColor: colour }
+          : { left: `${positions.mean}%`, background: colour }
+      }
+      title={title}
+    />
   );
 }
 
@@ -544,7 +532,11 @@ function MetricRange({
           style={{ left: `${positions.targetStart}%`, width: `${Math.max(0.6, positions.targetEnd - positions.targetStart)}%` }}
         />
       )}
-      <MetricSeries positions={positions} colour={BASELINE_COLOR} title="Simulated mean" />
+      <MetricSeries
+        positions={positions}
+        colour={comparisonPositions?.scaled ? BASELINE_COLOR : MEAN_MARKER_COLOR}
+        title="Simulated mean"
+      />
       {comparisonPositions?.scaled && (
         <MetricSeries
           positions={comparisonPositions}
@@ -619,6 +611,22 @@ function ValidationStatusLegend() {
   );
 }
 
+/**
+ * The collapsed summary for a theme: what its metrics scored, most severe first. This is what makes
+ * a collapsed theme worth reading rather than just something to click open.
+ */
+function describeThemeStatuses(metrics: ValidationMetricSummary[]): string {
+  if (metrics.length === 0) {
+    return 'No metrics';
+  }
+  const order: ValidationMetricStatus[] = ['fail', 'warn', 'pass', 'unsupported'];
+  return order
+    .map((status) => ({ status, count: metrics.filter((metric) => metric.status === status).length }))
+    .filter((entry) => entry.count > 0)
+    .map((entry) => `${entry.count} ${entry.status}`)
+    .join(' \u00b7 ');
+}
+
 function MetricRow({
   metric,
   comparisonMetric,
@@ -673,6 +681,11 @@ function MetricRow({
             <strong>{formatDeviation(positions.deviationPercent)}</strong>
           </div>
         )}
+        <div className={comparisonMetric ? 'validation-row-seeds validation-row-seeds-compare' : 'validation-row-seeds'}>
+          <span>Seeds in band</span>
+          <strong>{formatInsideRate(metric.insideRate)}</strong>
+          {comparisonMetric && <strong>{formatInsideRate(comparisonMetric.insideRate)}</strong>}
+        </div>
         <div className={comparisonMetric ? 'validation-row-loss validation-row-loss-compare' : 'validation-row-loss'}>
           <span>Loss</span>
           <strong>{formatLoss(metric.metricLoss)}</strong>
@@ -715,12 +728,14 @@ export function ValidationPage() {
   // Only offered when the analyst arrived from a setup form, so this reads as a return trip
   // rather than an unexplained call to action for someone browsing validation on its own.
   const returnSource = searchParams.get('from')?.trim() ?? '';
-  const draftId = returnSource === 'scenario' ? searchParams.get('draft')?.trim() ?? '' : '';
-  const isScenarioContext = Boolean(draftId && readScenarioDraft(draftId));
-  const scenarioReturnStep = searchParams.get('scenarioStep') === 'model-version' ? '&step=model-version' : '';
-  const returnDestination = returnSource === 'scenario'
-    ? (isScenarioContext ? RETURN_DESTINATIONS.scenario : null)
-    : RETURN_DESTINATIONS[returnSource] ?? null;
+  const draftId = searchParams.get('draft')?.trim() ?? '';
+  const isScenarioContext = returnSource === 'scenario' && Boolean(draftId && readScenarioDraft(draftId));
+  const isSensitivityContext = returnSource === 'sensitivity' && Boolean(draftId && readSensitivityDraft(draftId));
+  const returnDestination = isScenarioContext
+    ? RETURN_DESTINATIONS.scenario
+    : isSensitivityContext
+      ? RETURN_DESTINATIONS.sensitivity
+      : null;
   const [overview, setOverview] = useState<ValidationOverviewPayload | null>(null);
   const [selectedVersion, setSelectedVersion] = useState(requestedVersion);
   const [selectedValidationTargetYear, setSelectedValidationTargetYear] = useState(
@@ -857,7 +872,14 @@ export function ValidationPage() {
     [sortMetricId, metricsByVersion, orderedVersions]
   );
   const pickerVersions = rankedVersions ? rankedVersions.map((entry) => entry.version) : orderedVersions;
-  const evidenceContext = isScenarioContext ? `&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version` : '';
+  const evidenceContext = isScenarioContext
+    ? `&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`
+    : isSensitivityContext
+      ? `&from=sensitivity&draft=${encodeURIComponent(draftId)}&sensitivityStep=model-baseline`
+      : '';
+  const returnHref = isScenarioContext
+    ? `${RETURN_DESTINATIONS.scenario.path}?draft=${encodeURIComponent(draftId)}&step=model-version`
+    : `${RETURN_DESTINATIONS.sensitivity.path}?draft=${encodeURIComponent(draftId)}&step=model-baseline`;
   const calibrationPageHref = comparisonVersion
     ? `/model-evidence?view=calibration&mode=compare&left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonVersion)}${evidenceContext}`
     : `/model-evidence?view=calibration&mode=single&version=${encodeURIComponent(selectedVersion)}${evidenceContext}`;
@@ -886,19 +908,18 @@ export function ValidationPage() {
   return (
     <section className="validation-layout">
       {selectedVersion && returnDestination && (
-        <div className="validation-return-bar">
-          {isScenarioContext ? <>
-            <p>You are checking validation evidence for an unfinished policy scenario. Choose whether to keep its current model or use the model selected here.</p>
-            <div>
-              <Link className="secondary-button" to={`/calibration?mode=single&version=${encodeURIComponent(selectedVersion)}${evidenceContext}`}>View calibration assumptions</Link>
-              <Link className="secondary-button" to={`${returnDestination.path}?draft=${encodeURIComponent(draftId)}${scenarioReturnStep}`}>Return without changing model</Link>
-              <Link className="primary-button" onClick={() => updateScenarioDraftModel(draftId, selectedVersion)} to={`${returnDestination.path}?draft=${encodeURIComponent(draftId)}${scenarioReturnStep}`}>Use {formatModelName(selectedVersion)} and return to scenario</Link>
-            </div>
-          </> : <>
-            <p>Comparing models for your {returnDestination.noun}. Pick the one whose scores you trust, then take it back to the setup form.</p>
-            <Link className="primary-button" to={`${returnDestination.path}?baseline=${encodeURIComponent(selectedVersion)}`}>Use {selectedVersion} and return to setup</Link>
-          </>}
-        </div>
+        <EvidenceReturnPanel
+          className="validation-return-bar"
+          message={`You are checking validation evidence for an unfinished ${returnDestination.noun}.`}
+          returnHref={returnHref}
+          versions={pickerVersions}
+          currentVersion={selectedVersion}
+          inProgressVersions={inProgressSet}
+          onChooseModel={(version) => {
+            if (isScenarioContext) updateScenarioDraftModel(draftId, version);
+            else updateSensitivityDraftModel(draftId, version);
+          }}
+        />
       )}
       <article className="results-card validation-introduction">
         <div className="validation-introduction-top">
@@ -1001,7 +1022,14 @@ export function ValidationPage() {
 
       {summary && (
         <>
-          <article className="results-card">
+          <CollapsibleSection
+            className="results-card validation-summary-card"
+            title="Summary card"
+            summary={comparisonSummary
+              ? `${summary.version} compared with ${comparisonSummary.version}`
+              : `${versionLabel(summary.version)} · ${summary.validationTargetYear} evidence`}
+            defaultOpen={false}
+          >
             <div className="validation-overview-header">
               <div>
                 <h3>
@@ -1012,63 +1040,58 @@ export function ValidationPage() {
                 <p>{summary.validationTargetYear} UK evidence · conclusions across ten fixed seeds</p>
               </div>
             </div>
-            {!comparisonSummary && (
-              <div className="kpi-grid validation-scorecard-grid">
-                <div className="kpi-card validation-composite-card">
-                  <span>Comparative validation loss — lower is better</span>
-                  <strong>{formatNumber(summary.overallCompositeLoss, 4)}</strong>
-                  <small>Unweighted mean of {summary.metrics.length} metric losses — see the breakdown below.</small>
-                </div>
-                {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
-                  <div className={`kpi-card validation-count-card validation-metric-${status}`} key={status}>
-                    <span>{status}</span>
-                    <strong>{scorecard.counts[status]}</strong>
-                    <small>metrics</small>
-                  </div>
-                ))}
-                <div className="kpi-card">
-                  <span>Average seeds inside target bands</span>
-                  <strong>{formatInsideRate(scorecard.averageInsideRate)}</strong>
-                  <small>Unsupported metrics excluded</small>
-                </div>
+            <div className="kpi-grid validation-scorecard-grid">
+              <div className="kpi-card validation-composite-card">
+                <span>Comparative validation loss — lower is better</span>
+                <strong>
+                  {formatValidationScorecardValue(
+                    formatNumber(summary.overallCompositeLoss, 4),
+                    comparisonSummary ? formatNumber(comparisonSummary.overallCompositeLoss, 4) : null
+                  )}
+                </strong>
+                <small>Unweighted mean of {summary.metrics.length} metric losses.</small>
               </div>
-            )}
-            {comparisonSummary && (
-              <div className="validation-score-comparison-wrap">
-                <table className="policy-results-table validation-score-comparison-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Summary</th>
-                      <th scope="col">{formatModelWithVersion(summary.version)}</th>
-                      <th scope="col">{formatModelWithVersion(comparisonSummary.version)}</th>
-                      <th scope="col">Difference</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <th scope="row">Validation loss <small>Lower is better</small></th>
-                      <td>{formatNumber(summary.overallCompositeLoss, 4)}</td>
-                      <td>{formatNumber(comparisonSummary.overallCompositeLoss, 4)}</td>
-                      <td>{formatDelta(comparisonSummary.overallCompositeLoss - summary.overallCompositeLoss)}</td>
-                    </tr>
-                    {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
-                      <tr key={status}>
-                        <th scope="row"><span className={`validation-status-pill validation-status-${status}`}>{status}</span></th>
-                        <td>{scorecard.counts[status]}</td>
-                        <td>{comparisonScorecard.counts[status]}</td>
-                        <td>{formatStatusCountDifference(status, scorecard.counts[status], comparisonScorecard.counts[status])}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              {(['pass', 'warn', 'fail', 'unsupported'] as const).map((status) => (
+                <div className={`kpi-card validation-count-card validation-metric-${status}`} key={status}>
+                  <span>{status}</span>
+                  <strong>
+                    {formatValidationScorecardValue(
+                      scorecard.counts[status],
+                      comparisonSummary ? comparisonScorecard.counts[status] : null
+                    )}
+                  </strong>
+                  <small>metrics</small>
+                </div>
+              ))}
+              <div className="kpi-card">
+                <span>Average seeds inside target bands</span>
+                <strong>
+                  {formatValidationScorecardValue(
+                    formatInsideRate(scorecard.averageInsideRate),
+                    comparisonSummary ? formatInsideRate(comparisonScorecard.averageInsideRate) : null
+                  )}
+                </strong>
+                <small>Unsupported metrics excluded</small>
               </div>
-            )}
+            </div>
             <div className="validation-loss-decomposition">
               <h4>Where this model&rsquo;s error sits</h4>
-              <p className="validation-card-subtitle">
+              <p className="validation-card-subtitle validation-decomposition-description">
                 Each theme&rsquo;s share of the total metric loss. A <strong>smaller</strong> share means this model version fits
                 the 2024 evidence better for that group of indicators.
               </p>
+              {comparisonSummary && (
+                <div className="validation-decomposition-legend" aria-label="Theme loss bar colours">
+                  <span>
+                    <span className="validation-decomposition-swatch" style={{ background: BASELINE_COLOR }} aria-hidden="true" />
+                    {formatModelWithVersion(summary.version)}
+                  </span>
+                  <span>
+                    <span className="validation-decomposition-swatch" style={{ background: COMPARISON_COLOR }} aria-hidden="true" />
+                    {formatModelWithVersion(comparisonSummary.version)}
+                  </span>
+                </div>
+              )}
               <ol className="validation-decomposition-list">
                 {decomposition.themes.map((theme) => {
                   const comparisonTheme = comparisonDecomposition?.themes.find((item) => item.id === theme.id) ?? null;
@@ -1095,12 +1118,6 @@ export function ValidationPage() {
                   );
                 })}
               </ol>
-              {decomposition.themes.length > 1 && (
-                <p className="validation-decomposition-summary">
-                  Largest share of error: <strong>{decomposition.themes[0].title}</strong>. Smallest:{' '}
-                  <strong>{decomposition.themes[decomposition.themes.length - 1].title}</strong>.
-                </p>
-              )}
             </div>
             <div className="validation-largest-gaps">
               <h4>{comparisonSummary ? 'Biggest differences between models' : 'Largest validation gaps'}</h4>
@@ -1133,7 +1150,7 @@ export function ValidationPage() {
                 ))}</ol>
               ) : <p>No supported metric losses are available.</p>}
             </div>
-          </article>
+          </CollapsibleSection>
 
           {/*
             Temporarily hidden from the analyst-facing Validation page. The full chart code is
@@ -1159,10 +1176,14 @@ export function ValidationPage() {
           </article>
           */}
 
-          <article className="results-card">
+          <CollapsibleSection
+            className="results-card validation-outcome-diagnostics"
+            title="Outcome diagnostics"
+            summary={`${summary.metrics.length} metrics across ${VALIDATION_POLICY_THEMES.length} themes`}
+            defaultOpen={false}
+          >
             <div className="validation-overview-header">
               <div>
-                <h3>Outcome diagnostics</h3>
                 <p>
                   All metrics share one axis: how far the simulated mean sits from the empirical target, as a
                   percentage. Beyond &plusmn;100% the marker is pinned to the edge and the exact figure is shown.
@@ -1172,7 +1193,6 @@ export function ValidationPage() {
             <div className="validation-range-legend" aria-label="Range graphic legend">
               <span className="legend-source">Empirical target (0% off)</span>
               <span className="legend-target">Target band</span>
-              <span className="legend-iqr">Simulated IQR</span>
               <span className="legend-mean">Simulated mean</span>
             </div>
             {VALIDATION_POLICY_THEMES.map((theme) => {
@@ -1181,105 +1201,51 @@ export function ValidationPage() {
                 const metric = metricMap.get(metricId);
                 return metric ? [metric] : [];
               });
-              // Metrics with no single empirical target (JSD distribution comparisons) cannot carry a
-              // percentage deviation, so they are kept apart rather than shown on an axis that lies about them.
-              const scaled = metrics.filter((metric) => calculateValidationRangePositions(metric).scaled);
-              const shapeOnly = metrics.filter((metric) => !calculateValidationRangePositions(metric).scaled);
+              // Every JSD metric lives in this one theme, so the shape-only explanation belongs to the
+              // theme rather than to a sub-group nested inside each of them.
+              const isShapeTheme =
+                metrics.length > 0 && metrics.every((metric) => !calculateValidationRangePositions(metric).scaled);
               return (
-                <section className="validation-theme" key={theme.id}>
-                  <h4>{theme.title}</h4>
+                <CollapsibleSection
+                  key={theme.id}
+                  className="validation-theme"
+                  title={theme.title}
+                  summary={describeThemeStatuses(metrics)}
+                  defaultOpen={false}
+                >
                   {metrics.length === 0 && <p className="info-banner">No metrics available for this theme.</p>}
-                  {scaled.map((metric) => <MetricRow
-                      metric={metric}
-                      comparisonMetric={comparisonMetricById.get(metric.metricId) ?? null}
-                      versionLabels={comparisonSummary ? { selected: summary.version, comparison: comparisonSummary.version } : undefined}
-                      key={metric.metricId}
-                    />)}
-                  {shapeOnly.length > 0 && (
-                    <div className="validation-subgroup">
-                      <h5>Distribution shape — no single target value</h5>
-                      <p className="validation-card-subtitle">
-                        Scored by how closely the whole simulated distribution matches the empirical one, so there
-                        is no percentage to be off by. Compare these by loss.
-                      </p>
-                      {shapeOnly.map((metric) => <MetricRow
-                      metric={metric}
-                      comparisonMetric={comparisonMetricById.get(metric.metricId) ?? null}
-                      versionLabels={comparisonSummary ? { selected: summary.version, comparison: comparisonSummary.version } : undefined}
-                      key={metric.metricId}
-                    />)}
-                    </div>
+                  {isShapeTheme && (
+                    <p className="validation-card-subtitle">
+                      Scored by how closely the whole simulated distribution matches the empirical one, so there
+                      is no single target to be off by. Compare these by loss.
+                    </p>
                   )}
-                </section>
+                  {metrics.map((metric) => (
+                    <MetricRow
+                      metric={metric}
+                      comparisonMetric={comparisonMetricById.get(metric.metricId) ?? null}
+                      versionLabels={comparisonSummary ? { selected: summary.version, comparison: comparisonSummary.version } : undefined}
+                      key={metric.metricId}
+                    />
+                  ))}
+                </CollapsibleSection>
               );
             })}
-          </article>
+          </CollapsibleSection>
 
-          <details className="results-card validation-audit-disclosure">
-            <summary><h3>Technical results table</h3><span>Exact comparison values</span></summary>
-            <p className="validation-card-subtitle">A compact audit view of empirical targets, simulated outcomes, seed robustness, and metric loss.</p>
-            <div className="validation-table-wrap">
-              <table className="validation-metrics-table">
-                <thead><tr><th>Metric</th><th>Empirical target</th><th>Simulation</th><th>Seeds in band</th><th>Loss</th><th>Details</th></tr></thead>
-                <tbody>{summary.metrics.map((metric) => (
-                  <tr key={metric.metricId}>
-                    <td>
-                      <div className="validation-table-primary">
-                        <strong>{metric.label}</strong>
-                        <span>{displayUnits(metric) || 'Unitless'}</span>
-                        <span className={`validation-status-pill validation-status-${metric.status}`}>{metric.status}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="validation-table-value">
-                        <strong>{withUnits(metric.sourceValue, displayUnits(metric))}</strong>
-                        <span>Band: {formatBand(metric)}</span>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="validation-table-value">
-                        <strong>Mean: {withUnits(metric.seedMean, displayUnits(metric), 3)}</strong>
-                        <span>IQR: {withUnits(metric.p25, displayUnits(metric), 3)} to {withUnits(metric.p75, displayUnits(metric), 3)}</span>
-                      </div>
-                    </td>
-                    <td>{formatInsideRate(metric.insideRate)}</td>
-                    <td className="validation-loss-cell">{formatLoss(metric.metricLoss)}</td>
-                    <td>
-                      <details className="validation-table-detail-disclosure">
-                        <summary>View details</summary>
-                        <div className="validation-table-detail-panel">
-                          <dl>
-                            <div><dt>Metric weight</dt><dd>{formatNumber(metric.metricWeight, 4)}</dd></div>
-                            <div><dt>Loss change vs original 2011 benchmark</dt><dd>{formatDelta(metric.lossDeltaVsReference2011)}</dd></div>
-                            <div><dt>Loss family</dt><dd>{lossFamilyDescription(metric)}</dd></div>
-                          </dl>
-                          <details className="validation-source-disclosure validation-table-source-disclosure">
-                            <summary>Sources and provenance</summary>
-                            <div className="validation-source-panel">
-                              <strong>{metric.sourceLabel}</strong>
-                              {buildDeduplicatedSourceReferences(metric).map((reference) => (
-                                <span key={reference.key} title={reference.notes ?? undefined}>{reference.label}</span>
-                              ))}
-                            </div>
-                          </details>
-                        </div>
-                      </details>
-                    </td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </details>
-
-          <details className="results-card validation-audit-disclosure">
-            <summary><h3>Validation methodology</h3><span>Protocol, evidence, and loss calculation</span></summary>
+          <CollapsibleSection
+            className="results-card validation-audit-disclosure"
+            title="Validation methodology"
+            summary="Protocol, evidence, and loss calculation"
+            defaultOpen={false}
+          >
             <p>Validation asks how far the multi-seed model summary sits from an empirical target and whether seed outcomes consistently fall inside its target band.</p>
             <details className="validation-loss-method">
               <summary>How validation loss is calculated</summary>
               <p>Positive levels use log-ratio distance; signed metrics use robust additive distance; tenure shares use bounded-domain-normalised percentage-point distance; and JSD uses bounded low-is-better scoring. Spread and seeds outside the band also contribute. Target bands determine pass, warning, and fail status.</p>
               <p>The weighted composite aggregates metric losses for comparative ranking. Its family-specific scales, transforms, distance, spread, and inside-band components are retained in the payload and metric audit detail; it is not a probability, confidence interval, or hypothesis-test statistic.</p>
             </details>
-          </details>
+          </CollapsibleSection>
         </>
       )}
     </section>
