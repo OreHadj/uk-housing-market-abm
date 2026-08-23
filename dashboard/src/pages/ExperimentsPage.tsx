@@ -208,7 +208,7 @@ export function ExperimentsPage({
           requestedBaselineRunId={baselineRunId}
           requestedComparisonRunId={comparisonRunId}
           onManualSelectionChange={(selection) => updateSearch(selection)}
-          sidebarSubtitle="Policy scenario runs"
+          sidebarSubtitle="Manage policy scenario runs"
         />
       ) : (
         <SensitivityResultsView

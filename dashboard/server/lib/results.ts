@@ -11,8 +11,12 @@ import type {
   ResultsFileType,
   ResultsIndicatorAvailability,
   ResultsIndicatorMeta,
+  ResultsIndicatorScaling,
   ResultsPolicySetting,
+  ResultsRunConfiguration,
+  ResultsRunConfigurationValue,
   ResultsRunDetail,
+  ResultsRunProvenance,
   ResultsRunStatus,
   ResultsRunSummary,
   ResultsSeriesPayload,
@@ -27,7 +31,7 @@ import {
   type RuntimePaths
 } from './runtimePaths';
 import { isDashboardManagedRun } from './runOwnership';
-import { CENTRAL_BANK_POLICY_KEYS } from '../../shared/policyCatalogue';
+import { CENTRAL_BANK_POLICY_KEYS, isBasePolicyId } from '../../shared/policyCatalogue';
 import { RUN_MANIFEST_FILE_NAME } from './runManifest';
 
 type CompareWindow = ResultsCompareWindow;
@@ -41,8 +45,20 @@ interface IndicatorDefinition {
   units: string;
   description: string;
   source: ResultsSeriesSource;
+  /**
+   * Whether this indicator is already at UK scale, needs scaling here, or is scale-free. Every
+   * extensive quantity on the page is presented UK-scaled; mixing raw agent counts with
+   * Java-scaled ones is the defect this field exists to close.
+   */
+  scaling: ResultsIndicatorScaling;
   fileName?: string;
   outputColumn?: string;
+  /**
+   * A share of modelled households rather than a column of its own: the named output column divided
+   * by TotalPopulation, month by month, as a percentage. Shares are scale-free, so they carry
+   * `scaling: 'none'` and need no UK_HOUSEHOLDS.
+   */
+  shareOfHouseholdsColumn?: string;
 }
 
 interface OutputRow {
@@ -81,125 +97,165 @@ interface RunDiagnostics {
 export const OUTPUT_FILE_NAME = 'Output-run1.csv';
 const PROTECTED_RESULTS_RUN_IDS = new Set(['v0-output', 'v4.0-output']);
 
+/** The controls shown in Step 4 of the manual policy-scenario builder, in creation order. */
+const MANUAL_RUN_CONFIGURATION_KEYS = [
+  'N_STEPS',
+  'N_SIMS',
+  'TARGET_POPULATION',
+  'ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS',
+  'CUMULATIVE_WEIGHT_BEYOND_YEAR',
+  'TIME_TO_START_RECORDING_TRANSACTIONS',
+  'recordTransactions',
+  'recordNBidUpFrequency',
+  'recordCoreIndicators',
+  'recordQualityBandPrice',
+  'recordHouseholdID',
+  'recordEmploymentIncome',
+  'recordRentalIncome',
+  'recordBankBalance',
+  'recordHousingWealth',
+  'recordTotalDebt',
+  'recordHousingStatus',
+  'recordConsumption',
+  'recordNHousesOwned',
+  'recordAge',
+  'recordSavingRate'
+] as const;
+
 const CORE_INDICATORS: IndicatorDefinition[] = [
   {
     id: 'core_ooLTV',
-    title: 'Owner-Occupier LTV (Mean Above Median)',
+    title: 'Owner-occupier LTV, mean above median (%)',
     units: '%',
-    description: 'Owner-occupier mortgage LTV ratio (mean above median).',
+    description: 'Owner-occupier mortgage loan-to-value, averaged over the loans above the median. Not the mean LTV of all new lending \u2014 the new-lending card carries that.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-ooLTV.csv'
   },
   {
     id: 'core_ooLTI',
-    title: 'Owner-Occupier LTI (Mean Above Median)',
+    title: 'Owner-occupier LTI, mean above median',
     units: 'ratio',
-    description: 'Owner-occupier mortgage LTI ratio (mean above median).',
+    description: 'Owner-occupier mortgage loan-to-income, averaged over the loans above the median. Not the mean LTI of all new lending \u2014 the new-lending card carries that.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-ooLTI.csv'
   },
   {
     id: 'core_btlLTV',
-    title: 'BTL LTV (Mean)',
+    title: 'Buy-to-let LTV, mean (%)',
     units: '%',
-    description: 'Buy-to-let mortgage LTV ratio (mean).',
+    description: 'Buy-to-let mortgage loan-to-value, mean across new buy-to-let lending.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-btlLTV.csv'
   },
   {
     id: 'core_creditGrowth',
-    title: 'Household Credit Growth',
+    title: 'Household credit growth (12-month)',
     units: '%',
-    description: 'Twelve-month nominal growth rate of household credit.',
+    description: 'Twelve-month nominal growth rate of household credit. The long-run mean sits near zero because the series cycles between booms and busts; read it alongside its spread rather than on its own.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-creditGrowth.csv'
   },
   {
     id: 'core_debtToIncome',
-    title: 'Mortgage Debt to Income',
+    title: 'Debt to income \u2014 all mortgage debt',
     units: '%',
-    description: 'Total mortgage debt divided by annualized household income.',
+    description: 'Owner-occupier plus buy-to-let mortgage debt, divided by the annualised net total income of the whole household sector.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-debtToIncome.csv'
   },
   {
     id: 'core_ooDebtToIncome',
-    title: 'Owner-Occupier Debt to Income',
+    title: 'Debt to income \u2014 owner-occupier debt only',
     units: '%',
-    description: 'Owner-occupier mortgage debt divided by annualized household income.',
+    description: 'Owner-occupier mortgage debt only, divided by the same whole-sector annualised net total income. The gap against the all-debt row is buy-to-let credit, not a different population or a different income measure.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-ooDebtToIncome.csv'
   },
   {
     id: 'core_mortgageApprovals',
-    title: 'Mortgage Approvals',
+    title: 'Mortgage approvals (per month)',
     units: 'count/month',
-    description: 'Monthly mortgage approvals scaled to UK household count.',
+    description: 'New loans approved for house purchase per month, already scaled by the model to the UK household count.',
     source: 'core_indicator',
+    scaling: 'model',
     fileName: 'coreIndicator-mortgageApprovals.csv'
   },
   {
     id: 'core_housingTransactions',
-    title: 'Housing Transactions',
+    title: 'Housing transactions (per month)',
     units: 'count/month',
-    description: 'Monthly housing transactions scaled to UK household count.',
+    description: 'Houses bought and sold per month, already scaled by the model to the UK household count.',
     source: 'core_indicator',
+    scaling: 'model',
     fileName: 'coreIndicator-housingTransactions.csv'
   },
   {
     id: 'core_advancesToFTB',
-    title: 'Advances to FTB',
+    title: 'Advances to first-time buyers (per month)',
     units: 'count/month',
-    description: 'Monthly advances to first-time buyers.',
+    description: 'Advances to first-time buyers per month, already scaled by the model to the UK household count.',
     source: 'core_indicator',
+    scaling: 'model',
     fileName: 'coreIndicator-advancesToFTB.csv'
   },
   {
     id: 'core_advancesToBTL',
-    title: 'Advances to BTL',
+    title: 'Advances to buy-to-let investors (per month)',
     units: 'count/month',
-    description: 'Monthly advances to buy-to-let borrowers.',
+    description: 'Advances to buy-to-let investors per month, already scaled by the model to the UK household count.',
     source: 'core_indicator',
+    scaling: 'model',
     fileName: 'coreIndicator-advancesToBTL.csv'
   },
   {
     id: 'core_advancesToHM',
-    title: 'Advances to Home Movers',
+    title: 'Advances to home movers (per month)',
     units: 'count/month',
-    description: 'Monthly advances to home movers.',
+    description: 'Advances to home movers per month, already scaled by the model to the UK household count.',
     source: 'core_indicator',
+    scaling: 'model',
     fileName: 'coreIndicator-advancesToHM.csv'
   },
   {
     id: 'core_housePriceGrowth',
-    title: 'House Price Growth (QoQ)',
+    title: 'House price growth (quarter on quarter)',
     units: '%',
-    description: 'Quarter-on-quarter growth in house price index.',
+    description: 'Quarter-on-quarter growth in the sale house price index.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-housePriceGrowth.csv'
   },
   {
     id: 'core_priceToIncome',
-    title: 'Price to Income',
+    title: 'Price to income (all households, net income)',
     units: 'ratio',
-    description: 'House price to household disposable income ratio.',
+    description: 'Aggregate house price to income ratio across every household in the model, against annualised net total income \u2014 social-housing households included. This is a different statistic from the loan-level price-to-income the paper reports as 4.4, which the new-lending card carries.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-priceToIncome.csv'
   },
   {
     id: 'core_rentalYield',
-    title: 'Rental Yield',
+    title: 'Rental yield',
     units: '%',
-    description: 'Average stock rental yield.',
+    description: 'Average rental yield on the stock of rented housing.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-rentalYield.csv'
   },
   {
     id: 'core_interestRateSpread',
-    title: 'Interest Rate Spread',
+    title: 'Mortgage interest rate spread',
     units: 'percentage points',
-    description: 'Spread on new owner-occupier mortgage lending.',
+    description: 'Spread on new owner-occupier mortgage lending, in percentage points over the base rate.',
     source: 'core_indicator',
+    scaling: 'none',
     fileName: 'coreIndicator-interestRateSpread.csv'
   }
 ];
@@ -207,110 +263,196 @@ const CORE_INDICATORS: IndicatorDefinition[] = [
 const OUTPUT_INDICATORS: IndicatorDefinition[] = [
   {
     id: 'output_nHomeless',
-    title: 'Homeless Households',
+    title: 'Households in social housing',
     units: 'count',
-    description: 'Total homeless households.',
+    description:
+      'Households with no dwelling of their own in the model. The published calibration deliberately '
+      + 'leaves social housing out of the modelled dwelling stock, so this count is the residual of '
+      + 'the dwelling-stock constraint \u2014 households minus occupied dwellings \u2014 and stands for '
+      + 'the social-rented sector. It is not a flow of households between tenancies: a renter whose '
+      + 'tenancy ends bids for a new home in the same step. Scaled to UK households.',
     source: 'output',
+    scaling: 'dashboard',
     outputColumn: 'nHomeless'
   },
   {
     id: 'output_nRenting',
-    title: 'Renting Households',
+    title: 'Households renting privately',
     units: 'count',
-    description: 'Total renting households.',
+    description: 'Households renting from a buy-to-let landlord, scaled to UK households.',
     source: 'output',
+    scaling: 'dashboard',
     outputColumn: 'nRenting'
   },
   {
     id: 'output_nOwnerOccupier',
-    title: 'Owner-Occupier Households',
+    title: 'Owner-occupier households',
     units: 'count',
-    description: 'Total owner-occupier households.',
+    description: 'Households living in a home they own, scaled to UK households.',
     source: 'output',
+    scaling: 'dashboard',
     outputColumn: 'nOwnerOccupier'
   },
   {
     id: 'output_nActiveBTL',
-    title: 'Active BTL Households',
+    title: 'Active buy-to-let households',
     units: 'count',
-    description: 'Total active buy-to-let households.',
+    description: 'Households letting at least one property, scaled to UK households.',
     source: 'output',
+    scaling: 'dashboard',
     outputColumn: 'nActiveBTL'
   },
   {
-    id: 'output_saleHPI',
-    title: 'Sale HPI',
-    units: 'index',
-    description: 'Sale market house price index.',
+    id: 'output_nNonOwner',
+    title: 'Non-owner households',
+    units: 'count',
+    description:
+      'Households that own no property \u2014 private renters plus the social-housing residual. Scaled '
+      + 'to UK households.',
     source: 'output',
+    scaling: 'dashboard',
+    outputColumn: 'nNonOwner'
+  },
+  {
+    id: 'output_ownershipRate',
+    title: 'Ownership rate',
+    units: '%',
+    description:
+      'Share of households living in a home they own, computed month by month against that '
+      + 'month\u2019s modelled households. A share, so it needs no UK scaling.',
+    source: 'output',
+    scaling: 'none',
+    shareOfHouseholdsColumn: 'nOwnerOccupier'
+  },
+  {
+    id: 'output_nonOwnerShare',
+    title: 'Non-owner share',
+    units: '%',
+    description:
+      'Share of households that own no property, computed month by month against that month\u2019s '
+      + 'modelled households. This is the paper\u2019s ~38%, and it is the non-owner count \u2014 not the '
+      + 'private-renting count, which excludes the social-housing residual.',
+    source: 'output',
+    scaling: 'none',
+    shareOfHouseholdsColumn: 'nNonOwner'
+  },
+  {
+    id: 'output_saleHPI',
+    title: 'Sale HPI (base = initial calibration)',
+    units: 'index',
+    description: 'Sale market house price index, based at the model\u2019s initial calibration rather than at any calendar year.',
+    source: 'output',
+    scaling: 'none',
     outputColumn: 'Sale HPI'
   },
   {
     id: 'output_saleAvSalePrice',
-    title: 'Sale Average Sale Price',
+    title: 'Average sale price',
     units: 'GBP',
-    description: 'Average sale transaction price.',
+    description: 'Average completed sale transaction price.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'Sale AvSalePrice'
   },
   {
     id: 'output_saleAvMonthsOnMarket',
-    title: 'Sale Average Months on Market',
+    title: 'Average months on market \u2014 sale',
     units: 'months',
-    description: 'Average sale listing months on market.',
+    description: 'Average time a sale listing spends on the market, in months.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'Sale AvMonthsOnMarket'
   },
   {
     id: 'output_rentalHPI',
-    title: 'Rental HPI',
+    title: 'Rental HPI (base = initial calibration)',
     units: 'index',
-    description: 'Rental market house price index.',
+    description: 'Rental market price index, based at the model\u2019s initial calibration rather than at any calendar year.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'Rental HPI'
   },
   {
     id: 'output_rentalAvSalePrice',
-    title: 'Rental Average Transaction Price',
+    title: 'Average monthly rent',
     units: 'GBP',
-    description: 'Average rental transaction price.',
+    description: 'Average agreed monthly rent on new tenancies.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'Rental AvSalePrice'
   },
   {
     id: 'output_rentalAvMonthsOnMarket',
-    title: 'Rental Average Months on Market',
+    title: 'Average months on market \u2014 rental',
     units: 'months',
-    description: 'Average rental listing months on market.',
+    description: 'Average time a rental listing spends on the market, in months.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'Rental AvMonthsOnMarket'
   },
   {
     id: 'output_creditStock',
-    title: 'Credit Stock',
+    title: 'Household credit stock',
     units: 'GBP',
-    description: 'Total household credit stock.',
+    description: 'Total outstanding household mortgage debt, scaled to UK households.',
     source: 'output',
+    scaling: 'dashboard',
     outputColumn: 'creditStock'
   },
   {
     id: 'output_interestRate',
-    title: 'Interest Rate',
+    title: 'Mortgage interest rate',
     units: 'rate',
-    description: 'Model interest rate.',
+    description: 'Interest rate charged on new mortgages: the base rate plus the bank\u2019s spread. The spread is endogenous \u2014 the bank recalculates it to steer lending back to its target \u2014 so this row is not an exogenous policy input.',
     source: 'output',
+    scaling: 'none',
     outputColumn: 'interestRate'
   }
 ];
+
+/**
+ * Modelled households in the given month. Retained by the output parser so dashboard-scaled counts
+ * can be divided by it per month, but deliberately kept out of OUTPUT_INDICATORS: adding it there
+ * would both make it a visible row and, via REQUIRED_OUTPUT_COLUMNS, fail the whole run when a
+ * legacy output file lacks it. Decision 6 asks for a per-row reason instead.
+ */
+const TOTAL_POPULATION_COLUMN = 'TotalPopulation';
+
+/**
+ * Every column the parser keeps: the indicator columns, the numerators of the derived household
+ * shares, and the scaling denominator. Only the first group is required — a run missing a share
+ * numerator loses that row with a reason, not the whole run.
+ */
+const RETAINED_OUTPUT_COLUMNS = new Set<string>([
+  ...OUTPUT_INDICATORS.map((indicator) => indicator.outputColumn).filter(
+    (columnName): columnName is string => columnName !== undefined
+  ),
+  ...OUTPUT_INDICATORS.map((indicator) => indicator.shareOfHouseholdsColumn).filter(
+    (columnName): columnName is string => columnName !== undefined
+  ),
+  TOTAL_POPULATION_COLUMN
+]);
 
 const ALL_INDICATORS: IndicatorDefinition[] = [...CORE_INDICATORS, ...OUTPUT_INDICATORS];
 const INDICATOR_BY_ID = new Map(ALL_INDICATORS.map((indicator) => [indicator.id, indicator]));
 const REQUIRED_CORE_FILES = new Set(CORE_INDICATORS.map((indicator) => indicator.fileName as string));
 const REQUIRED_OUTPUT_COLUMNS = new Set(
-  OUTPUT_INDICATORS.map((indicator) => indicator.outputColumn as string)
+  OUTPUT_INDICATORS.map((indicator) => indicator.outputColumn).filter(
+    (columnName): columnName is string => columnName !== undefined
+  )
 );
 const REQUIRED_PARSE_TARGET_COUNT = REQUIRED_CORE_FILES.size + 1;
-export const REQUIRED_RESULTS_PARSE_FILE_NAMES = [OUTPUT_FILE_NAME, ...REQUIRED_CORE_FILES];
+export const RUN_CONFIG_FILE_NAME = 'config.properties';
+/**
+ * Everything a run folder must contain for the results parsers to produce a full page. config is in
+ * the set because UK_HOUSEHOLDS lives there, and without it the scaled count rows go unavailable —
+ * so a remote workspace that skipped it would silently lose five indicators.
+ */
+export const REQUIRED_RESULTS_PARSE_FILE_NAMES = [
+  OUTPUT_FILE_NAME,
+  RUN_CONFIG_FILE_NAME,
+  ...REQUIRED_CORE_FILES
+];
 const EXPECTED_FULL_OUTPUT_ROW_COUNT = 2001;
 
 /** The loan-level sale file, parsed for the new-lending distributions (lendingDistribution.ts). */
@@ -343,6 +485,13 @@ const MICRO_SNAPSHOT_FILE_PATTERNS = [
 
 const parsedOutputCache = new Map<string, CachedValue<ParsedOutputFile>>();
 const parsedCoreCache = new Map<string, CachedValue<ParsedCoreIndicatorFile>>();
+/**
+ * config.properties is read once per indicator while scaling, so it is cached even in production —
+ * unlike the row caches above, which hold megabytes. Entries are still validated against mtime and
+ * size, so a rewritten config is picked up on the next read.
+ */
+const runConfigCache = new Map<string, CachedValue<Map<string, number>>>();
+const RUN_CONFIG_CACHE_MAX_ENTRIES = 8;
 const OUTPUT_CACHE_MAX_ENTRIES = (process.env.NODE_ENV?.trim().toLowerCase() ?? '') === 'production' ? 0 : 2;
 const CORE_CACHE_MAX_ENTRIES = (process.env.NODE_ENV?.trim().toLowerCase() ?? '') === 'production' ? 0 : 16;
 
@@ -561,7 +710,7 @@ function parseOutputFile(filePath: string): ParsedOutputFile {
     const availableColumns = new Set<string>();
     const rows: OutputRow[] = [];
     const modelTimeIndex = headerIndex.get('Model time') as number;
-    const outputColumns = OUTPUT_INDICATORS.map((indicator) => indicator.outputColumn as string);
+    const outputColumns = [...RETAINED_OUTPUT_COLUMNS];
 
     for (const columnName of outputColumns) {
       if (headerIndex.has(columnName)) {
@@ -679,7 +828,8 @@ function toIndicatorMeta(indicator: IndicatorDefinition): ResultsIndicatorMeta {
     title: indicator.title,
     units: indicator.units,
     description: indicator.description,
-    source: indicator.source
+    source: indicator.source,
+    scaling: indicator.scaling
   };
 }
 
@@ -846,6 +996,11 @@ function clearRunFromParserCaches(runPath: string): void {
       parsedCoreCache.delete(cacheKey);
     }
   }
+  for (const cacheKey of runConfigCache.keys()) {
+    if (cacheKey.startsWith(`${runPath}${path.sep}`)) {
+      runConfigCache.delete(cacheKey);
+    }
+  }
 }
 
 function computeRunStatusAndCoverage(runPath: string): {
@@ -901,11 +1056,40 @@ function toSeriesPointsFromCore(values: Array<number | null>): ResultsSeriesPoin
   return values.map((value, index) => ({ modelTime: index, value }));
 }
 
-function toSeriesPointsFromOutput(rows: OutputRow[], columnName: string): ResultsSeriesPoint[] {
-  return rows.map((row) => ({
-    modelTime: row.modelTime,
-    value: row.values[columnName] ?? null
-  }));
+/**
+ * Scaling is applied here, per month, before any aggregation. It cannot be pushed downstream: the
+ * factor varies month to month (modelled households drift), so mean(v_t x k_t) != mean(v_t) x mean(k),
+ * and computeKpi derives cv and range from these same points. Scaling only the mean later would leave
+ * the three inconsistent, and the trend chart inconsistent with the row it was opened from.
+ */
+function toSeriesPointsFromOutput(
+  rows: OutputRow[],
+  columnName: string,
+  ukHouseholds: number | null
+): ResultsSeriesPoint[] {
+  return rows.map((row) => {
+    const value = row.values[columnName] ?? null;
+    if (value === null || ukHouseholds === null) {
+      return { modelTime: row.modelTime, value };
+    }
+    const modelHouseholds = row.values[TOTAL_POPULATION_COLUMN] ?? null;
+    if (modelHouseholds === null || modelHouseholds <= 0) {
+      return { modelTime: row.modelTime, value: null };
+    }
+    return { modelTime: row.modelTime, value: value * (ukHouseholds / modelHouseholds) };
+  });
+}
+
+/** A share of that month's modelled households, in percent. Scale-free by construction. */
+function toSharePointsFromOutput(rows: OutputRow[], numeratorColumn: string): ResultsSeriesPoint[] {
+  return rows.map((row) => {
+    const numerator = row.values[numeratorColumn] ?? null;
+    const modelHouseholds = row.values[TOTAL_POPULATION_COLUMN] ?? null;
+    if (numerator === null || modelHouseholds === null || modelHouseholds <= 0) {
+      return { modelTime: row.modelTime, value: null };
+    }
+    return { modelTime: row.modelTime, value: (numerator / modelHouseholds) * 100 };
+  });
 }
 
 function getRawSeriesForIndicator(runPath: string, indicatorId: string): {
@@ -948,6 +1132,26 @@ function getRawSeriesForIndicator(runPath: string, indicatorId: string): {
     };
   }
 
+  if (indicator.shareOfHouseholdsColumn) {
+    const numeratorColumn = indicator.shareOfHouseholdsColumn;
+    const missing = [numeratorColumn, TOTAL_POPULATION_COLUMN].filter(
+      (name) => !parsedOutput.availableColumns.has(name)
+    );
+    if (missing.length > 0) {
+      return {
+        indicator,
+        points: [],
+        coverageStatus: 'error',
+        note: `${OUTPUT_FILE_NAME} is missing ${missing.join(' and ')}, so this share cannot be computed.`
+      };
+    }
+    return {
+      indicator,
+      points: toSharePointsFromOutput(parsedOutput.rows, numeratorColumn),
+      coverageStatus: 'supported'
+    };
+  }
+
   const columnName = indicator.outputColumn as string;
   if (!parsedOutput.availableColumns.has(columnName)) {
     return {
@@ -958,9 +1162,32 @@ function getRawSeriesForIndicator(runPath: string, indicatorId: string): {
     };
   }
 
+  // Decision 6: no silent fallback. A count that cannot be scaled is reported unavailable with the
+  // reason, rather than being shown at agent scale next to figures that are already at UK scale.
+  let ukHouseholds: number | null = null;
+  if (indicator.scaling === 'dashboard') {
+    if (!parsedOutput.availableColumns.has(TOTAL_POPULATION_COLUMN)) {
+      return {
+        indicator,
+        points: [],
+        coverageStatus: 'error',
+        note: `${OUTPUT_FILE_NAME} has no ${TOTAL_POPULATION_COLUMN} column, so this count cannot be scaled to UK households.`
+      };
+    }
+    ukHouseholds = getRunProvenance(runPath).ukHouseholds;
+    if (ukHouseholds === null || ukHouseholds <= 0) {
+      return {
+        indicator,
+        points: [],
+        coverageStatus: 'error',
+        note: 'UK_HOUSEHOLDS is not recorded in this run\'s config.properties, so this count cannot be scaled to UK households.'
+      };
+    }
+  }
+
   return {
     indicator,
-    points: toSeriesPointsFromOutput(parsedOutput.rows, columnName),
+    points: toSeriesPointsFromOutput(parsedOutput.rows, columnName, ukHouseholds),
     coverageStatus: 'supported'
   };
 }
@@ -987,6 +1214,7 @@ function emptyKpi(indicator: IndicatorDefinition, window: CompareWindow): KpiMet
     indicatorId: indicator.id,
     title: indicator.title,
     units: indicator.units,
+    scaling: indicator.scaling,
     windowType: toKpiWindowType(window),
     mean: null,
     cv: null,
@@ -1006,6 +1234,7 @@ function computeKpi(points: ResultsSeriesPoint[], indicator: IndicatorDefinition
     indicatorId: indicator.id,
     title: indicator.title,
     units: indicator.units,
+    scaling: indicator.scaling,
     windowType: toKpiWindowType(window),
     mean: kpi.mean,
     cv: kpi.cv,
@@ -1071,12 +1300,89 @@ function readRunTitle(runPath: string): string | null {
   }
 }
 
-function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting[] {
+function parseRunConfigurationValue(rawValue: string): ResultsRunConfigurationValue {
+  const withoutComment = rawValue.replace(/\s+#.*$/, '').trim();
+  const unquoted =
+    (withoutComment.startsWith('"') && withoutComment.endsWith('"')) ||
+    (withoutComment.startsWith("'") && withoutComment.endsWith("'"))
+      ? withoutComment.slice(1, -1)
+      : withoutComment;
+  if (unquoted === 'true') return true;
+  if (unquoted === 'false') return false;
+  const numeric = Number(unquoted);
+  return unquoted !== '' && Number.isFinite(numeric) ? numeric : unquoted;
+}
+
+function readRunConfigurationValues(configPath: string): Record<string, ResultsRunConfigurationValue> {
   let contents: string;
   try {
     contents = fs.readFileSync(configPath, 'utf-8');
   } catch {
-    return [];
+    return {};
+  }
+
+  const allowedKeys = new Set<string>(MANUAL_RUN_CONFIGURATION_KEYS);
+  const values: Record<string, ResultsRunConfigurationValue> = {};
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === '' || line.startsWith('#') || line.startsWith('!')) continue;
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex === -1) continue;
+    const key = line.slice(0, separatorIndex).trim();
+    if (!allowedKeys.has(key)) continue;
+    values[key] = parseRunConfigurationValue(line.slice(separatorIndex + 1));
+  }
+  return values;
+}
+
+/** Reads the actual creation choices without guessing them from a user-editable run name. */
+function getRunConfiguration(runPath: string): ResultsRunConfiguration {
+  let modelVersion: string | null = null;
+  let basePolicy: ResultsRunConfiguration['basePolicy'] = null;
+  let maxWorkers: number | null = null;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(runPath, RUN_MANIFEST_FILE_NAME), 'utf-8')) as {
+      manifestType?: unknown;
+      inputData?: { baselineSnapshot?: unknown };
+      run?: { basePolicy?: unknown; maxWorkers?: unknown };
+    };
+    if (manifest.manifestType === 'manual-run') {
+      const baseline = manifest.inputData?.baselineSnapshot;
+      if (typeof baseline === 'string' && baseline.trim() !== '') {
+        modelVersion = baseline.trim();
+      }
+      const recordedBasePolicy = manifest.run?.basePolicy;
+      if (typeof recordedBasePolicy === 'string' && isBasePolicyId(recordedBasePolicy)) {
+        basePolicy = recordedBasePolicy;
+      }
+      const workers = manifest.run?.maxWorkers;
+      if (typeof workers === 'number' && Number.isFinite(workers) && workers > 0) {
+        maxWorkers = Math.trunc(workers);
+      }
+    }
+  } catch {
+    // Legacy and externally supplied runs may have a config but no dashboard manifest.
+  }
+
+  return {
+    modelVersion,
+    basePolicy,
+    maxWorkers,
+    parameterValues: readRunConfigurationValues(path.join(runPath, RUN_CONFIG_FILE_NAME))
+  };
+}
+
+/**
+ * Every numeric `KEY = value` line in a run's config.properties. The Central Bank policy block and
+ * the scaling constants (UK_HOUSEHOLDS, UK_DWELLINGS, TARGET_POPULATION, SEED, N_STEPS) are both
+ * read from this one map, so the run's own record is the single source for what it was run with.
+ */
+function parseRunConfigNumbers(configPath: string): Map<string, number> {
+  let contents: string;
+  try {
+    contents = fs.readFileSync(configPath, 'utf-8');
+  } catch {
+    return new Map();
   }
 
   const values = new Map<string, number>();
@@ -1095,6 +1401,111 @@ function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting
       values.set(key, parsed);
     }
   }
+
+  return values;
+}
+
+function getRunConfigNumbers(runPath: string): Map<string, number> {
+  const configPath = path.join(runPath, RUN_CONFIG_FILE_NAME);
+  let fileStats: fs.Stats;
+  try {
+    fileStats = getFileStats(configPath);
+  } catch {
+    return new Map();
+  }
+
+  const cached = runConfigCache.get(configPath);
+  if (cached && cached.modifiedMs === fileStats.mtimeMs && cached.sizeBytes === fileStats.size) {
+    runConfigCache.delete(configPath);
+    runConfigCache.set(configPath, cached);
+    return cached.value;
+  }
+
+  const parsed = parseRunConfigNumbers(configPath);
+  setBoundedCacheValue(runConfigCache, configPath, {
+    modifiedMs: fileStats.mtimeMs,
+    sizeBytes: fileStats.size,
+    value: parsed
+  }, RUN_CONFIG_CACHE_MAX_ENTRIES);
+  return parsed;
+}
+
+/** Mean modelled households over the whole run. Stated as the scaling denominator, never applied. */
+function computeMeanModelHouseholds(runPath: string): number | null {
+  const parsedOutput = getOutputParseStatus(runPath);
+  if (parsedOutput.status !== 'supported' || !parsedOutput.availableColumns.has(TOTAL_POPULATION_COLUMN)) {
+    return null;
+  }
+  const populations = parsedOutput.rows
+    .map((row) => row.values[TOTAL_POPULATION_COLUMN] ?? null)
+    .filter((value): value is number => value !== null && value > 0);
+  if (populations.length === 0) {
+    return null;
+  }
+  return populations.reduce((total, value) => total + value, 0) / populations.length;
+}
+
+/**
+ * The seed set a run actually covers. The manifest is authoritative because run-root CSVs of a
+ * multi-seed run are the seed mean, while its config.properties still says `SEED = 1` — reading
+ * config alone would describe a ten-seed ensemble as a single seed.
+ */
+function readRunSeeds(
+  runPath: string,
+  configValues: Map<string, number>
+): { seeds: number[] | null; seedSource: 'manifest' | 'config' | null } {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(runPath, RUN_MANIFEST_FILE_NAME), 'utf-8')) as {
+      run?: { seeds?: unknown; seed?: unknown };
+    };
+    const manifestSeeds = manifest.run?.seeds;
+    if (Array.isArray(manifestSeeds)) {
+      const seeds = manifestSeeds.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+      if (seeds.length > 0) {
+        return { seeds: [...seeds].sort((left, right) => left - right), seedSource: 'manifest' };
+      }
+    }
+    const manifestSeed = manifest.run?.seed;
+    if (typeof manifestSeed === 'number' && Number.isFinite(manifestSeed)) {
+      return { seeds: [manifestSeed], seedSource: 'manifest' };
+    }
+  } catch {
+    // No manifest, or an unreadable one: fall through to the config, as legacy runs require.
+  }
+
+  const configSeed = configValues.get('SEED');
+  if (configSeed !== undefined && Number.isFinite(configSeed)) {
+    return { seeds: [configSeed], seedSource: 'config' };
+  }
+  return { seeds: null, seedSource: null };
+}
+
+function getRunProvenance(runPath: string): ResultsRunProvenance {
+  const values = getRunConfigNumbers(runPath);
+  const read = (key: string): number | null => (values.has(key) ? (values.get(key) as number) : null);
+
+  const ukHouseholds = read('UK_HOUSEHOLDS');
+  const ukDwellings = read('UK_DWELLINGS');
+  const meanModelHouseholds = computeMeanModelHouseholds(runPath);
+
+  return {
+    ukHouseholds,
+    ukDwellings,
+    dwellingsPerHousehold:
+      ukDwellings !== null && ukHouseholds !== null && ukHouseholds > 0 ? ukDwellings / ukHouseholds : null,
+    targetPopulation: read('TARGET_POPULATION'),
+    meanModelHouseholds,
+    meanScaleFactor:
+      ukHouseholds !== null && meanModelHouseholds !== null && meanModelHouseholds > 0
+        ? ukHouseholds / meanModelHouseholds
+        : null,
+    nSteps: read('N_STEPS'),
+    ...readRunSeeds(runPath, values)
+  };
+}
+
+function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting[] {
+  const values = parseRunConfigNumbers(configPath);
 
   // Emit in catalogue order so the block reads the same way for every run, not in file order.
   return CENTRAL_BANK_POLICY_KEYS.filter((key) => values.has(key)).map((key) => ({
@@ -1145,11 +1556,13 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
     status,
     configAvailable,
     parseCoverage: coverage,
-    policySettings
+    policySettings,
+    provenance: getRunProvenance(runPath)
   };
 
   const detail: ResultsRunDetail = {
     ...summary,
+    configuration: getRunConfiguration(runPath),
     indicators,
     kpiSummary
   };

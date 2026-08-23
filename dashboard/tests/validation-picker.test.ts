@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import type { ValidationMetricSummary, ValidationVersionSummary } from '../shared/types.js';
 import { CollapsibleSection } from '../src/components/CollapsibleSection.js';
 import { MODEL_ANCHORS } from '../src/lib/modelAnchors.js';
 import {
+  DEFAULT_VALIDATION_METRIC_SORT,
   describeThemeStatuses,
   findValidationThemeId,
   formatValidationScorecardValue,
+  formatValidationSnapshotProtocol,
+  hasMetricProvenance,
+  sortValidationMetrics,
+  VALIDATION_METRIC_DETAILS_PANEL_ID,
+  ValidationMetricDetailsPanel,
+  ValidationMetricTable,
   ValidationModelOptions,
   ValidationPage
 } from '../src/pages/ValidationPage.js';
@@ -125,6 +134,36 @@ assert.ok(
   'The permanent calibration link should carry both selected models when comparing'
 );
 
+const v5o3Snapshot = JSON.parse(
+  fs.readFileSync(new URL('../../input-data-versions/validation/v5o3.json', import.meta.url), 'utf8')
+) as ValidationVersionSummary;
+const v426Snapshot = JSON.parse(
+  fs.readFileSync(new URL('../../input-data-versions/validation/v4.26.json', import.meta.url), 'utf8')
+) as ValidationVersionSummary;
+for (const relativeDirectory of ['validation', 'validation-overlays']) {
+  const snapshotDirectory = new URL(`../../input-data-versions/${relativeDirectory}/`, import.meta.url);
+  for (const fileName of fs.readdirSync(snapshotDirectory).filter((name) => name.endsWith('.json'))) {
+    const snapshot = JSON.parse(fs.readFileSync(new URL(fileName, snapshotDirectory), 'utf8')) as ValidationVersionSummary;
+    assert.ok(Array.isArray(snapshot.seeds), `${relativeDirectory}/${fileName} should retain its seed list`);
+    assert.equal(typeof snapshot.window?.startIndex, 'number', `${relativeDirectory}/${fileName} should retain its window start`);
+    assert.equal(typeof snapshot.window?.endIndex, 'number', `${relativeDirectory}/${fileName} should retain its window end`);
+    snapshot.metrics.forEach((metric) => {
+      assert.equal(metric.metricWeight ?? 1, 1, `${relativeDirectory}/${fileName} ${metric.metricId} should retain unit weight`);
+      assert.ok(hasMetricProvenance(metric), `${relativeDirectory}/${fileName} ${metric.metricId} should expose Details`);
+    });
+  }
+}
+assert.equal(
+  formatValidationSnapshotProtocol(v5o3Snapshot),
+  '10 seeds, aggregation window steps 500–3,500',
+  'The v5o3 view should describe the protocol stored on its displayed snapshot'
+);
+assert.equal(
+  formatValidationSnapshotProtocol(v426Snapshot),
+  '8 seeds, aggregation window steps 200–2,000',
+  'The v4.26 view should describe its shorter stored protocol rather than using fixed page copy'
+);
+
 const anchorVersions = MODEL_ANCHORS.map((anchor) => anchor.version);
 const sortedVersions = [...anchorVersions].reverse();
 const rankings = sortedVersions.map((version, index) => ({
@@ -207,5 +246,244 @@ assert.equal(
   'Only the model already selected as primary should remain unavailable'
 );
 assert.ok(enabledComparisonMarkup.includes('Selected as primary'));
+
+const baseMetric: ValidationMetricSummary = {
+  metricId: 'fixture',
+  label: 'Fixture metric',
+  status: 'fail',
+  requirement: 'required',
+  units: 'count/month',
+  sourceLabel: 'Fixture evidence source',
+  sourceIndicatorLabel: 'Fixture indicator',
+  sourceDocumentPath: 'evidence/fixture.csv',
+  sourceTextPath: null,
+  sourceTable: 'Fixture table',
+  sourcePage: 1,
+  rawSourceValue: 62_863,
+  sourceValue: 62.86,
+  sourceAsOf: '2024',
+  sourceUnits: 'count/month',
+  comparisonUnits: 'thousand count/month',
+  mappingStatus: 'derived_match',
+  bandMethod: 'fixture_band',
+  bandNotes: 'Fixture target-band note.',
+  sourceReferences: [{
+    label: 'Fixture reference',
+    sourceDocumentPath: 'evidence/fixture.csv',
+    sourceTextPath: null,
+    sourceTable: 'Fixture table',
+    sourcePage: 1,
+    sourceIndicatorLabel: 'Fixture indicator',
+    rawSourceValue: 62_863,
+    sourceAsOf: '2024',
+    sourceUnits: 'count/month',
+    notes: 'Fixture provenance note.'
+  }],
+  targetBand: { lower: 55.25, upper: 70.75 },
+  seedMean: 75.125,
+  p25: 74.875,
+  p75: 75.375,
+  insideRate: 0.4,
+  lossFamily: 'positive_level',
+  lossTransform: 'log_ratio',
+  lossScale: 62.86,
+  lossScaleBasis: 'source_value',
+  additiveScale: null,
+  additiveScaleBasis: null,
+  normalizedDistance: 0.2,
+  normalizedIqr: 0.01,
+  distanceComponent: 0.2,
+  spreadComponent: 0.01,
+  levelComponent: 0.2,
+  insideRateComponent: 0.6,
+  metricLoss: 0.6725,
+  lossDeltaVsReference2011: 0.12,
+  lossDeltaPercentVsReference2011: 21.4,
+  metricWeight: 1
+};
+
+function metricFixture(overrides: Partial<ValidationMetricSummary>): ValidationMetricSummary {
+  return { ...baseMetric, ...overrides };
+}
+
+const tableMetrics = [
+  metricFixture({ metricId: 'core_mortgageApprovals', label: 'Mortgage Approvals', metricLoss: 0.6725 }),
+  metricFixture({ metricId: 'core_housingTransactions', label: 'Housing Transactions', metricLoss: 0.8865 }),
+  metricFixture({ metricId: 'core_advancesToFTB', label: 'Advances to FTB', metricLoss: 0.537 })
+];
+
+assert.deepEqual(
+  sortValidationMetrics(tableMetrics).map((metric) => metric.metricId),
+  ['core_housingTransactions', 'core_mortgageApprovals', 'core_advancesToFTB'],
+  'The default section sort should put the highest metric loss first'
+);
+assert.deepEqual(
+  DEFAULT_VALIDATION_METRIC_SORT,
+  { key: 'loss', direction: 'descending' },
+  'The published default sort should remain loss descending'
+);
+
+const stableSortMetrics = [
+  metricFixture({ metricId: 'stable-first', label: 'Stable first', metricLoss: 0.4 }),
+  metricFixture({ metricId: 'highest', label: 'Highest', metricLoss: 0.9 }),
+  metricFixture({ metricId: 'stable-second', label: 'Stable second', metricLoss: 0.4 }),
+  metricFixture({ metricId: 'unsupported', label: 'Unsupported', metricLoss: null, status: 'unsupported' })
+];
+assert.deepEqual(
+  sortValidationMetrics(stableSortMetrics).map((metric) => metric.metricId),
+  ['highest', 'stable-first', 'stable-second', 'unsupported'],
+  'Loss sorting should be stable for ties and keep unsupported values at the end'
+);
+assert.deepEqual(
+  sortValidationMetrics(stableSortMetrics, { key: 'loss', direction: 'ascending' }).map((metric) => metric.metricId),
+  ['stable-first', 'stable-second', 'highest', 'unsupported'],
+  'Numeric columns should support the opposite sort direction without disturbing ties'
+);
+
+const closedValidationTableMarkup = renderToStaticMarkup(
+  createElement(ValidationMetricTable, {
+    themeTitle: 'Market activity and lending',
+    metrics: tableMetrics
+  })
+);
+const validationTableMarkup = renderToStaticMarkup(
+  createElement(ValidationMetricTable, {
+    themeTitle: 'Market activity and lending',
+    metrics: tableMetrics,
+    activeMetricId: 'core_mortgageApprovals'
+  })
+);
+const validationCompareTableMarkup = renderToStaticMarkup(
+  createElement(ValidationMetricTable, {
+    themeTitle: 'Market activity and lending',
+    metrics: tableMetrics,
+    comparisonMetrics: new Map(tableMetrics.map((metric) => [metric.metricId, metric])),
+    versionLabels: { selected: 'v5o3', comparison: 'v4.26' }
+  })
+);
+assert.ok(
+  validationTableMarkup.includes('<table class="validation-metrics-table">') &&
+    validationTableMarkup.includes('<caption class="visually-hidden">Market activity and lending</caption>') &&
+    validationTableMarkup.includes('<thead>') &&
+    validationTableMarkup.includes('scope="col"') &&
+    validationTableMarkup.includes('scope="row"') &&
+    validationTableMarkup.includes('tabindex="0"'),
+  'Each theme should render a semantic, keyboard-scrollable table with a section caption'
+);
+[
+  'Metric',
+  'Status',
+  'Target',
+  'Target band',
+  'Simulated mean',
+  'Simulated IQR',
+  'Off target',
+  'Seeds in band',
+  'Loss'
+].forEach((heading) => {
+  assert.ok(validationTableMarkup.includes(heading), `Expected the ${heading} table column`);
+});
+assert.equal(validationTableMarkup.includes('Weight'), false, 'The constant metric weight should not render as a column');
+assert.equal(validationTableMarkup.includes('Δ vs 2011'), false, 'Cross-catalogue loss deltas should not render as a column');
+assert.equal(validationCompareTableMarkup.includes('Weight'), false, 'Compare tables should also omit the weight column');
+assert.equal(validationCompareTableMarkup.includes('Δ vs 2011'), false, 'Compare tables should also omit cross-catalogue deltas');
+assert.equal(
+  (validationTableMarkup.match(/class="validation-sort-button"/g) ?? []).length,
+  4,
+  'Only Metric, Off target, Seeds in band, and Loss should expose sort controls'
+);
+['Target', 'Target band', 'Simulated mean', 'Simulated IQR'].forEach((heading) => {
+  assert.equal(
+    validationTableMarkup.includes(`aria-label="Sort by ${heading},`),
+    false,
+    `${heading} should remain a plain, unsortable header`
+  );
+});
+assert.ok(
+  validationTableMarkup.includes('aria-sort="descending"') &&
+    validationTableMarkup.indexOf('Housing Transactions') < validationTableMarkup.indexOf('Mortgage Approvals') &&
+    validationTableMarkup.indexOf('Mortgage Approvals') < validationTableMarkup.indexOf('Advances to FTB') &&
+    validationTableMarkup.includes('0.5370'),
+  'The rendered table should expose its default sort and format every loss to four decimal places'
+);
+assert.ok(
+  validationTableMarkup.includes('aria-expanded="true"') &&
+    validationTableMarkup.includes(`aria-controls="${VALIDATION_METRIC_DETAILS_PANEL_ID}"`) &&
+    validationTableMarkup.includes('aria-haspopup="dialog"') &&
+    validationTableMarkup.includes('>Details</button>'),
+  'Each sourced metric should expose a labelled Details trigger associated with the side panel'
+);
+assert.equal(
+  (validationTableMarkup.match(/>Details<\/button>/g) ?? []).length,
+  tableMetrics.length,
+  'Every sourced fixture row should show the Details text trigger'
+);
+assert.equal(
+  validationTableMarkup.includes('validation-metric-detail-row'),
+  false,
+  'Details must not insert an expanding row into the table'
+);
+
+const extractTable = (markup: string) => markup.match(/<table class="validation-metrics-table">[\s\S]*<\/table>/)?.[0] ?? '';
+const normalizeExpandedState = (markup: string) => markup
+  .replace(/aria-expanded="(?:true|false)"/g, 'aria-expanded="state"')
+  .replace(/aria-label="(?:Open|Close) details for /g, 'aria-label="Details for ');
+assert.equal(
+  normalizeExpandedState(extractTable(validationTableMarkup)),
+  normalizeExpandedState(extractTable(closedValidationTableMarkup)),
+  'Opening the external panel must leave the table DOM and row geometry unchanged'
+);
+
+const metricDetailsMarkup = renderToStaticMarkup(
+  createElement(ValidationMetricDetailsPanel, {
+    detail: { metric: tableMetrics[0]!, trigger: null, showBandNote: true },
+    onClose: () => undefined
+  })
+);
+assert.ok(
+  metricDetailsMarkup.includes(`id="${VALIDATION_METRIC_DETAILS_PANEL_ID}"`) &&
+    metricDetailsMarkup.includes('role="dialog"') &&
+    metricDetailsMarkup.includes('tabindex="-1"') &&
+    metricDetailsMarkup.includes('aria-labelledby="validation-metric-details-heading-core_mortgageApprovals"') &&
+    metricDetailsMarkup.includes('Mortgage Approvals') &&
+    metricDetailsMarkup.includes('Loss family') &&
+    metricDetailsMarkup.includes('Positive level · log ratio') &&
+    metricDetailsMarkup.includes('Sources and provenance') &&
+    metricDetailsMarkup.includes('Fixture evidence source'),
+  'The external panel should be labelled by the metric and retain loss-family and provenance content'
+);
+
+const noProvenanceMetric = metricFixture({
+  metricId: 'no-provenance',
+  sourceLabel: '',
+  sourceReferences: [],
+  sourceDocumentPath: null,
+  sourceTextPath: null,
+  bandNotes: null
+});
+assert.equal(hasMetricProvenance(noProvenanceMetric), false);
+const noProvenanceMarkup = renderToStaticMarkup(
+  createElement(ValidationMetricTable, { themeTitle: 'No provenance', metrics: [noProvenanceMetric] })
+);
+assert.equal(noProvenanceMarkup.includes('>Details</button>'), false, 'Rows without provenance should have no empty trigger');
+
+const advancesToBtl = v5o3Snapshot.metrics.find((metric) => metric.metricId === 'core_advancesToBTL');
+assert.ok(v5o3Snapshot.metrics.every(hasMetricProvenance), 'Every v5o3 metric should have data for a Details trigger');
+assert.ok(advancesToBtl, 'The v5o3 snapshot should include Advances to BTL');
+const advancesToBtlPanel = renderToStaticMarkup(
+  createElement(ValidationMetricDetailsPanel, {
+    detail: { metric: advancesToBtl!, trigger: null, showBandNote: true },
+    onClose: () => undefined
+  })
+);
+[
+  'Buy to let Mortgage Market Update Q1.pdf · p.2 · Latest 2024 Q1 summary panel',
+  'Buy to let Mortgage Market Update Q2.pdf · p.2 · Latest 2024 Q2 summary panel',
+  'Buy to let Mortgage Market Update Q3.pdf · p.2 · Latest 2024 Q3 summary panel',
+  'Buy to let Mortgage Market Update Q4.pdf · p.2 · Latest 2024 Q4 summary panel',
+  'Quarterly house-purchase counts 12,422 + 14,955 + 16,410 + 18,268 converted to monthly mean: 62,055 / 12 / 1,000 = 5.171.'
+].forEach((provenanceLine) => {
+  assert.ok(advancesToBtlPanel.includes(provenanceLine), `Advances to BTL should retain: ${provenanceLine}`);
+});
 
 console.log('Validation model picker tests passed.');

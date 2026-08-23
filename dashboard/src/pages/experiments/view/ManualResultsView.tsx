@@ -10,6 +10,7 @@ import type {
   ResultsComparePayload,
   ResultsFileManifestEntry,
   ResultsRunDetail,
+  ResultsRunProvenance,
   ResultsRunStatus,
   ResultsRunSummary
 } from '../../../../shared/types';
@@ -32,10 +33,13 @@ import {
   isRetryableApiError
 } from '../../../lib/api';
 import {
+  buildLendingIndicatorAvailability,
+  buildLendingKpis,
   computeKpiDeltaValue,
   formatKpiComparisonDelta,
   formatKpiValue,
   groupIndicatorsByPolicyQuestion,
+  isLendingKpiId,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -43,7 +47,8 @@ import {
   sortKpis
 } from '../../../lib/manualResultsView';
 import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
-import { NewLendingCard, type LendingView } from './NewLendingCard';
+import { NewLendingCard, unavailableMessage, type LendingView } from './NewLendingCard';
+import { FullRunDetailsDialog } from './FullRunDetailsDialog';
 import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
@@ -55,11 +60,180 @@ const PROTECTED_RESULTS_RUN_IDS = new Set(['v0-output', 'v4.0-output']);
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
+
+/**
+ * The analysis window is page-wide: it is a dependency of the compare fetch, so it recomputes every
+ * mean in the results table and every band in the lending card, not just the trend chart. The labels
+ * live here so the page-level control and the chart's read-only restatement cannot drift apart.
+ */
+const COMPARE_WINDOW_OPTIONS: Array<{ value: CompareWindow; label: string }> = [
+  { value: 'post500', label: 'After month 500' },
+  { value: 'post200', label: 'After month 200' },
+  { value: 'tail120', label: 'Latest 120 months' },
+  { value: 'full', label: 'Full run' }
+];
+
+function compareWindowLabel(window: CompareWindow): string {
+  return COMPARE_WINDOW_OPTIONS.find((option) => option.value === window)?.label ?? window;
+}
+
+/**
+ * Decision 2: rows the dashboard scales say so; the rows Java already scaled do not, because the
+ * distinction is only ever a question about where the arithmetic happened, not about the number.
+ */
+const UK_SCALING_ROW_NOTE =
+  'Model household counts are converted into UK-equivalent counts using each run\u2019s configured UK household population. ' +
+  'For example, 1,000 out of 10,000 model households becomes approximately 2.64 million out of 26.44 million UK households. ' +
+  'This changes only the scale, not the modelled proportion, and does not mean every UK household was individually simulated.';
+
+function formatWholeNumber(value: number): string {
+  return value.toLocaleString('en-GB', { maximumFractionDigits: 0 });
+}
+
+/** Compact description of a seed set: a single seed, a contiguous run, or an explicit list. */
+function describeSeedSet(seeds: number[] | null): string | null {
+  if (!seeds || seeds.length === 0) {
+    return null;
+  }
+  if (seeds.length === 1) {
+    return `seed ${seeds[0]}`;
+  }
+  const isContiguous = seeds.every((seed, index) => index === 0 || seed === seeds[index - 1] + 1);
+  return isContiguous
+    ? `${seeds.length} seeds (${seeds[0]}\u2013${seeds[seeds.length - 1]})`
+    : `${seeds.length} seeds (${seeds.join(', ')})`;
+}
+
+type SeedOverlap = 'same' | 'overlapping' | 'disjoint' | 'unknown';
+
+/**
+ * Runs are Monte Carlo ensembles, so "same seed / different seed" is the wrong question. What
+ * matters is how much of the two seed sets is shared: a fully shared set removes the noise, a
+ * disjoint one leaves every difference confounded with it.
+ */
+function compareSeedSets(
+  baselineSeeds: number[] | null,
+  comparisonSeeds: number[] | null
+): { overlap: SeedOverlap; sharedCount: number } {
+  if (!baselineSeeds || !comparisonSeeds || baselineSeeds.length === 0 || comparisonSeeds.length === 0) {
+    return { overlap: 'unknown', sharedCount: 0 };
+  }
+  const comparisonSet = new Set(comparisonSeeds);
+  const sharedCount = baselineSeeds.filter((seed) => comparisonSet.has(seed)).length;
+  if (sharedCount === 0) {
+    return { overlap: 'disjoint', sharedCount };
+  }
+  if (sharedCount === baselineSeeds.length && sharedCount === comparisonSeeds.length) {
+    return { overlap: 'same', sharedCount };
+  }
+  return { overlap: 'overlapping', sharedCount };
+}
+
+function describeSeedOverlap(overlap: SeedOverlap, sharedCount: number): string {
+  switch (overlap) {
+    case 'same':
+      return `Same ${sharedCount} seeds`;
+    case 'overlapping':
+      return `${sharedCount} seeds shared`;
+    case 'disjoint':
+      return 'No seeds shared';
+    default:
+      return 'Seed sets not recorded';
+  }
+}
+
+/**
+ * What a run was actually run at, under its own dropdown: the seed set, the step count, and the
+ * housing supply per household. The last one is the reason two runs may not be comparable at all
+ * — a 25% difference in dwellings per household moves every count regardless of policy.
+ */
+function RunProvenancePills({
+  provenance,
+  differsFrom
+}: {
+  provenance: ResultsRunProvenance | null | undefined;
+  differsFrom?: ResultsRunProvenance | null;
+}): JSX.Element | null {
+  if (!provenance) {
+    return null;
+  }
+
+  const seedText = describeSeedSet(provenance.seeds);
+  const seedNote =
+    provenance.seedSource === 'config'
+      ? 'Read from config.properties; this run has no dashboard manifest, so a multi-seed ensemble could be under-reported.'
+      : undefined;
+  const { overlap, sharedCount } = differsFrom
+    ? compareSeedSets(provenance.seeds, differsFrom.seeds)
+    : { overlap: 'unknown' as SeedOverlap, sharedCount: 0 };
+  const stepsDiffer =
+    differsFrom !== undefined &&
+    differsFrom !== null &&
+    provenance.nSteps !== null &&
+    differsFrom.nSteps !== null &&
+    provenance.nSteps !== differsFrom.nSteps;
+  const supplyDiffers =
+    differsFrom !== undefined &&
+    differsFrom !== null &&
+    provenance.dwellingsPerHousehold !== null &&
+    differsFrom.dwellingsPerHousehold !== null &&
+    Math.abs(provenance.dwellingsPerHousehold - differsFrom.dwellingsPerHousehold) > 0.0005;
+
+  return (
+    <span className="run-provenance-pills">
+      {seedText && (
+        <span className="run-provenance-pill" title={seedNote}>
+          {seedText}
+          {differsFrom && overlap !== 'unknown' && (
+            <span className={`run-provenance-chip ${overlap === 'same' ? '' : 'is-different'}`}>
+              {describeSeedOverlap(overlap, sharedCount)}
+            </span>
+          )}
+        </span>
+      )}
+      {provenance.nSteps !== null && (
+        <span className="run-provenance-pill">
+          {formatWholeNumber(provenance.nSteps)} steps
+          {stepsDiffer && <span className="run-provenance-chip is-different">differs</span>}
+        </span>
+      )}
+      {provenance.dwellingsPerHousehold !== null && (
+        <span
+          className="run-provenance-pill"
+          title={
+            'UK_DWELLINGS divided by UK_HOUSEHOLDS \u2014 the housing supply the model was run at. '
+            + 'Counts from runs with different ratios are not comparable, whatever the policy.'
+          }
+        >
+          {provenance.dwellingsPerHousehold.toFixed(3)} dwellings/household
+          {supplyDiffers && <span className="run-provenance-chip is-different">differs</span>}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The social-housing row is a residual of the dwelling-stock constraint, so what it means depends on
+ * the run's dwellings-per-household ratio: below 1 it stands for the social-rented sector, at or
+ * above 1 the residual all but vanishes and the row is measuring something else.
+ */
+function socialHousingRunNote(dwellingsPerHousehold: number | null): string | null {
+  if (dwellingsPerHousehold === null) {
+    return null;
+  }
+  const ratio = dwellingsPerHousehold.toFixed(3);
+  return dwellingsPerHousehold < 1
+    ? ` This run has ${ratio} dwellings per household, so a standing residual is expected.`
+    : ` This run has ${ratio} dwellings per household \u2014 dwellings are not scarce, so the residual nearly disappears and this row is not comparable with a run calibrated below 1.`;
+}
 type ManifestTarget = 'baseline' | 'comparison';
 type ManualResultsMode = 'single' | 'compare';
 
-function getRunModelVersion(run: Pick<ResultsRunSummary, 'runId'>): string | null {
-  return extractVersionFromResultsRunId(run.runId);
+function getRunModelVersion(
+  run: Pick<ResultsRunSummary, 'runId'> & { configuration?: ResultsRunDetail['configuration'] }
+): string | null {
+  return run.configuration?.modelVersion ?? extractVersionFromResultsRunId(run.runId);
 }
 
 function getRunPrimaryLabel(run: Pick<ResultsRunSummary, 'runId' | 'title'>): string {
@@ -89,11 +263,14 @@ function isProtectedResultsRun(runId: string): boolean {
   return PROTECTED_RESULTS_RUN_IDS.has(runId.trim());
 }
 
-function deltaClassName(value: number | null): string {
-  if (value === null || !Number.isFinite(value) || Math.abs(value) < 1e-12) {
-    return 'neutral';
-  }
-  return value > 0 ? 'positive' : 'negative';
+/**
+ * Deliberately neutral. Colouring a delta green or red asserts a polarity, and for most of these
+ * indicators none exists: whether a higher rental yield, or a faster house price rise, is good
+ * depends entirely on who is asking. The direction arrow beside it states the fact; the colour was
+ * stating an opinion the model cannot support. Per-indicator polarity is a separate decision.
+ */
+function deltaClassName(): string {
+  return 'neutral';
 }
 
 function deltaDirection(value: number | null): { symbol: string; label: string } {
@@ -167,6 +344,7 @@ export function ManualResultsView({
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
+  const [runDetailsTarget, setRunDetailsTarget] = useState<ManifestTarget | null>(null);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
@@ -615,6 +793,12 @@ export function ManualResultsView({
   const policySettingsSummary = comparisonDetail
     ? `${changedPolicyCount} of ${policySettings.length} settings differ`
     : `${policySettings.length} Central Bank settings`;
+  const runDetailsRun =
+    runDetailsTarget === 'comparison'
+      ? comparisonDetail
+      : runDetailsTarget === 'baseline'
+        ? baselineDetail
+        : null;
   const baselineCompareKpis = useMemo(
     () => comparePayload?.kpiSummaryByRun.find((entry) => entry.runId === baselineRunId)?.kpiSummary ?? [],
     [baselineRunId, comparePayload]
@@ -623,14 +807,36 @@ export function ManualResultsView({
     () => comparePayload?.kpiSummaryByRun.find((entry) => entry.runId === comparisonRunId)?.kpiSummary ?? [],
     [comparisonRunId, comparePayload]
   );
+  // The loan-level rows come from the transaction file rather than the aggregate catalog, so they
+  // are merged in here rather than served as indicators. They are only offered once a lending
+  // payload has loaded: a run with transaction recording off gets the rows with the reason, and a
+  // run still loading gets no placeholder rows at all.
+  const kpiWindowType = comparePayload?.kpiSummaryByRun[0]?.kpiSummary[0]?.windowType ?? 'post_500';
+  const lendingUnavailableNote = useMemo(
+    () => (lendingBaseline ? unavailableMessage(lendingBaseline) : ''),
+    [lendingBaseline]
+  );
+  const lendingIndicators = useMemo(
+    () => (lendingBaseline ? buildLendingIndicatorAvailability(lendingBaseline, lendingUnavailableNote) : []),
+    [lendingBaseline, lendingUnavailableNote]
+  );
+  const lendingKpis = useMemo(
+    () => (lendingBaseline ? buildLendingKpis(lendingBaseline, kpiWindowType) : []),
+    [kpiWindowType, lendingBaseline]
+  );
+  const lendingComparisonKpis = useMemo(
+    () => (lendingComparison ? buildLendingKpis(lendingComparison, kpiWindowType) : []),
+    [kpiWindowType, lendingComparison]
+  );
+
   const sortedKpis = useMemo(() => sortKpis(baselineCompareKpis), [baselineCompareKpis]);
   const comparisonKpiById = useMemo(
-    () => new Map(comparisonCompareKpis.map((kpi) => [kpi.indicatorId, kpi])),
-    [comparisonCompareKpis]
+    () => new Map([...comparisonCompareKpis, ...lendingComparisonKpis].map((kpi) => [kpi.indicatorId, kpi])),
+    [comparisonCompareKpis, lendingComparisonKpis]
   );
   const groupedKpis = useMemo(() => {
-    const kpiById = new Map(sortedKpis.map((kpi) => [kpi.indicatorId, kpi]));
-    return groupIndicatorsByPolicyQuestion(availableIndicators)
+    const kpiById = new Map([...sortedKpis, ...lendingKpis].map((kpi) => [kpi.indicatorId, kpi]));
+    return groupIndicatorsByPolicyQuestion([...availableIndicators, ...lendingIndicators])
       .map((section) => ({
         id: section.id,
         title: section.title,
@@ -639,8 +845,59 @@ export function ManualResultsView({
           .filter((kpi): kpi is KpiMetricSummary => Boolean(kpi))
       }))
       .filter((section) => section.items.length > 0);
-  }, [availableIndicators, sortedKpis]);
+  }, [availableIndicators, lendingIndicators, lendingKpis, sortedKpis]);
   const policyGroupIds = useMemo(() => groupedKpis.map((section) => section.id), [groupedKpis]);
+  // Decision 6: a row that cannot be scaled says why, instead of silently falling back to a different
+  // denominator or showing an agent-scale count beside UK-scale ones.
+  const indicatorDescriptionById = useMemo(() => {
+    const provenance = baselineSummary?.provenance ?? baselineDetail?.provenance ?? null;
+    const socialHousingNote = socialHousingRunNote(provenance?.dwellingsPerHousehold ?? null);
+    return new Map(
+      [...availableIndicators, ...lendingIndicators].map((indicator) => [
+        indicator.id,
+        indicator.id === 'output_nHomeless' && socialHousingNote
+          ? `${indicator.description}${socialHousingNote}`
+          : indicator.description
+      ])
+    );
+  }, [availableIndicators, baselineDetail, baselineSummary, lendingIndicators]);
+  const unavailableReasonById = useMemo(() => {
+    const reasons = new Map<string, string>();
+    for (const indicator of [...availableIndicators, ...lendingIndicators]) {
+      if (!indicator.available && indicator.note) {
+        reasons.set(indicator.id, indicator.note);
+      }
+    }
+    return reasons;
+  }, [availableIndicators, lendingIndicators]);
+  // Decision 4: the warning that matters when two runs disagree is not the scaling, which is handled
+  // per run, but the housing supply they were run at. Counts are not comparable across it.
+  const housingSupplyWarning = useMemo(() => {
+    const baseline = baselineSummary?.provenance.dwellingsPerHousehold ?? null;
+    const comparison = comparisonSummary?.provenance.dwellingsPerHousehold ?? null;
+    if (baseline === null || comparison === null || Math.abs(baseline - comparison) <= 0.0005) {
+      return null;
+    }
+    const percentGap = Math.abs(comparison / baseline - 1) * 100;
+    return `These runs were calibrated to different housing supplies: ${baseline.toFixed(3)} against ${comparison.toFixed(
+      3
+    )} dwellings per household, a gap of ${percentGap.toFixed(1)}%. Counts and tenure shares will differ for that reason alone, whatever the policy. Ratios, rates and prices are still comparable.`;
+  }, [baselineSummary, comparisonSummary]);
+  const scalingConvention = useMemo(() => {
+    const provenance = baselineSummary?.provenance ?? baselineDetail?.provenance ?? null;
+    if (!provenance || provenance.ukHouseholds === null) {
+      return null;
+    }
+    const factor =
+      provenance.meanScaleFactor === null
+        ? null
+        : `about \u00d7${formatWholeNumber(provenance.meanScaleFactor)} on average`;
+    return `Counts and stocks are shown at UK scale: each month\u2019s value is multiplied by ${formatWholeNumber(
+      provenance.ukHouseholds
+    )} UK households and divided by that month\u2019s modelled households${
+      provenance.meanModelHouseholds === null ? '' : ` (mean ${formatWholeNumber(provenance.meanModelHouseholds)})`
+    }${factor ? `, ${factor}` : ''}. Ratios, rates, prices, indices and durations are unaffected.`;
+  }, [baselineDetail, baselineSummary]);
   const allPolicyGroupsExpanded =
     policyGroupIds.length > 0 && policyGroupIds.every((groupId) => expandedPolicyGroupIds.includes(groupId));
   const allPolicyGroupsCollapsed = policyGroupIds.every(
@@ -683,6 +940,24 @@ export function ManualResultsView({
     };
   }, [isTrendModalOpen]);
 
+  useEffect(() => {
+    if (!runDetailsTarget) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setRunDetailsTarget(null);
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [runDetailsTarget]);
+
+  useEffect(() => {
+    setRunDetailsTarget(null);
+  }, [baselineRunId, comparisonRunId]);
+
   const updateSelection = useCallback(
     (nextBaselineRunId: string, nextComparisonRunId: string) => {
       onManualSelectionChange({
@@ -713,7 +988,13 @@ export function ManualResultsView({
   const LENDING_METRIC_BY_INDICATOR: Record<string, LendingMetricId> = {
     core_ooLTV: 'ltv',
     core_btlLTV: 'ltv',
-    core_ooLTI: 'lti'
+    core_ooLTI: 'lti',
+    lending_ooMeanLtv: 'ltv',
+    lending_ooMeanLti: 'lti',
+    lending_ftbHighLtv: 'ltv',
+    lending_hmHighLtv: 'ltv',
+    lending_ftbHighLti: 'lti',
+    lending_hmHighLti: 'lti'
   };
 
   const viewLendingDistribution = (indicatorId: string) => {
@@ -804,13 +1085,13 @@ export function ManualResultsView({
       if (!authEnabled) {
         return (
           <button type="button" className="summary-link-inline summary-button-inline" disabled>
-            Download Unavailable
+            Raw File Download Unavailable
           </button>
         );
       }
       return (
         <Link className="summary-link-inline" to={loginPath}>
-          Login to Download
+          Login to Download Raw Files
         </Link>
       );
     }
@@ -818,6 +1099,7 @@ export function ManualResultsView({
       <button
         type="button"
         className="summary-link-inline summary-button-inline"
+        title="Download this run's complete raw output directory as a compressed archive."
         disabled={isDownloadingRunId === runId}
         onClick={() => void downloadRun(runId)}
       >
@@ -910,10 +1192,13 @@ export function ManualResultsView({
                   ))}
                 </select>
                 {baselineSummary && (
-                  <ManualSelectionStatusPills
-                    status={baselineSummary.status}
-                    versionLabelState={baselineVersionLabelState}
-                  />
+                  <>
+                    <ManualSelectionStatusPills
+                      status={baselineSummary.status}
+                      versionLabelState={baselineVersionLabelState}
+                    />
+                    <RunProvenancePills provenance={baselineSummary.provenance} />
+                  </>
                 )}
               </label>
               <label>
@@ -933,10 +1218,16 @@ export function ManualResultsView({
                     ))}
                 </select>
                 {comparisonSummary ? (
-                  <ManualSelectionStatusPills
-                    status={comparisonSummary.status}
-                    versionLabelState={comparisonVersionLabelState}
-                  />
+                  <>
+                    <ManualSelectionStatusPills
+                      status={comparisonSummary.status}
+                      versionLabelState={comparisonVersionLabelState}
+                    />
+                    <RunProvenancePills
+                      provenance={comparisonSummary.provenance}
+                      differsFrom={baselineSummary?.provenance ?? null}
+                    />
+                  </>
                 ) : (
                   <small>Select a run to compare values and graph lines.</small>
                 )}
@@ -951,7 +1242,8 @@ export function ManualResultsView({
                 </div>
                 <ul className="run-policy-provenance" aria-label="Policy run provenance">
                   {[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])].map((run) => {
-                    const referencePolicy = summariseRunPolicy(run.policySettings).basePolicyId;
+                    const referencePolicy =
+                      run.configuration.basePolicy ?? summariseRunPolicy(run.policySettings).basePolicyId;
                     return (
                       <li key={run.runId}>
                         <strong>{runLabel(run.runId)}</strong>
@@ -1001,12 +1293,60 @@ export function ManualResultsView({
               </section>
             )}
 
+            {runDetailsRun && (
+              <FullRunDetailsDialog run={runDetailsRun} onClose={() => setRunDetailsTarget(null)} />
+            )}
+
             <div className="summary-links">
-              {renderDownloadAction(baselineRunId, 'Download primary')}
-              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison')}
+              {baselineDetail && (
+                <button
+                  type="button"
+                  className="summary-link-inline summary-button-inline"
+                  aria-haspopup="dialog"
+                  onClick={() => setRunDetailsTarget('baseline')}
+                >
+                  {comparisonDetail ? 'View primary run details' : 'View full run details'}
+                </button>
+              )}
+              {comparisonDetail && (
+                <button
+                  type="button"
+                  className="summary-link-inline summary-button-inline"
+                  aria-haspopup="dialog"
+                  onClick={() => setRunDetailsTarget('comparison')}
+                >
+                  View comparison run details
+                </button>
+              )}
+              {renderDownloadAction(
+                baselineRunId,
+                comparisonRunId ? 'Download primary raw files' : 'Download raw run files'
+              )}
+              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison raw files')}
             </div>
 
-            <p>Analysis-window and smoothing controls are available when a trend chart is opened.</p>
+            {housingSupplyWarning && <p className="warning-banner">{housingSupplyWarning}</p>}
+            {scalingConvention && <p className="results-scaling-convention">{scalingConvention}</p>}
+
+            <div className="results-analysis-window">
+              <label>
+                <span>Analysis window</span>
+                <select
+                  value={compareWindow}
+                  onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
+                >
+                  {COMPARE_WINDOW_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <small>
+                Applies to this whole page. Every mean, change and distribution below is computed over
+                the months in this window.
+              </small>
+            </div>
           </article>
 
           <CollapsibleSection
@@ -1106,30 +1446,63 @@ export function ManualResultsView({
                                   kpi.units
                                 );
                                 const direction = deltaDirection(delta);
+                                const unavailableReason = unavailableReasonById.get(kpi.indicatorId);
                                 return (
                                   <tr key={kpi.indicatorId}>
-                                    <th scope="row">{kpi.title}</th>
-                                    <td>{formatKpiValue(kpi.mean, kpi.units)}</td>
+                                    <th scope="row">
+                                      <span title={indicatorDescriptionById.get(kpi.indicatorId)}>{kpi.title}</span>
+                                      {kpi.scaling === 'dashboard' && (
+                                        <span
+                                          className="policy-results-scaled-chip"
+                                          tabIndex={0}
+                                          aria-describedby={`uk-scaling-tooltip-${kpi.indicatorId}`}
+                                        >
+                                          UK-scaled
+                                          <span
+                                            id={`uk-scaling-tooltip-${kpi.indicatorId}`}
+                                            role="tooltip"
+                                            className="policy-results-scaled-tooltip"
+                                          >
+                                            <strong>What UK-scaled means</strong>
+                                            <span>{UK_SCALING_ROW_NOTE}</span>
+                                          </span>
+                                        </span>
+                                      )}
+                                    </th>
+                                    <td title={unavailableReason}>
+                                      {unavailableReason && kpi.mean === null
+                                        ? 'Unavailable'
+                                        : formatKpiValue(kpi.mean, kpi.units, kpi.scaling)}
+                                    </td>
                                     {mode === 'compare' && (
-                                      <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units)}</td>
+                                      <td>{formatKpiValue(comparisonKpi?.mean ?? null, kpi.units, kpi.scaling)}</td>
                                     )}
                                     {mode === 'compare' && (
-                                      <td className={deltaClassName(delta)}>
+                                      <td className={deltaClassName()}>
                                         <span className="policy-results-change-direction" aria-label={direction.label}>
                                           {direction.symbol}
                                         </span>{' '}
-                                        {formatKpiComparisonDelta(kpi.mean, comparisonKpi?.mean ?? null, kpi.units)}
+                                        {formatKpiComparisonDelta(
+                                          kpi.mean,
+                                          comparisonKpi?.mean ?? null,
+                                          kpi.units,
+                                          kpi.scaling
+                                        )}
                                       </td>
                                     )}
                                     <td>
                                       <div className="policy-row-actions">
-                                        <button
-                                          type="button"
-                                          className="policy-trend-link"
-                                          onClick={() => viewIndicatorTrend(kpi.indicatorId)}
-                                        >
-                                          View trend
-                                        </button>
+                                        {/* Loan-level rows are pooled over the window, not a monthly
+                                            series, so there is no path through time to open. */}
+                                        {!isLendingKpiId(kpi.indicatorId) && (
+                                          <button
+                                            type="button"
+                                            className="policy-trend-link"
+                                            onClick={() => viewIndicatorTrend(kpi.indicatorId)}
+                                          >
+                                            View trend
+                                          </button>
+                                        )}
                                         {LENDING_METRIC_BY_INDICATOR[kpi.indicatorId] && (
                                           <button
                                             type="button"
@@ -1190,19 +1563,11 @@ export function ManualResultsView({
                 <div className="trend-modal-layout">
                   <aside className="trend-modal-settings" aria-label="Trend chart settings">
                     <h4>Settings</h4>
-                    <label>
+                    <p className="trend-modal-window-note">
                       <span>Analysis window</span>
-                      <select
-                        value={compareWindow}
-                        onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
-                      >
-                        <option value="post500">After month 500</option>
-                        <option value="post200">After month 200</option>
-                        <option value="tail120">Latest 120 months</option>
-                        <option value="full">Full run</option>
-                      </select>
-                      <small>Also updates the means in the results tables.</small>
-                    </label>
+                      <strong>{compareWindowLabel(compareWindow)}</strong>
+                      <small>Set above the results table, because it applies to the whole page.</small>
+                    </p>
                     <label>
                       <span>Smoothing</span>
                       <select

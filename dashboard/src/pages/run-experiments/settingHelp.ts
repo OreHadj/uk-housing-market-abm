@@ -6,7 +6,8 @@ export type ExperimentControlMode = 'manual' | 'sensitivity';
 export const SETTING_HELP = {
   sensitivityPolicyParameter: 'Policy instrument varied across the analysis. Choose the one to test against the selected baseline policy.',
   sensitivityPolicyPackage: 'One or more related central-bank policy settings varied together across the analysis.',
-  basePolicy: 'The reference year supplies the starting value for every policy setting. Any setting you leave unchanged keeps that year’s value.',
+  basePolicy:
+    'The reference year supplies the starting value for every policy setting. Any setting you leave unchanged keeps that year’s value. Note for 2011: these values follow the project report’s recalibrated parameter table (95/90/80 LTV, 1.2 ICR floor). The Bank of England working paper’s own central-bank table lists 90/90/75 and a 1.25 ICR floor. The builder follows the report for consistency with the recalibration.',
   optionalExperimentTitle: 'Short label used to identify this experiment in results and logs.',
   optionalRunTitle: 'Short label used to identify this run in results and logs.',
   calibrationParameterVersion: 'A saved configuration of model inputs and behavioural assumptions. Its behavioural parameters were adjusted until the model reflected patterns in observed UK housing statistics and survey data.',
@@ -19,12 +20,15 @@ export const SETTING_HELP = {
 
 const PARAMETER_HELP_BY_KEY: Record<string, string> = {
   SEED: 'Seeded dashboard experiments run deterministic seed blocks starting at 1.',
-  N_STEPS: 'Number of model time steps to simulate. Longer runs cost more but allow slower dynamics to emerge.',
+  N_STEPS:
+    'Number of model time steps to simulate. Longer runs cost more but allow slower dynamics to emerge. The default of 3,500 matches the calibration and validation window used for this model (steps 500-3,500, with the first 500 discarded as warm-up).',
   N_SIMS: 'Independent seed runs used to average stochastic outcomes. More seeds reduce noise and increase runtime.',
   ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS:
     'Months included in rolling averages for core indicators. This smooths short-term variation.',
   TIME_TO_START_RECORDING_TRANSACTIONS:
     'Month when transaction-level export begins. Earlier recording creates larger files and may affect performance.',
+  CUMULATIVE_WEIGHT_BEYOND_YEAR:
+    'Weight given to events older than twelve months. The default of 0.14 is the config default in the user-set parameters table of the Bank of England working paper.',
   recordTransactions: 'Exports every transaction event for downloaded or external analysis. This can create very large files and affect performance.',
   recordNBidUpFrequency: 'Exports bid-up frequency data for analysis outside the dashboard.',
   recordCoreIndicators: 'Writes the main indicator series required by charts in the dashboard.',

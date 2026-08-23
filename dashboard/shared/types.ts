@@ -499,12 +499,21 @@ export type ResultsCoverageStatus = 'supported' | 'empty' | 'unsupported' | 'err
 
 export type ResultsSeriesSource = 'core_indicator' | 'output';
 
+/**
+ * How an indicator's magnitude reaches UK scale.
+ * - `model`  — Java already multiplied by UK_HOUSEHOLDS / modelled households (CoreIndicators).
+ * - `dashboard` — a raw agent-level count or stock that the dashboard scales, per month, on read.
+ * - `none`   — a ratio, rate, price, index or duration, which is scale-free by construction.
+ */
+export type ResultsIndicatorScaling = 'model' | 'dashboard' | 'none';
+
 export interface ResultsIndicatorMeta {
   id: string;
   title: string;
   units: string;
   description: string;
   source: ResultsSeriesSource;
+  scaling: ResultsIndicatorScaling;
 }
 
 export type KpiMetricKey = 'mean' | 'cv' | 'annualisedTrend' | 'range';
@@ -522,6 +531,8 @@ export interface KpiMetricSummary {
   indicatorId: string;
   title: string;
   units: string;
+  /** Carried on the row so a table cell can be formatted without a second catalog lookup. */
+  scaling: ResultsIndicatorScaling;
   windowType: KpiMetricWindowType;
   mean: number | null;
   cv: number | null;
@@ -542,6 +553,31 @@ export interface ResultsPolicySetting {
   value: number;
 }
 
+/**
+ * What a run was configured with, read back from its own config.properties and manifest. Needed to
+ * scale agent counts to UK households, and to say whether two runs are comparable at all: the
+ * dwellings-per-household ratio differs by 25% between the published and recalibrated vintages, so
+ * counts from one cannot be read against the other.
+ */
+export interface ResultsRunProvenance {
+  ukHouseholds: number | null;
+  ukDwellings: number | null;
+  /** UK_DWELLINGS / UK_HOUSEHOLDS — the housing supply per household the model was run at. */
+  dwellingsPerHousehold: number | null;
+  targetPopulation: number | null;
+  /** Mean modelled households across the whole run; the denominator of the scaling factor. */
+  meanModelHouseholds: number | null;
+  /** ukHouseholds / meanModelHouseholds. Stated once; the applied factor is per month, not this. */
+  meanScaleFactor: number | null;
+  nSteps: number | null;
+  /**
+   * The seeds actually run. Read from the run manifest first: a multi-seed run's config.properties
+   * records only the base SEED, so reading config alone would label a 10-seed ensemble "seed 1".
+   */
+  seeds: number[] | null;
+  seedSource: 'manifest' | 'config' | null;
+}
+
 export interface ResultsRunSummary {
   runId: string;
   /** Scenario name given when the run was created; null for runs with no readable manifest. */
@@ -556,6 +592,22 @@ export interface ResultsRunSummary {
   parseCoverage: ResultsCoverageSummary;
   /** Empty when the run predates policy recording, or its config could not be read. */
   policySettings: ResultsPolicySetting[];
+  /** Fields are null individually when the run's config does not record them. */
+  provenance: ResultsRunProvenance;
+}
+
+export type ResultsRunConfigurationValue = number | boolean | string;
+
+/**
+ * The user-facing choices that produced a completed policy run. The model and worker count come
+ * from the dashboard manifest; final parameter values come from the generated config copied into
+ * the result folder. Fields may be absent for legacy or externally supplied runs.
+ */
+export interface ResultsRunConfiguration {
+  modelVersion: string | null;
+  basePolicy: BasePolicyId | null;
+  maxWorkers: number | null;
+  parameterValues: Record<string, ResultsRunConfigurationValue>;
 }
 
 export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
@@ -565,6 +617,7 @@ export interface ResultsIndicatorAvailability extends ResultsIndicatorMeta {
 }
 
 export interface ResultsRunDetail extends ResultsRunSummary {
+  configuration: ResultsRunConfiguration;
   indicators: ResultsIndicatorAvailability[];
   kpiSummary: KpiMetricSummary[];
 }
@@ -685,6 +738,12 @@ export interface LendingBandGroup {
   title: string;
   units: string;
   bands: LendingBand[];
+  /**
+   * The cut that defines "high" for this metric. The risk tail is every band whose lower edge sits
+   * at or above it, so a reader gets the paper's high-LTV / high-LTI shares without re-deriving the
+   * threshold from the band labels.
+   */
+  highThreshold: number;
   seriesByBorrowerType: LendingBandSeries[];
 }
 
@@ -763,6 +822,12 @@ export interface LendingSummaryStats {
   meanLti: number | null;
   medianLti: number | null;
   meanDsti: number | null;
+  /**
+   * Transaction price over annual gross employment income, averaged over this borrower type's new
+   * lending. This is the loan-level price-to-income the paper reports (4.4), not the aggregate
+   * all-household ratio in the results table, which uses net total income across every household.
+   */
+  meanPriceToIncome: number | null;
   /** BTL only; NaN for owner-occupiers in the source file. */
   meanIcr: number | null;
 }

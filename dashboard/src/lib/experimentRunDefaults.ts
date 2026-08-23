@@ -24,6 +24,62 @@ export const DEFAULT_EXPERIMENT_BASE_POLICY_ID: BasePolicyId = '2024';
  */
 export const DEFAULT_EXPERIMENT_SEED_COUNT = 8;
 
+/**
+ * Simulation duration for the policy-run builder.
+ *
+ * The model config ships `N_STEPS = 2000`, which is not a value either source paper uses. The BoE
+ * paper runs 3,500 steps for SMM calibration, and both the TuRBO calibration and the project
+ * report's validation loss aggregate over a 500-3,500 window with the first 500 steps discarded as
+ * warm-up. 3,500 is the duration consistent with both, and stays under the >4,000 heavy-run warning
+ * raised by `createWarnings` (server/lib/modelRuns.ts). Home's Default Run preset already uses it.
+ */
+export const DEFAULT_POLICY_RUN_N_STEPS = 3500;
+
+/**
+ * First model month retained in transaction-level exports for policy runs.
+ *
+ * The standard analysis window discards months 0-499 as warm-up. Starting transaction exports at
+ * month 500 preserves that whole window without paying the storage and runtime cost of warm-up
+ * microdata. Model-version configs retain their historical value; the policy-run builder applies
+ * this research-aligned default explicitly when it submits a manual experiment.
+ */
+export const DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START = 500;
+
+/**
+ * Cumulative weight assigned to events older than twelve months.
+ *
+ * The model config ships 0.25, which has no basis in either source paper. Table 16 of the BoE
+ * paper's Online Appendix (C.1.1, user-set parameters) gives 0.14.
+ */
+export const DEFAULT_POLICY_RUN_CUMULATIVE_WEIGHT_BEYOND_YEAR = 0.14;
+
+/**
+ * Builder-level defaults for the policy-run wizard.
+ *
+ * Every other default reaches the form from the selected model version's config.properties via
+ * `toInitialFormValues`. These corrections align manual policy runs with the project's standard
+ * analysis conventions, so they are applied here rather than by rewriting the version configs.
+ * Deliberately not applied to the sensitivity builder or to Home's Default Run preset: neither
+ * retains transaction-level exports.
+ */
+export function applyPolicyRunBuilderDefaults(
+  parameters: ModelRunParameterDefinition[],
+  values: Record<string, FormValue>
+): Record<string, FormValue> {
+  const hasParameter = (key: string) => parameters.some((parameter) => parameter.key === key);
+  const nextValues = { ...values };
+  if (hasParameter('N_STEPS')) {
+    nextValues.N_STEPS = String(DEFAULT_POLICY_RUN_N_STEPS);
+  }
+  if (hasParameter('TIME_TO_START_RECORDING_TRANSACTIONS')) {
+    nextValues.TIME_TO_START_RECORDING_TRANSACTIONS = String(DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START);
+  }
+  if (hasParameter('CUMULATIVE_WEIGHT_BEYOND_YEAR')) {
+    nextValues.CUMULATIVE_WEIGHT_BEYOND_YEAR = String(DEFAULT_POLICY_RUN_CUMULATIVE_WEIGHT_BEYOND_YEAR);
+  }
+  return nextValues;
+}
+
 /** Policy-scenario result pages require core indicators, including when a saved draft disabled them. */
 export function normalizeManualScenarioFormValues(values: Record<string, FormValue>): Record<string, FormValue> {
   return { ...values, recordCoreIndicators: true };

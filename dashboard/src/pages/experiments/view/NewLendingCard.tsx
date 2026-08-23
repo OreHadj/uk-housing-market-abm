@@ -9,6 +9,7 @@ import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
 import { LoadingSkeleton } from '../../../components/LoadingSkeleton';
 import { jointHeatmapOption } from '../../../lib/jointHeatmapOption';
+import { pooledOwnerOccupierLending } from '../../../lib/manualResultsView';
 import {
   borrowerTypeLabel,
   buildLendingDistributionOption,
@@ -62,6 +63,10 @@ function formatPriceBound(value: number | null): string {
   return value === null ? '—' : `£${Math.round(value).toLocaleString('en-GB')}`;
 }
 
+function formatRatio(value: number | null, decimals: number): string {
+  return value === null ? '—' : value.toFixed(decimals);
+}
+
 /** Percentage-point change, shown when a comparison run is selected. */
 function formatDelta(baselineValue: number, comparisonValue: number): string {
   const delta = comparisonValue - baselineValue;
@@ -92,7 +97,8 @@ function describeWindow(payload: LendingDistributionPayload): string {
   }`;
 }
 
-function unavailableMessage(payload: LendingDistributionPayload): string {
+/** Exported so the results table can state the same reason on the loan-level rows it gates. */
+export function unavailableMessage(payload: LendingDistributionPayload): string {
   if (payload.unavailableReason === 'recording_disabled') {
     return 'This run was created with transaction recording switched off, so no loan-level file was written. Enable "recordTransactions" when setting up a run to chart its lending distributions.';
   }
@@ -176,6 +182,9 @@ export function NewLendingCard({
     );
   }
 
+  // The paper's Table 3 reports owner-occupiers as one line; neither buyer type alone reproduces it.
+  const pooledOwnerOccupiers = pooledOwnerOccupierLending(baseline);
+
   const seedSummary =
     baseline.seedCount > 1
       ? `pooled over ${baseline.seedCount} seeds`
@@ -201,6 +210,56 @@ export function NewLendingCard({
           <dd>{seedSummary}</dd>
         </div>
       </dl>
+
+      <p className="lending-caption lending-scale-note">
+        Every figure in this card is a count of model transactions, not a UK-scaled one. The results
+        table above scales its counts to UK households; these are the sample behind the shape.
+      </p>
+
+      <div className="table-scroll">
+        <table className="data-table lending-summary-table">
+          <caption>New lending, loan level</caption>
+          <thead>
+            <tr>
+              <th scope="col">Borrower</th>
+              <th scope="col">Loans</th>
+              <th scope="col">Mean LTV</th>
+              <th scope="col">Mean LTI</th>
+              <th scope="col">Price to income</th>
+            </tr>
+          </thead>
+          <tbody>
+            {baseline.summaryByBorrowerType.map((summary) => (
+              <tr key={summary.borrowerType}>
+                <th scope="row">{borrowerTypeLabel(summary.borrowerType)}</th>
+                <td>{formatCount(summary.count)}</td>
+                <td>{summary.meanLtv === null ? '—' : `${summary.meanLtv.toFixed(2)}%`}</td>
+                <td>{formatRatio(summary.meanLti, 3)}</td>
+                <td>{formatRatio(summary.meanPriceToIncome, 2)}</td>
+              </tr>
+            ))}
+            {pooledOwnerOccupiers && (
+              <tr className="lending-summary-pooled-row">
+                <th scope="row">All owner-occupiers</th>
+                <td>{formatCount(pooledOwnerOccupiers.count)}</td>
+                <td>
+                  {pooledOwnerOccupiers.meanLtv === null
+                    ? '—'
+                    : `${pooledOwnerOccupiers.meanLtv.toFixed(2)}%`}
+                </td>
+                <td>{formatRatio(pooledOwnerOccupiers.meanLti, 3)}</td>
+                <td>{formatRatio(pooledOwnerOccupiers.meanPriceToIncome, 2)}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="lending-caption">
+        Price to income here is transaction price over annual gross employment income, averaged over
+        new lending — the loan-level measure the paper reports as 4.4. The results table&apos;s
+        price-to-income row is a different statistic: an aggregate across every household, against net
+        total income.
+      </p>
 
       {comparison && !comparison.available && (
         <p className="info-banner">Comparison run: {unavailableMessage(comparison)}</p>

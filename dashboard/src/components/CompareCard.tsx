@@ -11,6 +11,7 @@ import {
   formatChartNumber,
   jointLayoutOverrides
 } from '../lib/compareChartOptions';
+import { createCalibrationComparisonFormatter } from '../lib/calibrationNumberFormat';
 
 interface CompareCardProps {
   item: CompareResult;
@@ -145,15 +146,16 @@ function renderScalarTable(values: ScalarDatum[], mode: 'single' | 'compare') {
         </tr>
       </thead>
       <tbody>
-        {values.map((row) => (
-          <tr key={row.key}>
+        {values.map((row) => {
+          const formatComparisonValue = createCalibrationComparisonFormatter([row.left, row.right]);
+          return <tr key={row.key}>
             <td>{row.key}</td>
-            <td>{formatNumber(row.left)}</td>
-            <td>{formatNumber(row.right)}</td>
-            <td className={deltaClassName(row.delta.absolute)}>{formatNumber(row.delta.absolute)}</td>
+            <td>{formatComparisonValue(row.left)}</td>
+            <td>{formatComparisonValue(row.right)}</td>
+            <td className={deltaClassName(row.delta.absolute)}>{formatComparisonValue(row.delta.absolute)}</td>
             <td className={deltaClassName(row.delta.absolute)}>{formatPercent(row.delta.percent)}</td>
-          </tr>
-        ))}
+          </tr>;
+        })}
       </tbody>
     </table>
   );
@@ -250,6 +252,13 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
     }
     return [];
   }, [item]);
+  const formatMedianMultiplier =
+    item.visualPayload.type === 'buy_quad'
+      ? createCalibrationComparisonFormatter([
+          item.visualPayload.medianMultiplier.left,
+          item.visualPayload.medianMultiplier.right
+        ])
+      : formatNumber;
 
   return (
     <article className="compare-card">
@@ -616,8 +625,8 @@ export function CompareCard({ item, mode, inProgressVersions, defaultExpanded = 
                   <strong>{formatNumber(item.visualPayload.medianMultiplier.right)}</strong>
                 ) : (
                   <strong>
-                    {formatNumber(item.visualPayload.medianMultiplier.left)} vs{' '}
-                    {formatNumber(item.visualPayload.medianMultiplier.right)} ({' '}
+                    {formatMedianMultiplier(item.visualPayload.medianMultiplier.left)} vs{' '}
+                    {formatMedianMultiplier(item.visualPayload.medianMultiplier.right)} ({' '}
                     {formatPercent(item.visualPayload.medianMultiplier.delta.percent)})
                   </strong>
                 )}

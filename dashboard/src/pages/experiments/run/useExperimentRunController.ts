@@ -23,6 +23,7 @@ import {
 } from '../../../lib/api';
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+  applyPolicyRunBuilderDefaults,
   buildDefaultSensitivityRange,
   buildSensitivityGeneralModelControlOverridesFromForm,
   getDefaultExperimentBasePolicy,
@@ -323,7 +324,7 @@ export function useExperimentRunController({
       setSelectedBaseline(payload.requestedBaseline);
       setBasePolicyState(defaultBasePolicy);
       setSensitivityBasePolicyState(defaultBasePolicy);
-      setFormValues(initialValues);
+      setFormValues(applyPolicyRunBuilderDefaults(payload.parameters, initialValues));
       setSensitivityFormValues(initialSensitivityValues);
       setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap));
       setManualMaxWorkersTouched(false);
@@ -332,7 +333,10 @@ export function useExperimentRunController({
         const stored = readScenarioDraft(draftId);
         if (stored) {
           const storedBasePolicyOption = payload.basePolicies.find((item) => item.id === stored.basePolicy) ?? defaultBasePolicyOption;
-          const draftInitialValues = toInitialFormValues(payload.parameters, storedBasePolicyOption);
+          const draftInitialValues = applyPolicyRunBuilderDefaults(
+            payload.parameters,
+            toInitialFormValues(payload.parameters, storedBasePolicyOption)
+          );
           const fallback: ScenarioDraftV1 = {
             version: 1, title: '', calibratedModel: payload.requestedBaseline, basePolicy: defaultBasePolicy,
             formValues: draftInitialValues,

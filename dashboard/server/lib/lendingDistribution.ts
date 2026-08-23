@@ -600,6 +600,7 @@ function buildSummaryStats(rowsByType: Map<LendingBorrowerType, LendingRow[]>): 
       meanLti: meanOf(lti),
       medianLti: medianOf(lti),
       meanDsti: meanOf(finite((row) => row.dsti)),
+      meanPriceToIncome: meanOf(finite((row) => row.priceToIncome)),
       meanIcr: meanOf(finite((row) => row.icr))
     } satisfies LendingSummaryStats;
   });
@@ -728,6 +729,7 @@ function buildBandGroup(
   title: string,
   units: string,
   edges: number[],
+  highThreshold: number,
   rowsByType: Map<LendingBorrowerType, LendingRow[]>,
   read: (row: LendingRow) => number,
   capTolerance: number
@@ -766,7 +768,7 @@ function buildBandGroup(
     } satisfies LendingBandSeries;
   });
 
-  return { metric, title, units, bands, seriesByBorrowerType };
+  return { metric, title, units, bands, highThreshold, seriesByBorrowerType };
 }
 
 /**
@@ -1077,8 +1079,26 @@ export function getLendingDistribution(
     summaryByBorrowerType: buildSummaryStats(rowsByType),
     histograms: buildHistogramSpecs().map((spec) => buildHistogram(spec, rowsByType, capTolerance)),
     bandGroups: [
-      buildBandGroup('ltv', 'Loan-to-value', '%', bandEdges.ltv, rowsByType, (row) => row.ltv, capTolerance),
-      buildBandGroup('lti', 'Loan-to-income', 'ratio', bandEdges.lti, rowsByType, (row) => row.lti, capTolerance)
+      buildBandGroup(
+        'ltv',
+        'Loan-to-value',
+        '%',
+        bandEdges.ltv,
+        highLtvThreshold,
+        rowsByType,
+        (row) => row.ltv,
+        capTolerance
+      ),
+      buildBandGroup(
+        'lti',
+        'Loan-to-income',
+        'ratio',
+        bandEdges.lti,
+        highLtiThreshold,
+        rowsByType,
+        (row) => row.lti,
+        capTolerance
+      )
     ],
     quintiles: buildQuintileMatrix(ownerOccupierRows, highLtvThreshold, highLtiThreshold, capTolerance),
     joint: buildJointGrid(rowsByType, capTolerance),

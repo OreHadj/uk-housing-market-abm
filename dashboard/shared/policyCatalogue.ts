@@ -214,8 +214,9 @@ const POLICY_VALUE_EPSILON = 1e-9;
 
 /**
  * Describes a run's recorded policy relative to the baseline it best matches, so a run can be
- * identified by what it actually did rather than by whatever name it was given. The baseline is not
- * stored on a completed run, so it is inferred as the option agreeing with the most settings.
+ * identified by what it actually did rather than by whatever name it was given. When manifest
+ * context is unavailable (notably for legacy runs), the baseline is inferred as the option agreeing
+ * with the most settings.
  */
 export function summariseRunPolicy(settings: ReadonlyArray<{ key: string; value: number }>): RunPolicySummary {
   if (settings.length === 0) {

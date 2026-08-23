@@ -162,12 +162,15 @@ import {
 } from '../src/lib/experimentVersionOptions.js';
 import { buildResultsCompareSearchParams } from '../src/lib/api.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
+import { FullRunDetailsDialog } from '../src/pages/experiments/view/FullRunDetailsDialog.js';
 import { restoreScenarioDraft, type ScenarioDraftV1 } from '../src/lib/scenarioDraft.js';
 import { SensitivitySetupCard } from '../src/pages/run-experiments/SensitivitySetupCard.js';
 import { ExperimentsLandingPage } from '../src/pages/ExperimentsLandingPage.js';
 import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.js';
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+  DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START,
+  applyPolicyRunBuilderDefaults,
   buildDefaultSensitivityRange,
   buildGeneralModelControlOverridesFromForm,
   normalizeManualScenarioFormValues,
@@ -402,6 +405,7 @@ const groupedIndicators = groupIndicatorsByPolicyQuestion([
     units: 'count/month',
     description: '',
     source: 'core_indicator',
+    scaling: 'none',
     available: true,
     coverageStatus: 'supported'
   },
@@ -411,6 +415,7 @@ const groupedIndicators = groupIndicatorsByPolicyQuestion([
     units: 'GBP',
     description: '',
     source: 'output',
+    scaling: 'none',
     available: true,
     coverageStatus: 'supported'
   }
@@ -432,6 +437,7 @@ const resolvedDefaultIndicators = resolveSelectedIndicatorIds(
       units: 'GBP',
       description: '',
       source: 'core_indicator',
+      scaling: 'none',
       available: true,
       coverageStatus: 'supported'
     },
@@ -441,6 +447,7 @@ const resolvedDefaultIndicators = resolveSelectedIndicatorIds(
       units: 'count',
       description: '',
       source: 'output',
+      scaling: 'none',
       available: true,
       coverageStatus: 'supported'
     },
@@ -450,6 +457,7 @@ const resolvedDefaultIndicators = resolveSelectedIndicatorIds(
       units: 'count',
       description: '',
       source: 'output',
+      scaling: 'none',
       available: false,
       coverageStatus: 'unsupported'
     }
@@ -472,7 +480,8 @@ assert.equal(
           title: 'Owner-Occupier LTI (Mean Above Median)',
           units: 'ratio',
           description: '',
-          source: 'core_indicator'
+          source: 'core_indicator',
+          scaling: 'none'
         },
         seriesByRun: []
       },
@@ -482,7 +491,8 @@ assert.equal(
           title: 'Core price',
           units: 'GBP',
           description: '',
-          source: 'core_indicator'
+          source: 'core_indicator',
+          scaling: 'none'
         },
         seriesByRun: []
       },
@@ -492,7 +502,8 @@ assert.equal(
           title: 'Output sales',
           units: 'count',
           description: '',
-          source: 'output'
+          source: 'output',
+          scaling: 'none'
         },
         seriesByRun: []
       }
@@ -513,7 +524,8 @@ assert.equal(
           title: 'Owner-Occupier LTI (Mean Above Median)',
           units: 'ratio',
           description: '',
-          source: 'core_indicator'
+          source: 'core_indicator',
+          scaling: 'none'
         },
         seriesByRun: []
       },
@@ -523,7 +535,8 @@ assert.equal(
           title: 'Output sales',
           units: 'count',
           description: '',
-          source: 'output'
+          source: 'output',
+          scaling: 'none'
         },
         seriesByRun: []
       }
@@ -544,7 +557,8 @@ assert.equal(
           title: 'Output sales',
           units: 'count',
           description: '',
-          source: 'output'
+          source: 'output',
+          scaling: 'none'
         },
         seriesByRun: []
       }
@@ -569,7 +583,8 @@ const staleActiveOverlayPayload = resolveActiveIndicatorPayload(
         title: 'Core price',
         units: 'GBP',
         description: '',
-        source: 'core_indicator'
+        source: 'core_indicator',
+        scaling: 'none'
       },
       seriesByRun: []
     },
@@ -579,7 +594,8 @@ const staleActiveOverlayPayload = resolveActiveIndicatorPayload(
         title: 'Output sales',
         units: 'count',
         description: '',
-        source: 'output'
+        source: 'output',
+        scaling: 'none'
       },
       seriesByRun: []
     }
@@ -593,6 +609,18 @@ assert.equal(
   'Expected overlay payload resolution to fall back when the active indicator state is stale'
 );
 
+const NO_RUN_PROVENANCE = {
+  ukHouseholds: null,
+  ukDwellings: null,
+  dwellingsPerHousehold: null,
+  targetPopulation: null,
+  meanModelHouseholds: null,
+  meanScaleFactor: null,
+  nSteps: null,
+  seeds: null,
+  seedSource: null
+};
+
 const manualSelectionRuns = [
   {
     runId: 'v4.1-output',
@@ -605,6 +633,7 @@ const manualSelectionRuns = [
     policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
+    provenance: NO_RUN_PROVENANCE,
     parseCoverage: {
       requiredCount: 1,
       supportedCount: 1,
@@ -623,6 +652,7 @@ const manualSelectionRuns = [
     policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
+    provenance: NO_RUN_PROVENANCE,
     parseCoverage: {
       requiredCount: 1,
       supportedCount: 1,
@@ -641,6 +671,7 @@ const manualSelectionRuns = [
     policySettings: [],
     status: 'complete' as const,
     configAvailable: true,
+    provenance: NO_RUN_PROVENANCE,
     parseCoverage: {
       requiredCount: 1,
       supportedCount: 1,
@@ -653,19 +684,32 @@ const manualSelectionRuns = [
 assert.deepEqual(
   resolveManualRunSelection(manualSelectionRuns, '', ''),
   {
-    baselineRunId: 'v0-output',
+    baselineRunId: 'v4.1-output',
     comparisonRunId: ''
   },
-  'Expected manual results to open with the preferred baseline and no automatic cross-era comparison'
+  'Expected manual results to open on the most recently created run and no automatic cross-era comparison'
 );
 
 assert.deepEqual(
   resolveManualRunSelection(manualSelectionRuns, 'missing-run', 'v4.1-output'),
   {
-    baselineRunId: 'v0-output',
+    baselineRunId: 'v4.1-output',
     comparisonRunId: ''
   },
-  'Expected invalid explicit baseline selection to fall back to the preferred baseline and clear comparison'
+  'Expected invalid explicit baseline selection to fall back to the most recent run and clear comparison'
+);
+
+// The default is a rule, not a named run: reordering the list must not change which run wins, and a
+// run the user explicitly asks for still wins over the rule.
+assert.equal(
+  resolveManualRunSelection([...manualSelectionRuns].reverse(), '', '').baselineRunId,
+  'v4.1-output',
+  'Expected the newest run to be chosen regardless of the order the runs arrive in'
+);
+assert.equal(
+  resolveManualRunSelection(manualSelectionRuns, 'v0-output', '').baselineRunId,
+  'v0-output',
+  'Expected the original published run to stay selectable as an explicit baseline'
 );
 
 assert.equal(
@@ -721,7 +765,8 @@ const singleOverlayOption = buildManualOverlayOption(
       title: 'House price',
       units: 'GBP',
       description: '',
-      source: 'core_indicator'
+      source: 'core_indicator',
+      scaling: 'none'
     },
     seriesByRun: [
       {
@@ -759,7 +804,8 @@ const compareOverlayOption = buildManualOverlayOption(
       title: 'Mortgage approvals',
       units: 'count/month',
       description: '',
-      source: 'core_indicator'
+      source: 'core_indicator',
+      scaling: 'none'
     },
     seriesByRun: [
       {
@@ -797,7 +843,8 @@ const gapOnlyOverlayOption = buildManualOverlayOption(
       title: 'Mortgage approvals',
       units: 'count/month',
       description: '',
-      source: 'core_indicator'
+      source: 'core_indicator',
+      scaling: 'none'
     },
     seriesByRun: [
       {
@@ -909,7 +956,8 @@ assert.equal(
       indicatorId: 'house-price',
       title: 'Average house price',
       units: 'GBP',
-      windowType: 'tail_120',
+      scaling: 'none' as const,
+      windowType: 'tail_120' as const,
       mean: 200000,
       cv: 0.12,
       annualisedTrend: 3500,
@@ -1571,11 +1619,26 @@ const RESULTS_CORE_FILE_NAMES = [
   'coreIndicator-interestRateSpread.csv'
 ] as const;
 
+/** Fixture runs carry TotalPopulation and UK_HOUSEHOLDS so the UK-scaling path is exercised. */
+const RESULTS_FIXTURE_MODEL_HOUSEHOLDS = 10_000;
+const RESULTS_FIXTURE_UK_HOUSEHOLDS = 30_000_000;
+const RESULTS_FIXTURE_SCALE_FACTOR = RESULTS_FIXTURE_UK_HOUSEHOLDS / RESULTS_FIXTURE_MODEL_HOUSEHOLDS;
+const RESULTS_FIXTURE_CONFIG = [
+  'SEED = 42',
+  `UK_HOUSEHOLDS = ${RESULTS_FIXTURE_UK_HOUSEHOLDS}`,
+  'UK_DWELLINGS = 32000000',
+  `TARGET_POPULATION = ${RESULTS_FIXTURE_MODEL_HOUSEHOLDS}`,
+  'N_STEPS = 2000',
+  ''
+].join('\n');
+
 const RESULTS_OUTPUT_COLUMNS = [
   'Model time',
+  'TotalPopulation',
   'nHomeless',
   'nRenting',
   'nOwnerOccupier',
+  'nNonOwner',
   'nActiveBTL',
   'Sale HPI',
   'Sale AvSalePrice',
@@ -1620,9 +1683,11 @@ function buildOutputCsv(rowCount: number): string {
     lines.push(
       [
         String(modelTime),
+        String(RESULTS_FIXTURE_MODEL_HOUSEHOLDS),
         String(90 + (modelTime % 13)),
         String(800 + modelTime),
         String(700 + (modelTime % 17)),
+        String(890 + modelTime + (modelTime % 13)),
         String(120 + (modelTime % 7)),
         String(100 + (modelTime % 37)),
         String(220000 + modelTime * 25),
@@ -1695,7 +1760,7 @@ function writeResultsFixtureRun(resultsRoot: string, options: ResultsFixtureRunO
   }
 
   if (options.includeConfig) {
-    fs.writeFileSync(path.join(runPath, 'config.properties'), 'SEED=42\n', 'utf-8');
+    fs.writeFileSync(path.join(runPath, 'config.properties'), RESULTS_FIXTURE_CONFIG, 'utf-8');
   }
 
   if (options.includeTransactionFile) {
@@ -2156,7 +2221,10 @@ function uploadCompleteRemoteManualResult(
     .join('\n');
 
   adapter.objects.set(`${bucket}/${runPrefix}/Output-run1.csv`, Buffer.from(outputCsv, 'utf-8'));
-  adapter.objects.set(`${bucket}/${runPrefix}/config.properties`, Buffer.from('SEED=1\n', 'utf-8'));
+  adapter.objects.set(
+    `${bucket}/${runPrefix}/config.properties`,
+    Buffer.from(RESULTS_FIXTURE_CONFIG.replace('SEED = 42', 'SEED = 1'), 'utf-8')
+  );
   for (let index = 0; index < RESULTS_CORE_FILE_NAMES.length; index += 1) {
     const fileName = RESULTS_CORE_FILE_NAMES[index];
     adapter.objects.set(
@@ -2524,7 +2592,11 @@ try {
   const remoteCoreSeries = await remoteManager.getRemoteManualResultSeries(manualSubmit.job?.runId ?? '', 'core_btlLTV', 0);
   assert.equal(remoteCoreSeries.points.length, RESULTS_ROW_COUNT, 'Expected remote core series to expose parsed points');
   const remoteOutputSeries = await remoteManager.getRemoteManualResultSeries(manualSubmit.job?.runId ?? '', 'output_nHomeless', 0);
-  assert.equal(remoteOutputSeries.points[0]?.value, 90, 'Expected remote output series to parse Output-run1.csv values');
+  assert.equal(
+    remoteOutputSeries.points[0]?.value,
+    90 * RESULTS_FIXTURE_SCALE_FACTOR,
+    'Expected remote output series to parse Output-run1.csv values and scale the count to UK households'
+  );
   const remoteCompare = await remoteManager.getRemoteManualResultCompare(
     [manualSubmit.job?.runId ?? '', comparisonRunId],
     ['core_btlLTV'],
@@ -2541,7 +2613,7 @@ try {
     (await remoteManager.getRemoteManualResultArchive(manualSubmit.job?.runId ?? '')).stream
   );
   assert.ok(
-    remoteManualArchiveText.includes('Output-run1.csv') && remoteManualArchiveText.includes('SEED=1'),
+    remoteManualArchiveText.includes('Output-run1.csv') && remoteManualArchiveText.includes('SEED = 1'),
     'Expected remote manual result archive to include S3 artifact files'
   );
   const remoteManualArchiveEntries = await readArchiveEntries(
@@ -4735,8 +4807,50 @@ try {
   assert.equal(sparseRun?.status, 'partial', 'Expected sparse-core fixture run to be classified as partial');
 
   const runDetail = getResultsRunDetail(fixture.root, fixture.runIds.complete);
-  assert.equal(runDetail.kpiSummary.length, 27, 'Expected KPI summary metrics for all 27 indicators');
-  assert.equal(runDetail.indicators.length, 27, 'Expected 27 total indicator definitions (15 core + 12 output)');
+  assert.equal(runDetail.kpiSummary.length, 30, 'Expected KPI summary metrics for all 30 indicators');
+  assert.equal(
+    runDetail.indicators.length,
+    30,
+    'Expected 30 total indicator definitions (15 core + 13 output columns + 2 derived tenure shares)'
+  );
+  assert.deepEqual(
+    runDetail.indicators
+      .filter((indicator) => indicator.scaling === 'dashboard')
+      .map((indicator) => indicator.id)
+      .sort(),
+    [
+      'output_creditStock',
+      'output_nActiveBTL',
+      'output_nHomeless',
+      'output_nNonOwner',
+      'output_nOwnerOccupier',
+      'output_nRenting'
+    ],
+    'Expected exactly the raw agent counts and stocks to be scaled by the dashboard'
+  );
+  assert.deepEqual(
+    runDetail.indicators
+      .filter((indicator) => indicator.scaling === 'model')
+      .map((indicator) => indicator.id)
+      .sort(),
+    [
+      'core_advancesToBTL',
+      'core_advancesToFTB',
+      'core_advancesToHM',
+      'core_housingTransactions',
+      'core_mortgageApprovals'
+    ],
+    'Expected the five core indicators Java already scales to be left alone'
+  );
+  const fixtureOwnershipRate = runDetail.kpiSummary.find(
+    (kpi) => kpi.indicatorId === 'output_ownershipRate'
+  );
+  assert.ok(fixtureOwnershipRate, 'Expected an ownership-rate row');
+  assert.equal(
+    fixtureOwnershipRate.scaling,
+    'none',
+    'Expected a share of households to be scale-free rather than UK-scaled'
+  );
   assert.ok(runDetail.configAvailable, 'Expected complete fixture run to report config.properties availability');
   const firstKpi = runDetail.kpiSummary[0];
   assert.ok(firstKpi, 'Expected KPI summary entry');
@@ -5463,6 +5577,21 @@ try {
   );
   assert.ok(selectedSensitivityPackage, 'Expected default sensitivity package to be available for range checks');
   const defaultExperimentFormValues = toInitialFormValues(runOptions.parameters, defaultExperimentPolicy);
+  const defaultManualExperimentFormValues = applyPolicyRunBuilderDefaults(
+    runOptions.parameters,
+    defaultExperimentFormValues
+  );
+  assert.equal(
+    defaultManualExperimentFormValues.TIME_TO_START_RECORDING_TRANSACTIONS,
+    String(DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START),
+    'Expected manual experiments to record transactions from the post-warm-up month 500'
+  );
+  assert.equal(
+    buildGeneralModelControlOverridesFromForm(runOptions.parameters, defaultManualExperimentFormValues)
+      .TIME_TO_START_RECORDING_TRANSACTIONS,
+    DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START,
+    'Expected the manual experiment submission to override the model snapshot recording start with month 500'
+  );
   const recordBooleanKeys = runOptions.parameters
     .filter((parameter) => parameter.type === 'boolean' && parameter.key.startsWith('record'))
     .map((parameter) => parameter.key);
@@ -5816,7 +5945,8 @@ try {
   // --- Keyboard and narrow-viewport behaviour ---------------------------------------------
   assert.ok(
     manualSetupMarkup.includes('aria-label="Scenario page navigation"') &&
-      manualSetupText.includes('Back') && manualSetupText.includes('Continue'),
+      manualSetupMarkup.includes('aria-label="Back to previous step"') &&
+      manualSetupMarkup.includes('aria-label="Continue to next step"'),
     'Expected keyboard-operable navigation between the separate scenario pages'
   );
   assert.ok(
@@ -6450,6 +6580,11 @@ try {
   assert.equal(injectedManualManifest.run.seed, 1, 'Expected manual manifest to record the first deterministic seed');
   assert.deepEqual(injectedManualManifest.run.seeds, [1], 'Expected manual manifest to record the deterministic seed block');
   assert.equal(
+    injectedManualManifest.run.basePolicy,
+    '2024',
+    'Expected manual manifests to preserve the selected reference-policy year'
+  );
+  assert.equal(
     injectedManualManifest.run.overriddenParameters.SEED,
     1,
     'Expected manual manifest to record deterministic seed parameters'
@@ -6535,6 +6670,55 @@ try {
   );
   const multiSeedRunDetail = getResultsRunDetail(modelRunFixtureRoot, multiSeedManualJob?.runId ?? '');
   assert.equal(multiSeedRunDetail.status, 'partial', 'Expected aggregated manual run to remain parseable as a partial result');
+  assert.equal(
+    multiSeedRunDetail.configuration.modelVersion,
+    'v1.0',
+    'Expected full run details to read the selected model from the saved manifest'
+  );
+  assert.equal(
+    multiSeedRunDetail.configuration.maxWorkers,
+    2,
+    'Expected full run details to preserve the effective worker count'
+  );
+  assert.equal(
+    multiSeedRunDetail.configuration.basePolicy,
+    '2024',
+    'Expected full run details to use the recorded reference policy rather than infer it from final values'
+  );
+  assert.equal(
+    multiSeedRunDetail.configuration.parameterValues.N_SIMS,
+    3,
+    'Expected full run details to read the requested seed count from the generated root config'
+  );
+  assert.equal(
+    multiSeedRunDetail.configuration.parameterValues.recordTransactions,
+    true,
+    'Expected full run details to retain boolean recording choices'
+  );
+  const fullRunDetailsMarkup = renderToStaticMarkup(
+    createElement(FullRunDetailsDialog, { run: multiSeedRunDetail, onClose: () => undefined })
+  );
+  const fullRunStepHeadings = ['Scenario name', 'Model version', 'Policy settings', 'Technical details'];
+  assert.ok(
+    fullRunStepHeadings.every((heading) => fullRunDetailsMarkup.includes(heading)) &&
+      fullRunStepHeadings.every((heading, index) =>
+        index === 0 || fullRunDetailsMarkup.indexOf(fullRunStepHeadings[index - 1]) < fullRunDetailsMarkup.indexOf(heading)
+      ),
+    'Expected full run details to preserve the four configurable policy-scenario steps in order'
+  );
+  assert.equal(
+    fullRunDetailsMarkup.includes('Evidence basis') || fullRunDetailsMarkup.includes('Review and start'),
+    false,
+    'Expected full run details to omit fixed model metadata and the redundant review step'
+  );
+  assert.ok(
+    fullRunDetailsMarkup.includes('v1.0') &&
+      fullRunDetailsMarkup.includes('3 seeds') &&
+      fullRunDetailsMarkup.includes('Max workers') &&
+      fullRunDetailsMarkup.includes('Record transactions') &&
+      fullRunDetailsMarkup.includes('Enabled'),
+    'Expected the full-run modal to render the saved model, execution settings, and recording choices'
+  );
 } finally {
   if (originalDashboardAppVersion === undefined) {
     delete process.env.DASHBOARD_APP_VERSION;
@@ -8493,8 +8677,8 @@ assert.ok(
   !manualResultsViewSource.includes('`${run.title} — ${run.runId}`') &&
     manualResultsViewSource.includes('function formatRunOptionLabel') &&
     manualResultsViewSource.includes('return getRunPrimaryLabel(run);') &&
-    manualResultsViewSource.includes('<dt>Calibrated model</dt>') &&
-    manualResultsViewSource.includes('<dt>Reference policy</dt>') &&
+    manualResultsViewSource.includes('getRunModelVersion(run)') &&
+    manualResultsViewSource.includes('reference policy not recorded') &&
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
     manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
     manualResultsViewSource.includes('Run ID:'),
@@ -8540,6 +8724,27 @@ assert.ok(
   'Manual comparison results should use one wide indicator column and four equal aligned columns'
 );
 assert.ok(
+  manualResultsStylesSource.includes('.policy-results-group-toggle strong {\n  font-size: 1rem;') &&
+    manualResultsStylesSource.includes(
+      '.policy-results-table tbody tr:not(.policy-results-group-row) > th:first-child {\n  padding-left: 0.5rem;\n  font-size: 0.9rem;\n  font-weight: 400;'
+    ),
+  'Policy-result section titles should be larger and indicator labels should use regular weight with a shallower indent'
+);
+assert.ok(
+  manualResultsViewSource.includes('className="policy-results-scaled-tooltip"') &&
+    manualResultsViewSource.includes('role="tooltip"') &&
+    manualResultsViewSource.includes('What UK-scaled means') &&
+    manualResultsViewSource.includes('1,000 out of 10,000 model households') &&
+    manualResultsViewSource.includes('does not mean every UK household was individually simulated') &&
+    manualResultsStylesSource.includes(
+      '.policy-results-scaled-chip:hover .policy-results-scaled-tooltip'
+    ) &&
+    manualResultsStylesSource.includes(
+      '.policy-results-scaled-chip:focus-visible .policy-results-scaled-tooltip'
+    ),
+  'UK-scaled markers should explain their conversion in an accessible hover and focus tooltip'
+);
+assert.ok(
   manualResultsViewSource.includes('window.confirm') &&
     manualResultsViewSource.includes('window.prompt') &&
     manualResultsViewSource.includes('deleteResultsRun(runId, deleteKey'),
@@ -8557,12 +8762,30 @@ assert.ok(
   'Sensitivity results deletion should confirm and prompt for remote delete key before calling the delete API'
 );
 assert.ok(
-  manualResultsViewSource.includes('title="Policy settings used"') &&
-    manualResultsViewSource.includes('summary={policySettingsSummary}') &&
-    manualResultsViewSource.includes('defaultOpen={false}') &&
+  manualResultsViewSource.includes('<h3>Policy settings used</h3>') &&
+    manualResultsViewSource.includes('className="run-policy-details"') &&
+    manualResultsViewSource.includes('{policySettingsSummary}') &&
+    manualResultsViewSource.includes('View full run details') &&
+    manualResultsViewSource.includes('View primary run details') &&
+    manualResultsViewSource.includes('View comparison run details') &&
+    manualResultsViewSource.includes("setRunDetailsTarget('baseline')") &&
+    manualResultsViewSource.includes("setRunDetailsTarget('comparison')") &&
+    manualResultsViewSource.includes('aria-haspopup="dialog"') &&
+    manualResultsViewSource.indexOf('View comparison run details') <
+      manualResultsViewSource.indexOf("'Download primary raw files'") &&
+    manualResultsViewSource.includes('<FullRunDetailsDialog') &&
     sensitivityResultsViewSource.includes('title="Policy settings used"') &&
     sensitivityResultsViewSource.includes('defaultOpen={false}'),
-  'Policy settings used should be collapsed dropdowns in both policy and sensitivity results'
+  'Policy settings used should expose full details for either selected policy run and stay collapsed in sensitivity results'
+);
+assert.ok(
+  manualResultsViewSource.includes("'Download raw run files'") &&
+    manualResultsViewSource.includes("'Download primary raw files'") &&
+    manualResultsViewSource.includes("'Download comparison raw files'") &&
+    manualResultsViewSource.includes("complete raw output directory") &&
+    sensitivityResultsViewSource.includes('Export experiment summary') &&
+    sensitivityResultsViewSource.includes('aggregated experiment summary, metadata, and reproducibility manifest'),
+  'Result archive actions should describe the contents users actually receive'
 );
 assert.ok(
   manualResultsStylesSource.includes('.run-policy-disclosure.collapsible-section') &&
@@ -8577,11 +8800,11 @@ assert.ok(
   'Policy results should begin with run selection instead of repeating a changing selected-run summary'
 );
 assert.ok(
-  sensitivityResultsViewSource.includes('title="Summary"') &&
-    sensitivityResultsViewSource.includes('summary={sweepSummary.instrument}') &&
-    sensitivityResultsViewSource.includes('className="run-policy-disclosure sensitivity-run-summary-disclosure"') &&
+  sensitivityResultsViewSource.includes('<h3>Summary</h3>') &&
+    sensitivityResultsViewSource.includes('{sweepSummary.instrument}') &&
+    sensitivityResultsViewSource.includes('className="run-policy-details sensitivity-run-summary-details"') &&
     sensitivityResultsViewSource.includes('className="sensitivity-summary-facts"'),
-  'Sensitivity run facts should be retained inside an integrated collapsed Summary disclosure'
+  'Sensitivity run facts should be retained inside an integrated Summary section'
 );
 
 const experimentQueueCardSource = fs.readFileSync(
@@ -8740,7 +8963,8 @@ assert.ok(
   'Creation routes should keep the Experiments hub behind the modal instead of rendering result workspaces'
 );
 assert.ok(
-  experimentsPageSource.includes("onManualRunAccepted={() => navigate('/results?type=manual')}") &&
+  experimentsPageSource.includes('onManualRunAccepted={(runId) => navigate(') &&
+    experimentsPageSource.includes('/results?type=manual') &&
     experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
     experimentsPageSource.includes('/results?type=sensitivity'),
   'Accepted scenario and sensitivity submissions should move into the matching Results view'
@@ -8750,6 +8974,11 @@ assert.ok(
     resultsPageSource.includes('className="visually-hidden">Results</h2>') &&
     !resultsPageSource.includes('className="results-card workspace-heading"'),
   'Results should use the full-width view switcher without the old boxed page heading'
+);
+assert.ok(
+  resultsPageSource.includes('sidebarSubtitle="Manage policy scenario runs"') &&
+    experimentsPageSource.includes('sidebarSubtitle="Manage policy scenario runs"'),
+  'Policy Run History should describe its management purpose consistently in Results and Experiments'
 );
 assert.ok(
   experimentsPageSource.includes("heading: 'Policy scenarios'") &&
@@ -8884,14 +9113,9 @@ assert.ok(
   'Validation page should render metric table sort controls'
 );
 assert.ok(
-  validationPageSource.includes('Loss delta vs v0 2011') &&
-    validationPageSource.includes('lossDeltaVsReference2011'),
-  'Validation page should render the signed loss-delta column versus v0 2011'
-);
-assert.ok(
-  validationPageSource.includes('Loss delta % vs v0 2011') &&
-    validationPageSource.includes('lossDeltaPercentVsReference2011'),
-  'Validation page should render the percent loss-delta column versus v0 2011'
+  !validationPageSource.includes('lossDeltaVsReference2011') &&
+    !validationPageSource.includes('lossDeltaPercentVsReference2011'),
+  'Validation page should not render cross-catalogue loss deltas'
 );
 assert.ok(
   validationPageSource.includes('Target value') &&
@@ -8911,16 +9135,18 @@ assert.ok(
   'Validation page should remove family filter reset controls'
 );
 assert.ok(
-  validationPageSource.includes('Provenance & sources'),
-  'Validation page should keep metric sources collapsed behind a disclosure'
+  validationPageSource.includes('className="validation-detail-toggle"') &&
+    validationPageSource.includes('aria-haspopup="dialog"'),
+  'Validation page should keep metric sources behind a labelled panel trigger'
 );
 assert.ok(
   validationPageSource.includes('validation-source-panel'),
-  'Validation page should render a dedicated provenance panel when expanded'
+  'Validation page should render a dedicated provenance panel when opened'
 );
 assert.ok(
-  validationPageSource.includes('validation-metric-cell'),
-  'Validation page should stack the metric name and provenance controls vertically within the metric cell'
+  validationPageSource.includes('validation-metric-name-cell') &&
+    validationPageSource.includes('validation-detail-column'),
+  'Validation page should keep metric names and Details triggers in consistent columns'
 );
 assert.ok(
   !validationPageSource.includes('validation-metric-meta'),
@@ -8947,32 +9173,32 @@ assert.ok(
   'Validation page should default the metric table to highest loss first'
 );
 assert.ok(
-  validationPageSource.includes('openMetricIds'),
-  'Validation page should track row-level provenance disclosure state'
+  validationPageSource.includes('activeValidationDetail'),
+  'Validation page should track the single active provenance panel'
 );
 assert.ok(
   validationPageSource.includes('Seeds in band'),
   'Validation page should render inside-band uncertainty copy'
 );
 assert.ok(
-  validationPageSource.includes('Sim. IQR'),
+  validationPageSource.includes('Simulated IQR'),
   'Validation page should render simulation IQR uncertainty labels'
 );
 assert.ok(
-  validationPageSource.includes('Sim. mean'),
+  validationPageSource.includes('Simulated mean'),
   'Validation page should render simulation mean labels'
 );
 assert.ok(
-  validationPageSource.includes('Weight'),
-  'Validation page should render the metric weight column'
+  !validationPageSource.includes('metric.metricWeight'),
+  'Validation page should not render the constant metric weight'
 );
 assert.ok(
-  validationPageSource.includes('validation-source-label'),
-  'Validation page should render inline source labels for validation metrics'
+  validationPageSource.includes('validation-source-panel'),
+  'Validation page should render source labels inside the provenance panel'
 );
 assert.ok(
-  validationPageSource.includes('formatLossFamily') &&
-    validationPageSource.includes('Loss family:') &&
+  validationPageSource.includes('lossFamilyDescription') &&
+    validationPageSource.includes('Loss family') &&
     validationPageSource.includes('Additive scale'),
   'Validation page should render concise loss family and transform audit details'
 );
@@ -8981,8 +9207,8 @@ assert.ok(
   'Validation page should render structured source references when available'
 );
 assert.ok(
-  validationPageSource.includes('metricWeight'),
-  'Validation page should render each metric weight from the validation payload'
+  !validationPageSource.includes('metric.metricWeight'),
+  'Validation page should leave metric weights in the payload without displaying them'
 );
 assert.ok(
   validationPageSource.includes('<span>Version</span>') &&
@@ -9116,29 +9342,61 @@ assert.ok(
   'Validation page should group all outcomes into fixed policy themes'
 );
 assert.ok(
-  validationPageSource.includes('validation-target-band') &&
-    validationPageSource.includes('validation-mean-marker') &&
-    validationPageSource.includes('validation-source-marker') &&
-    validationPageSource.includes('calculateValidationRangePositions') &&
-    !validationPageSource.includes('validation-iqr'),
-  'Validation strips should plot target band, mean, and source only — IQR is a number in the row detail'
+  validationPageSource.includes('<table className="validation-metrics-table">') &&
+    validationPageSource.includes('<caption className="visually-hidden">{themeTitle}</caption>') &&
+    validationPageSource.includes('DEFAULT_VALIDATION_METRIC_SORT') &&
+    validationPageSource.includes("key: 'loss'") &&
+    validationPageSource.includes("direction: 'descending'") &&
+    !validationPageSource.includes('MetricRange') &&
+    !validationPageSource.includes('calculateValidationRangePositions') &&
+    !manualResultsStylesSource.includes('.validation-target-band') &&
+    !manualResultsStylesSource.includes('.validation-mean-marker'),
+  'Validation themes should use loss-descending semantic tables with the strip plot removed'
 );
 assert.ok(
-  /^\s*<details\b[^>]*validation-metric-row/m.test(validationPageSource) &&
-    validationPageSource.includes('Secondary cross-year comparison') &&
+  validationPageSource.includes('aria-sort={isSorted ? sort.direction : undefined}') &&
+    validationPageSource.includes('aria-expanded={isOpen}') &&
+    validationPageSource.includes('aria-controls={VALIDATION_METRIC_DETAILS_PANEL_ID}') &&
+    validationPageSource.includes('aria-labelledby={headingId}') &&
+    validationPageSource.includes('role="dialog"') &&
+    validationPageSource.includes("event.key !== 'Escape'") &&
+    validationPageSource.includes("document.addEventListener('pointerdown', handlePointerDown, true)") &&
+    validationPageSource.includes('panelRef.current?.focus({ preventScroll: true })') &&
+    validationPageSource.includes('detail.trigger.focus({ preventScroll: true })') &&
+    validationPageSource.includes('className="validation-metric-details-close"') &&
+    validationPageSource.includes('tabIndex={0}') &&
+    validationPageSource.includes('className="validation-metric-name-cell"') &&
+    manualResultsStylesSource.includes('.validation-metric-details-panel') &&
+    manualResultsStylesSource.includes('position: fixed;') &&
+    manualResultsStylesSource.includes('position: sticky;') &&
     validationPageSource.includes('Validation methodology') &&
     validationPageSource.includes('How validation loss is calculated'),
-  'Validation page should use semantic progressive disclosure and keep cross-year deltas secondary'
+  'Validation tables should expose accessible sorting, a fixed labelled dismissible details panel, focus restoration, and keyboard scrolling'
 );
-// The technical table duplicated every metric: its fields were a strict subset of the row detail,
-// which additionally carries loss-delta percent, loss/additive scale, and band notes. One rendering.
 assert.ok(
-  !validationPageSource.includes('validation-metrics-table') &&
-    !validationPageSource.includes('Technical results table') &&
-    validationPageSource.includes('loss change versus original 2011 benchmark') &&
+  validationPageSource.includes('>Target</th>') &&
+    validationPageSource.includes('>Target band</th>') &&
+    validationPageSource.includes('>Simulated mean</th>') &&
+    validationPageSource.includes('>Simulated IQR</th>') &&
+    validationPageSource.includes('label="Metric"') &&
+    validationPageSource.includes('label="Off target"') &&
+    validationPageSource.includes('label="Seeds in band"') &&
+    validationPageSource.includes('label="Loss"') &&
+    !validationPageSource.includes('label="Target"') &&
+    !validationPageSource.includes('label="Target band"') &&
+    !validationPageSource.includes('label="Simulated mean"') &&
+    !validationPageSource.includes('label="Simulated IQR"') &&
+    !validationPageSource.includes('label="Weight"') &&
+    !validationPageSource.includes('label="Δ vs 2011"') &&
+    !validationPageSource.includes('metric.metricWeight') &&
+    !validationPageSource.includes('metric.lossDeltaVsReference2011') &&
+    !validationPageSource.includes('metric.lossDeltaPercentVsReference2011') &&
+    validationPageSource.includes('className="validation-detail-toggle"') &&
+    validationPageSource.includes('Details') &&
+    validationPageSource.includes('Loss family') &&
     validationPageSource.includes('Sources and provenance') &&
-    validationPageSource.includes('Simulated IQR'),
-  'Validation should render each metric once, with the audit fields kept in the row detail'
+    !validationPageSource.includes('validation-metric-detail-row'),
+  'The dense table should keep exactly four useful sorts, omit weight and cross-catalogue deltas, and move details outside rows'
 );
 assert.ok(
   validationPageSource.includes('describeThemeStatuses') &&
@@ -9196,16 +9454,21 @@ assert.ok(
     validationPageSource.includes('setIsOutcomeComparisonsOpen(true)') &&
     validationPageSource.includes('setOpenValidationThemeIds') &&
     validationPageSource.includes('setPendingMetricDiagnosticId(metricId)') &&
-    validationPageSource.includes('row.open = true') &&
+    validationPageSource.includes("row.querySelector<HTMLButtonElement>('[data-validation-detail-trigger]')") &&
+    validationPageSource.includes("trigger.getAttribute('aria-expanded') !== 'true'") &&
+    validationPageSource.includes('trigger.click()') &&
     validationPageSource.includes("row.scrollIntoView({ behavior: 'smooth', block: 'center' })") &&
-    validationPageSource.includes("row.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true })"),
-  'Largest-gap buttons should open the comparisons section, its matching theme, and the focused metric row'
+    validationPageSource.includes('trigger.focus({ preventScroll: true })'),
+  'Largest-gap buttons should open the comparisons section, its theme, and the focused table detail row'
 );
 assert.ok(
-  validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
-    validationPageSource.includes('first 500 steps are discarded') &&
+  validationPageSource.includes('formatValidationSnapshotProtocol(summary)') &&
+    validationPageSource.includes('summary.seeds.length') &&
+    validationPageSource.includes('summary.window.startIndex') &&
+    validationPageSource.includes('summary.window.endIndex') &&
+    !validationPageSource.includes('fixed ten-seed, 3,500-step protocol') &&
     validationPageSource.includes('Experiments page do not update'),
-  'Validation page should state the fixed validation protocol and experiment isolation'
+  'Validation page should describe the displayed snapshot protocol and retain experiment isolation'
 );
 assert.ok(
   validationPageSource.includes('buildDeduplicatedSourceReferences') &&

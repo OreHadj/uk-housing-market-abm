@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { CalibrationParameterRecord } from '../shared/types.js';
+import type { CalibrationParameterRecord, CompareResult } from '../shared/types.js';
+import { createCalibrationComparisonFormatter } from '../src/lib/calibrationNumberFormat.js';
+import { binnedOption, curveOption } from '../src/lib/compareChartOptions.js';
 import { AssumptionGroupDisclosure, FittedParameterRow } from '../src/pages/ComparePage.js';
 
 const parameter: CalibrationParameterRecord = {
@@ -35,7 +37,7 @@ assert.ok(singleMarkup.includes('calibration-parameter-indicator') && singleMark
 assert.ok(singleMarkup.includes('Psychological cost of renting'));
 assert.ok(singleMarkup.includes('PSYCHOLOGICAL_COST_OF_RENTING'));
 assert.ok(singleMarkup.includes('Selected value') && singleMarkup.includes('>0.75</strong>'));
-assert.ok(singleMarkup.includes('Range tested') && singleMarkup.includes('>0–1</strong>'));
+assert.ok(singleMarkup.includes('Range tested') && singleMarkup.includes('>0.00–1.00</strong>'));
 assert.ok(singleMarkup.indexOf('</summary>') < singleMarkup.indexOf('Behavioural meaning'));
 [
   parameter.meaning,
@@ -52,7 +54,7 @@ const comparisonMarkup = renderToStaticMarkup(createElement(FittedParameterRow, 
   mode: 'compare'
 }));
 
-assert.ok(comparisonMarkup.includes('v4.26 value') && comparisonMarkup.includes('>0.5</strong>'));
+assert.ok(comparisonMarkup.includes('v4.26 value') && comparisonMarkup.includes('>0.50</strong>'));
 assert.ok(comparisonMarkup.includes('v5o3 value') && comparisonMarkup.includes('>0.75</strong>'));
 assert.ok(
   comparisonMarkup.indexOf('v5o3 value') < comparisonMarkup.indexOf('v4.26 value'),
@@ -60,7 +62,89 @@ assert.ok(
 );
 assert.ok(comparisonMarkup.includes('Absolute difference') && comparisonMarkup.includes('>0.25</strong>'));
 assert.ok(comparisonMarkup.includes('class="changed"') && comparisonMarkup.includes('>Changed</small>'));
-assert.ok(comparisonMarkup.includes('Range tested') && comparisonMarkup.includes('>0–1</strong>'));
+assert.ok(comparisonMarkup.includes('Range tested') && comparisonMarkup.includes('>0.00–1.00</strong>'));
+
+const smallRangeFormatter = createCalibrationComparisonFormatter([0.0001, 0.002]);
+assert.deepEqual(
+  [smallRangeFormatter(0.0001), smallRangeFormatter(0.002)],
+  ['0.0001', '0.0020'],
+  'Range endpoints should use the same number of decimal places'
+);
+
+const smallRangeMarkup = renderToStaticMarkup(createElement(FittedParameterRow, {
+  parameter: {
+    ...parameter,
+    key: 'SENSITIVITY_RENT_OR_PURCHASE',
+    name: 'Rent-versus-purchase sensitivity',
+    value: 0.0011,
+    lower: 0.0001,
+    upper: 0.002
+  },
+  compared: undefined,
+  primaryVersion: 'v5o3',
+  comparisonVersion: undefined,
+  mode: 'single'
+}));
+assert.ok(
+  smallRangeMarkup.includes('>0.0011</strong>') && smallRangeMarkup.includes('>0.0001–0.0020</strong>'),
+  'A fitted-parameter value and both tested-range endpoints should share one decimal precision'
+);
+
+const precisionComparisonMarkup = renderToStaticMarkup(createElement(FittedParameterRow, {
+  parameter: { ...parameter, value: 1.75, lower: 0.05, upper: 2.5 },
+  compared: { ...parameter, value: 1.825, lower: 0.05, upper: 2.5 },
+  primaryVersion: 'v5o3',
+  comparisonVersion: 'v0o7',
+  mode: 'compare'
+}));
+['>1.750</strong>', '>1.825</strong>', '>-0.075</strong>', '>0.050–2.500</strong>'].forEach((copy) =>
+  assert.ok(
+    precisionComparisonMarkup.includes(copy),
+    `All values in a fitted-parameter comparison should share one precision: ${copy}`
+  )
+);
+
+const alignedTooltipOption = binnedOption(
+  {
+    leftVersion: 'v0o7',
+    rightVersion: 'v5o3',
+    visualPayload: {
+      type: 'binned_distribution',
+      bins: [{ label: 'Example', lower: 0, upper: 1, left: 0.0001, right: 0.002, delta: 0.0019 }]
+    }
+  } as CompareResult,
+  'Value',
+  'Share',
+  'Share difference'
+);
+const alignedTooltipFormatter = (alignedTooltipOption.tooltip as any).formatter as (rows: unknown) => string;
+assert.match(
+  alignedTooltipFormatter([
+    { axisValue: 'Example', seriesName: 'v0o7', data: 0.0001 },
+    { axisValue: 'Example', seriesName: 'v5o3', data: 0.002 },
+    { axisValue: 'Example', seriesName: 'Delta', data: 0.0019 }
+  ]),
+  /v0o7: 0\.0001<br\/>v5o3: 0\.0020<br\/>Delta: 0\.0019/,
+  'Chart tooltips should align comparison values and their difference'
+);
+
+const alignedCurveOption = curveOption(
+  'v0o7',
+  'v5o3',
+  [{ x: 0, y: 0.0001 }],
+  [{ x: 0, y: 0.0002 }],
+  'Value',
+  'Density'
+);
+const alignedCurveFormatter = (alignedCurveOption.tooltip as any).formatter as (rows: unknown) => string;
+assert.match(
+  alignedCurveFormatter([
+    { axisValue: 0, seriesName: 'v0o7', data: [0, 0.0001] },
+    { axisValue: 0, seriesName: 'v5o3', data: [0, 0.0002] }
+  ]),
+  /v0o7: 1\.00e-4<br\/>v5o3: 2\.00e-4/,
+  'Very small chart comparisons should use matching scientific precision'
+);
 
 const unchangedMarkup = renderToStaticMarkup(createElement(FittedParameterRow, {
   parameter,

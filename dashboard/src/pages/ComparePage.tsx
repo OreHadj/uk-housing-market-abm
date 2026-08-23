@@ -6,6 +6,7 @@ import { CompareCard } from '../components/CompareCard';
 import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
 import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
 import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
+import { createCalibrationComparisonFormatter, formatCalibrationNumber } from '../lib/calibrationNumberFormat';
 import { buildModelOptions, getDefaultModelVersion } from '../lib/modelAnchors';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
@@ -22,7 +23,7 @@ const FITTED_IDS = new Set(['rent_purchase_choice', 'btl_probability_multiplier'
 
 function fmt(value: number | null): string {
   if (value === null) return 'Not recorded';
-  return new Intl.NumberFormat('en-GB', { maximumSignificantDigits: 6 }).format(value);
+  return formatCalibrationNumber(value);
 }
 
 function fmtLoss(value: number): string {
@@ -131,11 +132,12 @@ function scalarSummary(item: CompareResponse['items'][number], mode: ViewMode, m
   return <div className="assumption-scalar-values">
     {payload.values.map((entry) => {
       const label = meta.keyMetadata.find((key) => key.key === entry.key)?.label ?? entry.key;
+      const formatComparisonValue = createCalibrationComparisonFormatter([entry.left, entry.right]);
       return <div key={entry.key}>
         <span>{label}</span>
         {mode === 'single'
           ? <strong>{fmt(entry.right)}</strong>
-          : <span className="assumption-scalar-comparison"><strong>{fmt(entry.left)}</strong><i aria-hidden="true">→</i><strong>{fmt(entry.right)}</strong></span>}
+          : <span className="assumption-scalar-comparison"><strong>{formatComparisonValue(entry.left)}</strong><i aria-hidden="true">→</i><strong>{formatComparisonValue(entry.right)}</strong></span>}
       </div>;
     })}
   </div>;
@@ -382,9 +384,15 @@ export function FittedParameterRow({
   mode: ViewMode;
 }) {
   const changed = compared ? compared.value !== parameter.value : false;
+  const comparableValues = [
+    parameter.value,
+    ...(compared ? [compared.value] : []),
+    ...(parameter.lower !== null && parameter.upper !== null ? [parameter.lower, parameter.upper] : [])
+  ];
+  const formatParameterValue = createCalibrationComparisonFormatter(comparableValues);
   const testedRange = parameter.lower === null || parameter.upper === null
     ? 'Not recorded'
-    : `${fmt(parameter.lower)}–${fmt(parameter.upper)}`;
+    : `${formatParameterValue(parameter.lower)}–${formatParameterValue(parameter.upper)}`;
 
   return <details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>
     <summary className="calibration-parameter-summary">
@@ -396,18 +404,18 @@ export function FittedParameterRow({
       <span className="parameter-number-grid">
         <span className="parameter-number-item">
           <span>{mode === 'compare' ? `${primaryVersion} value` : 'Selected value'}</span>
-          <strong>{fmt(parameter.value)}</strong>
+          <strong>{formatParameterValue(parameter.value)}</strong>
         </span>
         {mode === 'compare' && compared && comparisonVersion && (
           <span className="parameter-number-item">
             <span>{comparisonVersion} value</span>
-            <strong>{fmt(compared.value)}</strong>
+            <strong>{formatParameterValue(compared.value)}</strong>
           </span>
         )}
         {mode === 'compare' && compared && (
           <span className="parameter-number-item">
             <span>Absolute difference</span>
-            <strong>{fmt(parameter.value - compared.value)}</strong>
+            <strong>{formatParameterValue(parameter.value - compared.value)}</strong>
             <small className={changed ? 'changed' : 'unchanged'}>{changed ? 'Changed' : 'Unchanged'}</small>
           </span>
         )}

@@ -335,6 +335,7 @@ type ParsedOverride = {
 
 interface ModelRunJobInternal {
   job: ModelRunJob;
+  basePolicy: BasePolicyId;
   runtimePaths: RuntimePaths;
   warnings: ModelRunWarning[];
   logBuffer: LogBufferState;
@@ -1184,6 +1185,7 @@ function writeManualManifestForJob(
     seed: job.seeds.length === 1 ? job.seeds[0] : null,
     seedsPerPoint: job.seedsPerPoint,
     seeds: job.seeds,
+    basePolicy: job.basePolicy,
     maxWorkers: job.maxWorkers,
     overriddenParameters: job.overriddenParameters,
     outputHash
@@ -1638,6 +1640,7 @@ export function submitModelRun(
   }
   const {
     baseline,
+    basePolicy,
     title,
     runId,
     jobId,
@@ -1674,6 +1677,7 @@ export function submitModelRun(
 
   const internalJob: ModelRunJobInternal = {
     job,
+    basePolicy,
     runtimePaths: paths,
     warnings,
     logBuffer: {

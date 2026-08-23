@@ -82,6 +82,7 @@ export interface ManualRunManifest {
     seed: number | null;
     seedsPerPoint: number | null;
     seeds: number[];
+    basePolicy: string | null;
     maxWorkers: number | null;
     overriddenParameters: Record<string, number | boolean>;
     outputHash: RunManifestDirectoryHash | null;
@@ -332,6 +333,7 @@ export function buildManualRunManifest(input: {
   seed: number | null;
   seedsPerPoint?: number | null;
   seeds?: number[];
+  basePolicy?: string | null;
   maxWorkers?: number | null;
   overriddenParameters: Record<string, number | boolean>;
   outputHash: RunManifestDirectoryHash | null;
@@ -361,6 +363,7 @@ export function buildManualRunManifest(input: {
       seed: input.seed,
       seedsPerPoint: input.seedsPerPoint ?? null,
       seeds: input.seeds ?? [],
+      basePolicy: input.basePolicy ?? null,
       maxWorkers: input.maxWorkers ?? null,
       overriddenParameters: input.overriddenParameters,
       outputHash: input.outputHash,

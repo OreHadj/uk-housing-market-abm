@@ -506,21 +506,22 @@ export function SensitivityResultsView({
             !canDownloadResults ? (
               authEnabled ? (
                 <Link className="summary-link-inline" to={loginPath}>
-                  Login to Download
+                  Login to Export Summary
                 </Link>
               ) : (
                 <button type="button" className="summary-link-inline summary-button-inline" disabled>
-                  Download Unavailable
+                  Summary Export Unavailable
                 </button>
               )
             ) : (
               <button
                 type="button"
                 className="summary-link-inline summary-button-inline"
+                title="Export the aggregated experiment summary, metadata, and reproducibility manifest as a compressed archive."
                 disabled={isDownloadingExperiment}
                 onClick={() => void downloadSelectedExperiment()}
               >
-                {isDownloadingExperiment ? 'Downloading...' : 'Download Results'}
+                {isDownloadingExperiment ? 'Exporting...' : 'Export experiment summary'}
               </button>
             )
           )}

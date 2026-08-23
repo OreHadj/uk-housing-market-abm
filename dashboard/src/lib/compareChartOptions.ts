@@ -1,6 +1,7 @@
 // Author: Max Stoddard
 import type { EChartsOption } from 'echarts';
 import type { BinnedDatum, BinnedSourceDatum, CompareResult, CurvePoint, HomePreviewItem, ScalarDatum } from '../../shared/types';
+import { createCalibrationComparisonFormatter } from './calibrationNumberFormat';
 import type { JointHeatmapLayoutOverrides } from './jointHeatmapOption';
 
 export function formatChartNumber(value: number): string {
@@ -35,6 +36,19 @@ function formatCurveValue(value: number): string {
     return value.toLocaleString('en-GB', { maximumFractionDigits: 6 });
   }
   return formatChartNumber(value);
+}
+
+function createCurveComparisonFormatter(left: number, right: number): (value: number) => string {
+  const maximumAbsolute = Math.max(Math.abs(left), Math.abs(right));
+  if (maximumAbsolute > 0 && maximumAbsolute < 0.001) {
+    return (value: number) => {
+      if (Math.abs(value) < 1e-300) return '0.00';
+      const [mantissa, exponent] = value.toExponential(2).split('e');
+      const normalizedExponent = exponent.replace('+', '').replace(/^(-?)0+(\d)/, '$1$2');
+      return `${mantissa}e${normalizedExponent}`;
+    };
+  }
+  return createCalibrationComparisonFormatter([left, right]);
 }
 
 function formatAxisTick(value: number): string {
@@ -471,9 +485,12 @@ export function binnedOption(
         const left = (rows.find((entry: any) => entry.seriesName === leftLabel) as any)?.data ?? 0;
         const right = (rows.find((entry: any) => entry.seriesName === rightLabel) as any)?.data ?? 0;
         const delta = (rows.find((entry: any) => entry.seriesName === 'Delta') as any)?.data ?? 0;
-        return `${axis}<br/>${leftLabel}: ${formatChartNumber(Number(left))}<br/>${rightLabel}: ${formatChartNumber(
-          Number(right)
-        )}<br/>Delta: ${formatChartNumber(Number(delta))}`;
+        const leftValue = Number(left);
+        const rightValue = Number(right);
+        const formatComparisonValue = createCalibrationComparisonFormatter([leftValue, rightValue]);
+        return `${axis}<br/>${leftLabel}: ${formatComparisonValue(leftValue)}<br/>${rightLabel}: ${formatComparisonValue(
+          rightValue
+        )}<br/>Delta: ${formatComparisonValue(Number(delta))}`;
       }
     },
     legend: { top: 0 },
@@ -618,7 +635,8 @@ export function curveOption(
         const rightSeriesData = (rows.find((entry: any) => entry.seriesName === rightVersion) as any)?.data;
         const left = Array.isArray(leftSeriesData) ? Number(leftSeriesData[1]) : 0;
         const right = Array.isArray(rightSeriesData) ? Number(rightSeriesData[1]) : 0;
-        return `${xLabel}: ${xText}<br/>${leftVersion}: ${formatCurveValue(left)}<br/>${rightVersion}: ${formatCurveValue(right)}`;
+        const formatComparisonValue = createCurveComparisonFormatter(left, right);
+        return `${xLabel}: ${xText}<br/>${leftVersion}: ${formatComparisonValue(left)}<br/>${rightVersion}: ${formatComparisonValue(right)}`;
       }
     },
     legend: { top: 0 },
