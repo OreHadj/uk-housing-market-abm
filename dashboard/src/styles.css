@@ -1428,7 +1428,7 @@ section.block:first-of-type { border-top: none; }
 
 .policy-results-group-toggle {
   width: 100%;
-  padding: 0.62rem 0.75rem;
+  padding: 0.85rem 0.75rem;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -1441,12 +1441,17 @@ section.block:first-of-type { border-top: none; }
 }
 
 .policy-results-group-toggle:hover {
-  background: rgba(11, 114, 133, 0.06);
+  background: rgba(17, 32, 24, 0.035);
+}
+
+.policy-results-group-toggle:hover .policy-results-chevron {
+  color: var(--accent);
 }
 
 .policy-results-group-toggle strong {
-  font-size: 1rem;
+  font-size: 0.92rem;
   font-weight: 700;
+  line-height: 1.3;
 }
 
 .policy-results-group-toggle small {
@@ -1460,10 +1465,10 @@ section.block:first-of-type { border-top: none; }
   width: 0;
   height: 0;
   flex: 0 0 auto;
-  border-top: 0.3rem solid transparent;
-  border-bottom: 0.3rem solid transparent;
-  border-left: 0.42rem solid currentColor;
-  color: var(--accent);
+  border-top: 0.26rem solid transparent;
+  border-bottom: 0.26rem solid transparent;
+  border-left: 0.36rem solid currentColor;
+  color: var(--muted);
   transform: rotate(0deg);
   transition: transform 140ms ease;
 }
@@ -1541,8 +1546,8 @@ section.block:first-of-type { border-top: none; }
 .policy-results-group-row th {
   padding: 0;
   border-top: 1px solid var(--rule);
-  border-bottom: 1px solid var(--rule);
-  background: rgba(17, 32, 24, 0.035);
+  border-bottom: 0;
+  background: transparent;
 }
 
 .policy-results-table tbody tr:not(.policy-results-group-row):hover {
@@ -2734,55 +2739,79 @@ section.block:first-of-type { border-top: none; }
   padding: 0 0 0.85rem;
 }
 
-/* The first disclosure in a run summary follows the section's own heading, so it takes no rule of
-   its own; the one below it keeps its rule as the divider between the two. */
-.manual-results-summary-card > .run-policy-disclosure.collapsible-section,
-.sensitivity-run-summary-disclosure.collapsible-section {
-  border-top: 0;
-}
-
-.run-policy-provenance {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
-  gap: 0.65rem;
-  margin-top: 0.75rem;
-}
-
-.run-policy-provenance-item {
+/* Policy details and the sweep summary are always visible rather than disclosures, but they keep the
+   header shape their toggles had: title on the left, its one-line qualifier on the right. */
+.run-policy-details {
   min-width: 0;
-  padding: 0.65rem 0.75rem;
-  border: 1px solid rgba(17, 32, 24, 0.09);
-  border-radius: 0.55rem;
-  background: var(--panel-muted);
 }
 
-.run-policy-provenance-item h3 {
-  margin: 0 0 0.45rem;
-  font-size: 0.85rem;
+.run-policy-details-head {
+  padding: 0.65rem 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.run-policy-details-head h3 {
+  margin: 0;
+  font-size: 1.17em;
+  font-weight: 700;
+  line-height: normal;
+}
+
+.run-policy-details-summary {
+  margin: 0;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  text-align: right;
+}
+
+@media (max-width: 760px) {
+  .run-policy-details-head {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .run-policy-details-summary {
+    text-align: left;
+  }
+}
+
+/* Two facts per run: which calibrated model produced it and which reference policy it started from.
+   One line each, so a comparison reads as two lines rather than two boxes. */
+.run-policy-provenance {
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.run-policy-provenance li {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.45rem;
+  row-gap: 0.1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.run-policy-provenance strong {
+  color: var(--text);
   overflow-wrap: anywhere;
 }
 
-.run-policy-provenance-item dl {
-  display: grid;
-  gap: 0.3rem;
-  margin: 0;
-}
-
-.run-policy-provenance-item dl div {
-  display: grid;
-  grid-template-columns: minmax(7.5rem, max-content) minmax(0, 1fr);
-  gap: 0.65rem;
-}
-
-.run-policy-provenance-item dt {
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
-.run-policy-provenance-item dd {
-  margin: 0;
-  font-size: 0.82rem;
-  font-weight: 700;
+.run-policy-provenance li > * + *::before {
+  content: '·';
+  margin-right: 0.45rem;
+  color: var(--faint);
 }
 
 .policy-settings-table-wrap {

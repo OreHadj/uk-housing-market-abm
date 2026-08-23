@@ -122,7 +122,7 @@ interface UseExperimentRunControllerOptions {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
-  onManualRunAccepted?: () => void;
+  onManualRunAccepted?: (runId: string) => void;
   onSensitivityRunAccepted?: (experimentId: string) => void;
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
@@ -808,7 +808,7 @@ export function useExperimentRunController({
         setPendingManualJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
-      onManualRunAccepted?.();
+      onManualRunAccepted?.(response.job?.runId ?? '');
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);

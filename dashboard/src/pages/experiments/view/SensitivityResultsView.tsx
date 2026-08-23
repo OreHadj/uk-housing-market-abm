@@ -560,12 +560,11 @@ export function SensitivityResultsView({
         ) : (
           <>
             {sweepSummary && (
-              <CollapsibleSection
-                title="Summary"
-                summary={sweepSummary.instrument}
-                defaultOpen={false}
-                className="run-policy-disclosure sensitivity-run-summary-disclosure"
-              >
+              <section className="run-policy-details sensitivity-run-summary-details">
+                <div className="run-policy-details-head">
+                  <h3>Summary</h3>
+                  <p className="run-policy-details-summary">{sweepSummary.instrument}</p>
+                </div>
                 <p className="sensitivity-sweep-sentence">{sweepSummary.sentence}</p>
                 <dl className="sensitivity-summary-facts">
                   <div>
@@ -605,7 +604,7 @@ export function SensitivityResultsView({
                     <dd>{sweepSummary.maxWorkers}</dd>
                   </div>
                 </dl>
-              </CollapsibleSection>
+              </section>
             )}
             {detail.failureReason && <p className="error-banner">Failure reason: {detail.failureReason}</p>}
 

@@ -178,7 +178,9 @@ export function ExperimentsPage({
               draftId={draftId}
               initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
               initialSensitivityStep={searchParams.get('step') === 'model-baseline' ? 2 : 0}
-              onManualRunAccepted={() => navigate('/results?type=manual')}
+              onManualRunAccepted={(runId) => navigate(
+                `/results?type=manual${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`
+              )}
               onSensitivityRunAccepted={(id) => navigate(
                 `/results?type=sensitivity${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`
               )}

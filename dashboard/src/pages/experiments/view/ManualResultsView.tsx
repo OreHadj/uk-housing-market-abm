@@ -944,32 +944,23 @@ export function ManualResultsView({
             </div>
 
             {baselineDetail && policySettings.length > 0 && (
-              <CollapsibleSection
-                title="Policy settings used"
-                summary={policySettingsSummary}
-                defaultOpen={false}
-                className="run-policy-disclosure"
-              >
-                <div className="run-policy-provenance" aria-label="Policy run provenance">
+              <section className="run-policy-details">
+                <div className="run-policy-details-head">
+                  <h3>Policy settings used</h3>
+                  <p className="run-policy-details-summary">{policySettingsSummary}</p>
+                </div>
+                <ul className="run-policy-provenance" aria-label="Policy run provenance">
                   {[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])].map((run) => {
                     const referencePolicy = summariseRunPolicy(run.policySettings).basePolicyId;
                     return (
-                      <section key={run.runId} className="run-policy-provenance-item">
-                        <h3>{runLabel(run.runId)}</h3>
-                        <dl>
-                          <div>
-                            <dt>Calibrated model</dt>
-                            <dd>{getRunModelVersion(run) ?? 'Not recorded'}</dd>
-                          </div>
-                          <div>
-                            <dt>Reference policy</dt>
-                            <dd>{referencePolicy ? `${referencePolicy} policy` : 'Not recorded'}</dd>
-                          </div>
-                        </dl>
-                      </section>
+                      <li key={run.runId}>
+                        <strong>{runLabel(run.runId)}</strong>
+                        <span>model {getRunModelVersion(run) ?? 'not recorded'}</span>
+                        <span>{referencePolicy ? `${referencePolicy} policy` : 'reference policy not recorded'}</span>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
 
                 <div className="policy-settings-table-wrap">
                     <table className="policy-settings-table">
@@ -1007,20 +998,10 @@ export function ManualResultsView({
                       </tbody>
                     </table>
                 </div>
-              </CollapsibleSection>
+              </section>
             )}
 
             <div className="summary-links">
-              <Link
-                className="summary-link-inline"
-                to={buildExperimentsPath({
-                  ...DEFAULT_EXPERIMENT_ROUTE_STATE,
-                  type: 'sensitivity',
-                  mode: 'view'
-                })}
-              >
-                Open Sensitivity analysis
-              </Link>
               {renderDownloadAction(baselineRunId, 'Download primary')}
               {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison')}
             </div>

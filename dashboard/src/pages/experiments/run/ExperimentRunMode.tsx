@@ -25,7 +25,7 @@ interface ExperimentRunModeProps {
   draftId?: string;
   initialScenarioStep?: number;
   initialSensitivityStep?: number;
-  onManualRunAccepted?: () => void;
+  onManualRunAccepted?: (runId: string) => void;
   onSensitivityRunAccepted?: (experimentId: string) => void;
 }
 

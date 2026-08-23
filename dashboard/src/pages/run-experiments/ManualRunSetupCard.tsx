@@ -441,19 +441,42 @@ export function ManualRunSetupCard({
 
               <div className="scenario-page-navigation" aria-label="Scenario page navigation">
                 <div className="scenario-page-movement">
-                  <button type="button" className="secondary-button" disabled={activeStep === 0} onClick={() => setActiveStep((step) => Math.max(0, step - 1))}>Back</button>
-                  {activeStep < steps.length - 1 && <button type="button" className="secondary-button" onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}>Continue</button>}
+                  <button
+                    type="button"
+                    className="secondary-button scenario-wizard-arrow-button"
+                    disabled={activeStep === 0}
+                    aria-label="Back to previous step"
+                    title="Back to previous step"
+                    onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
+                  >
+                    <span aria-hidden="true">&larr;</span>
+                  </button>
+                  {activeStep < steps.length - 1 && (
+                    <button
+                      type="button"
+                      className="secondary-button scenario-wizard-arrow-button"
+                      aria-label="Continue to next step"
+                      title="Continue to next step"
+                      onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}
+                    >
+                      <span aria-hidden="true">&rarr;</span>
+                    </button>
+                  )}
                 </div>
                 <div className="scenario-persistent-run-action">
                   {activeStep === steps.length - 1 && (
-                    <>
-                      <button type="button" className="primary-button scenario-create-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(false)}>
-                        {isSubmitting ? 'Starting policy scenario...' : 'Start policy scenario'}
-                      </button>
-                      {warnings.length > 0 && (
-                        <button type="button" className="secondary-button" disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity} onClick={() => onSubmit(true)}>Confirm and start</button>
-                      )}
-                    </>
+                    <button
+                      type="button"
+                      className="primary-button scenario-create-button"
+                      disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
+                      onClick={() => onSubmit(warnings.length > 0)}
+                    >
+                      {isSubmitting
+                        ? 'Starting...'
+                        : warnings.length > 0
+                          ? 'Confirm and start'
+                          : 'Start policy scenario'}
+                    </button>
                   )}
                 </div>
               </div>
