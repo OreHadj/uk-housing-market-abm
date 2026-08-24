@@ -60,6 +60,7 @@ export interface ExperimentRunController {
   title: string;
   setTitle: (value: string) => void;
   formValues: Record<string, FormValue>;
+  manualLockedParameterKeys: readonly string[];
   manualMaxWorkers: string;
   setManualMaxWorkers: (value: string) => void;
   maxWorkersCap?: number;
@@ -237,6 +238,7 @@ export function useExperimentRunController({
 
   const [title, setTitle] = useState<string>('');
   const [formValues, setFormValues] = useState<Record<string, FormValue>>({});
+  const [manualLockedParameterKeys, setManualLockedParameterKeys] = useState<string[]>([]);
   const [manualMaxWorkers, setManualMaxWorkers] = useState<string>('1');
   const [manualMaxWorkersTouched, setManualMaxWorkersTouched] = useState<boolean>(false);
   const [warnings, setWarnings] = useState<ModelRunWarning[]>([]);
@@ -324,7 +326,13 @@ export function useExperimentRunController({
       setSelectedBaseline(payload.requestedBaseline);
       setBasePolicyState(defaultBasePolicy);
       setSensitivityBasePolicyState(defaultBasePolicy);
-      setFormValues(applyPolicyRunBuilderDefaults(payload.parameters, initialValues));
+      const initialManualValues = applyPolicyRunBuilderDefaults(payload.parameters, initialValues);
+      for (const key of manualLockedParameterKeys) {
+        if (formValues[key] !== undefined) {
+          initialManualValues[key] = formValues[key];
+        }
+      }
+      setFormValues(initialManualValues);
       setSensitivityFormValues(initialSensitivityValues);
       setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap));
       setManualMaxWorkersTouched(false);
@@ -347,8 +355,9 @@ export function useExperimentRunController({
           setBasePolicyState(restored.draft.basePolicy);
           setTitle(restored.draft.title);
           setFormValues(normalizeManualScenarioFormValues(restored.draft.formValues));
+          setManualLockedParameterKeys(restored.draft.lockedParameterKeys ?? []);
           setManualMaxWorkers(restored.draft.maxWorkers);
-          setManualMaxWorkersTouched(true);
+          setManualMaxWorkersTouched((restored.draft.lockedParameterKeys?.length ?? 0) === 0);
           setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
         }
       }
@@ -416,9 +425,10 @@ export function useExperimentRunController({
       calibratedModel: selectedBaseline,
       basePolicy,
       formValues,
-      maxWorkers: manualMaxWorkers
+      maxWorkers: manualMaxWorkers,
+      ...(manualLockedParameterKeys.length > 0 ? { lockedParameterKeys: manualLockedParameterKeys } : {})
     });
-  }, [activeType, basePolicy, draftHydrated, draftId, formValues, manualMaxWorkers, options, selectedBaseline, title]);
+  }, [activeType, basePolicy, draftHydrated, draftId, formValues, manualLockedParameterKeys, manualMaxWorkers, options, selectedBaseline, title]);
 
   useEffect(() => {
     if (activeType !== 'sensitivity' || !draftId || !draftHydrated || !options) return;
@@ -722,6 +732,9 @@ export function useExperimentRunController({
   };
 
   const onFormValueChange = (parameter: ModelRunParameterDefinition, value: FormValue) => {
+    if (manualLockedParameterKeys.includes(parameter.key)) {
+      return;
+    }
     setFormValues((current) => ({
       ...current,
       [parameter.key]: value
@@ -807,6 +820,7 @@ export function useExperimentRunController({
       clearScenarioDraft(draftId);
       setWarnings([]);
       setTitle('');
+      setManualLockedParameterKeys([]);
       if (response.job) {
         const jobRef = `manual:${response.job.jobId}`;
         setPendingManualJobRef(jobRef);
@@ -947,6 +961,7 @@ export function useExperimentRunController({
     title,
     setTitle,
     formValues,
+    manualLockedParameterKeys,
     manualMaxWorkers,
     setManualMaxWorkers: onManualMaxWorkersChange,
     maxWorkersCap: options?.sensitivityMaxWorkersCap,

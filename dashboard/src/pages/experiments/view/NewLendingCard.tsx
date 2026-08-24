@@ -34,6 +34,9 @@ const VIEW_PILLS: Array<{ id: LendingView; label: string }> = [
 const WINDOW_LABELS: Record<ResultsCompareWindow, string> = {
   post500: 'from month 500',
   post200: 'from month 200',
+  post1000: 'from month 1,000',
+  post1500: 'from month 1,500',
+  post2000: 'from month 2,000',
   tail120: 'last 120 months',
   full: 'all recorded months'
 };
@@ -67,15 +70,15 @@ function formatRatio(value: number | null, decimals: number): string {
   return value === null ? '—' : value.toFixed(decimals);
 }
 
-/** Percentage-point change, shown when a comparison run is selected. */
-function formatDelta(baselineValue: number, comparisonValue: number): string {
-  const delta = comparisonValue - baselineValue;
+/** Primary-run minus comparison-run percentage-point change. */
+function formatDelta(primaryValue: number, comparisonValue: number): string {
+  const delta = primaryValue - comparisonValue;
   const sign = delta > 0 ? '+' : '';
   return `${sign}${delta.toFixed(1)} pp`;
 }
 
-function deltaClassName(baselineValue: number, comparisonValue: number): string {
-  const delta = comparisonValue - baselineValue;
+function deltaClassName(primaryValue: number, comparisonValue: number): string {
+  const delta = primaryValue - comparisonValue;
   if (Math.abs(delta) < 0.05) {
     return 'lending-delta-flat';
   }
@@ -373,10 +376,10 @@ export function NewLendingCard({
                   <th scope="col">House price quintile</th>
                   <th scope="col">Upper bound (£)</th>
                   <th scope="col">
-                    {comparison?.quintiles ? 'Change in share of high-LTV lending (pp)' : 'Share of all high-LTV lending (%)'}
+                    {comparison?.quintiles ? 'Primary run − Comparison run, high-LTV share (pp)' : 'Share of all high-LTV lending (%)'}
                   </th>
                   <th scope="col">
-                    {comparison?.quintiles ? 'Change in share of high-LTI lending (pp)' : 'Share of all high-LTI lending (%)'}
+                    {comparison?.quintiles ? 'Primary run − Comparison run, high-LTI share (pp)' : 'Share of all high-LTI lending (%)'}
                   </th>
                   <th scope="col">High-LTV loans, FTB / HM (count)</th>
                 </tr>

@@ -17,6 +17,7 @@ import {
 } from '../../lib/manualScenarioPolicy';
 import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
 import { getModelAnchor } from '../../lib/modelAnchors';
+import { CollapsibleSection } from '../../components/CollapsibleSection';
 import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { GeneralModelControl, isRecordSetting } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
@@ -43,6 +44,7 @@ interface ManualRunSetupCardProps {
   parameters: ModelRunParameterDefinition[];
   policyParameters: ModelRunParameterDefinition[];
   formValues: Record<string, FormValue>;
+  lockedParameterKeys?: readonly string[];
   onFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
   maxWorkers: string;
   maxWorkersCap?: number;
@@ -108,6 +110,7 @@ export function ManualRunSetupCard({
   parameters,
   policyParameters,
   formValues,
+  lockedParameterKeys = [],
   onFormValueChange,
   maxWorkers,
   maxWorkersCap,
@@ -343,6 +346,7 @@ export function ManualRunSetupCard({
                         parameters={parameters}
                         formValues={formValues}
                         executionDisabled={formDisabled}
+                        disabledParameterKeys={lockedParameterKeys}
                         onFormValueChange={onFormValueChange}
                         maxWorkers={maxWorkers}
                         maxWorkersCap={maxWorkersCap}
@@ -414,8 +418,12 @@ export function ManualRunSetupCard({
                   </dl>
                 </div>
 
-                <div className="scenario-review-run-settings">
-                  <h4>Recording configuration</h4>
+                <CollapsibleSection
+                  title="Recording configuration"
+                  summary={`${reviewRecordingParameters.length} settings`}
+                  className="scenario-review-recording-settings"
+                  defaultOpen={false}
+                >
                   <dl className="sensitivity-review-list">
                     {reviewRecordingParameters.map((parameter) => (
                       <div key={parameter.key}>
@@ -424,7 +432,7 @@ export function ManualRunSetupCard({
                       </div>
                     ))}
                   </dl>
-                </div>
+                </CollapsibleSection>
 
                 {warnings.length > 0 && (
                   <div className="run-warning-card">

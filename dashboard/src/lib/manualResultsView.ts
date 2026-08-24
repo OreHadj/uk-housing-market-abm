@@ -1,4 +1,5 @@
 import type {
+  BasePolicyId,
   KpiMetricKey,
   KpiMetricSummary,
   KpiMetricWindowType,
@@ -8,8 +9,17 @@ import type {
   ResultsCompareIndicator,
   ResultsIndicatorAvailability,
   ResultsIndicatorScaling,
+  ResultsPolicySetting,
+  ResultsRunConfigurationValue,
   ResultsRunSummary
 } from '../../shared/types';
+import type { ScenarioDraftV1 } from './scenarioDraft';
+import { extractVersionFromResultsRunId } from './versionLabels';
+import {
+  CENTRAL_BANK_POLICY_KEYS,
+  getBasePolicyOption,
+  summariseRunPolicy
+} from '../../shared/policyCatalogue';
 
 const DEFAULT_MANUAL_OVERLAY_INDICATOR_ID = 'core_ooLTI';
 const KPI_BASELINE_EPSILON = 1e-12;
@@ -33,6 +43,82 @@ export interface ManualRunSelection {
   baselineRunId: string;
   comparisonRunId: string;
 }
+
+export type ManualComparisonMatchFieldKey =
+  | 'N_STEPS'
+  | 'N_SIMS'
+  | 'CALIBRATION_VINTAGE';
+
+type ManualComparisonMatchField = {
+  key: ManualComparisonMatchFieldKey;
+  label: string;
+  reason: string;
+  source: 'parameter' | 'calibration';
+  valueKey?: 'N_STEPS' | 'N_SIMS';
+  format: 'integer' | 'calibration';
+};
+
+/**
+ * The warning allow-list is deliberately limited to run setup: horizon, seed depth, and the paired
+ * household/dwelling calibration. Behavioural parameters and policy levers can differ intentionally.
+ * TIME_TO_START_RECORDING_TRANSACTIONS, CUMULATIVE_WEIGHT_BEYOND_YEAR, TARGET_POPULATION,
+ * ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS, and MODEL_VERSION were removed for that reason. The
+ * CENTRAL_BANK_* fields remain exclusively in base-policy qualification and policy-detail diffing.
+ */
+export const MANUAL_COMPARISON_MATCH_FIELDS = [
+  {
+    key: 'N_STEPS',
+    label: 'N_STEPS',
+    reason: 'simulation duration',
+    source: 'parameter',
+    valueKey: 'N_STEPS',
+    format: 'integer'
+  },
+  {
+    key: 'N_SIMS',
+    label: 'N_SIMS',
+    reason: 'simulation repetitions and paired seed set',
+    source: 'parameter',
+    valueKey: 'N_SIMS',
+    format: 'integer'
+  },
+  {
+    key: 'CALIBRATION_VINTAGE',
+    label: 'Housing market calibration (UK_HOUSEHOLDS and UK_DWELLINGS)',
+    reason: 'housing-supply calibration',
+    source: 'calibration',
+    format: 'calibration'
+  }
+] as const satisfies readonly ManualComparisonMatchField[];
+
+export interface ManualCalibrationValue {
+  ukHouseholds: number | null;
+  ukDwellings: number | null;
+}
+
+type ManualComparisonFieldValue = ResultsRunConfigurationValue | ManualCalibrationValue | null;
+
+export interface ManualComparisonFieldDifference {
+  field: (typeof MANUAL_COMPARISON_MATCH_FIELDS)[number];
+  primaryValue: ManualComparisonFieldValue;
+  comparisonValue: ManualComparisonFieldValue;
+}
+
+export interface PolicySettingDifference {
+  key: string;
+  primaryValue: number | null;
+  comparisonValue: number | null;
+}
+
+export interface ManualComparisonDisclosureRow {
+  key: string;
+  label: string;
+  primaryValue: string;
+  comparisonValue: string;
+}
+
+export const MANUAL_COMPARISON_SETTINGS_VERDICT = 'Different run settings';
+export const MANUAL_COMPARISON_CALIBRATION_VERDICT = 'Different calibration';
 
 export interface KpiDetailRow {
   key: KpiMetricKey;
@@ -424,6 +510,306 @@ export function sortKpis(kpis: KpiMetricSummary[]): KpiMetricSummary[] {
   return [...kpis].sort((left, right) => left.title.localeCompare(right.title));
 }
 
+function readManualComparisonField(
+  run: ResultsRunSummary,
+  field: (typeof MANUAL_COMPARISON_MATCH_FIELDS)[number]
+): ManualComparisonFieldValue {
+  if (field.source === 'calibration') {
+    return {
+      ukHouseholds: run.provenance.ukHouseholds,
+      ukDwellings: run.provenance.ukDwellings
+    };
+  }
+  return run.configuration?.parameterValues[field.valueKey] ?? null;
+}
+
+function isManualCalibrationValue(value: ManualComparisonFieldValue): value is ManualCalibrationValue {
+  return typeof value === 'object' && value !== null;
+}
+
+function manualComparisonValuesMatch(
+  field: (typeof MANUAL_COMPARISON_MATCH_FIELDS)[number],
+  primaryValue: ManualComparisonFieldValue,
+  comparisonValue: ManualComparisonFieldValue
+): boolean {
+  if (field.source === 'calibration') {
+    return Boolean(
+      isManualCalibrationValue(primaryValue) &&
+        isManualCalibrationValue(comparisonValue) &&
+        primaryValue.ukHouseholds !== null &&
+        primaryValue.ukDwellings !== null &&
+        comparisonValue.ukHouseholds !== null &&
+        comparisonValue.ukDwellings !== null &&
+        primaryValue.ukHouseholds === comparisonValue.ukHouseholds &&
+        primaryValue.ukDwellings === comparisonValue.ukDwellings
+    );
+  }
+  return primaryValue !== null && comparisonValue !== null && primaryValue === comparisonValue;
+}
+
+/** Missing metadata is itself a mismatch: an automatic comparison must be provably matched. */
+export function getManualComparisonFieldDifferences(
+  primary: ResultsRunSummary,
+  comparison: ResultsRunSummary
+): ManualComparisonFieldDifference[] {
+  return MANUAL_COMPARISON_MATCH_FIELDS.flatMap((field) => {
+    const primaryValue = readManualComparisonField(primary, field);
+    const comparisonValue = readManualComparisonField(comparison, field);
+    if (manualComparisonValuesMatch(field, primaryValue, comparisonValue)) {
+      return [];
+    }
+    return [{ field, primaryValue, comparisonValue }];
+  });
+}
+
+const POLICY_VALUE_EPSILON = 1e-9;
+
+function policyValuesMatch(primaryValue: number | null, comparisonValue: number | null): boolean {
+  return (
+    primaryValue !== null &&
+    comparisonValue !== null &&
+    Math.abs(primaryValue - comparisonValue) < POLICY_VALUE_EPSILON
+  );
+}
+
+/** Shared by the policy-settings chips and by base-policy qualification. */
+export function getPolicySettingDifferences(
+  primarySettings: ReadonlyArray<ResultsPolicySetting>,
+  comparisonSettings: ReadonlyArray<ResultsPolicySetting>
+): PolicySettingDifference[] {
+  const primaryByKey = new Map(primarySettings.map((setting) => [setting.key, setting.value]));
+  const comparisonByKey = new Map(comparisonSettings.map((setting) => [setting.key, setting.value]));
+  const keys = [...new Set([...primaryByKey.keys(), ...comparisonByKey.keys()])];
+  return keys.flatMap((key) => {
+    const primaryValue = primaryByKey.get(key) ?? null;
+    const comparisonValue = comparisonByKey.get(key) ?? null;
+    return policyValuesMatch(primaryValue, comparisonValue)
+      ? []
+      : [{ key, primaryValue, comparisonValue }];
+  });
+}
+
+function hasCompletePolicySettings(run: ResultsRunSummary): boolean {
+  const keys = new Set(run.policySettings.map((setting) => setting.key));
+  return CENTRAL_BANK_POLICY_KEYS.every((key) => keys.has(key));
+}
+
+export function resolveRunBasePolicyId(run: ResultsRunSummary): BasePolicyId | null {
+  if (run.configuration?.basePolicy) {
+    return run.configuration.basePolicy;
+  }
+  return hasCompletePolicySettings(run) ? summariseRunPolicy(run.policySettings).basePolicyId : null;
+}
+
+function isUnchangedBasePolicyRun(run: ResultsRunSummary, basePolicyId: BasePolicyId): boolean {
+  if (!hasCompletePolicySettings(run)) {
+    return false;
+  }
+  if (run.configuration?.basePolicy && run.configuration.basePolicy !== basePolicyId) {
+    return false;
+  }
+  const basePolicySettings = Object.entries(getBasePolicyOption(basePolicyId).values).map(([key, value]) => ({
+    key,
+    value
+  }));
+  return getPolicySettingDifferences(run.policySettings, basePolicySettings).length === 0;
+}
+
+export function isMatchedManualBaselineRun(
+  primary: ResultsRunSummary,
+  candidate: ResultsRunSummary
+): boolean {
+  if (primary.runId === candidate.runId) {
+    return false;
+  }
+  const primaryBasePolicyId = resolveRunBasePolicyId(primary);
+  return Boolean(
+    primaryBasePolicyId &&
+      isUnchangedBasePolicyRun(candidate, primaryBasePolicyId) &&
+      getManualComparisonFieldDifferences(primary, candidate).length === 0
+  );
+}
+
+export function getManualBaselinePolicyDifferences(
+  primary: ResultsRunSummary,
+  comparison: ResultsRunSummary
+): { basePolicyId: BasePolicyId; differences: PolicySettingDifference[] } | null {
+  const basePolicyId = resolveRunBasePolicyId(primary);
+  if (!basePolicyId) {
+    return null;
+  }
+  const basePolicySettings = Object.entries(getBasePolicyOption(basePolicyId).values).map(([key, value]) => ({
+    key,
+    value
+  }));
+  return {
+    basePolicyId,
+    differences: getPolicySettingDifferences(basePolicySettings, comparison.policySettings)
+  };
+}
+
+export function findMatchedManualBaselineRun(
+  runs: ResultsRunSummary[],
+  primaryRunId: string
+): ResultsRunSummary | null {
+  const primary = runs.find((run) => run.runId === primaryRunId);
+  if (!primary) {
+    return null;
+  }
+  let best: ResultsRunSummary | null = null;
+  for (const candidate of runs) {
+    if (!isMatchedManualBaselineRun(primary, candidate)) {
+      continue;
+    }
+    if (!best || runCreatedTime(candidate) > runCreatedTime(best)) {
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function formatManualComparisonFieldValue(
+  value: ManualComparisonFieldValue,
+  format: (typeof MANUAL_COMPARISON_MATCH_FIELDS)[number]['format']
+): string {
+  if (format === 'calibration') {
+    if (!isManualCalibrationValue(value)) {
+      return 'not recorded';
+    }
+    const households = value.ukHouseholds === null
+      ? 'households not recorded'
+      : `${value.ukHouseholds.toLocaleString('en-GB')} households`;
+    const dwellings = value.ukDwellings === null
+      ? 'dwellings not recorded'
+      : `${value.ukDwellings.toLocaleString('en-GB')} dwellings`;
+    return `${households} · ${dwellings}`;
+  }
+  if (value === null) {
+    return 'not recorded';
+  }
+  if (format === 'integer' && typeof value === 'number') {
+    return value.toLocaleString('en-GB', { maximumFractionDigits: 0 });
+  }
+  return String(value);
+}
+
+function formatCount(value: ManualComparisonFieldValue, singular: string, plural: string): string {
+  if (typeof value !== 'number') {
+    return `${plural} not recorded`;
+  }
+  return `${value.toLocaleString('en-GB')} ${value === 1 ? singular : plural}`;
+}
+
+function calibrationVintage(value: ManualComparisonFieldValue): string {
+  if (!isManualCalibrationValue(value)) {
+    return 'an unrecorded calibration';
+  }
+  if (value.ukHouseholds === 26_442_100 && value.ukDwellings === 22_626_000) {
+    return 'the 2011 calibration';
+  }
+  if (value.ukHouseholds === 28_609_000 && value.ukDwellings === 30_676_974) {
+    return 'the 2024 calibration';
+  }
+  if (value.ukHouseholds === null || value.ukDwellings === null) {
+    return 'an unrecorded calibration';
+  }
+  return `${value.ukHouseholds.toLocaleString('en-GB')} households and ${value.ukDwellings.toLocaleString('en-GB')} dwellings`;
+}
+
+export function formatManualComparisonMismatchWarning(
+  differences: ManualComparisonFieldDifference[]
+): string | null {
+  const steps = differences.find((difference) => difference.field.key === 'N_STEPS');
+  const seeds = differences.find((difference) => difference.field.key === 'N_SIMS');
+  if (!steps && !seeds) {
+    return null;
+  }
+
+  const comparisonParts = [
+    steps ? formatCount(steps.comparisonValue, 'step', 'steps') : null,
+    seeds ? formatCount(seeds.comparisonValue, 'seed', 'seeds') : null
+  ].filter((value): value is string => Boolean(value));
+  const primaryParts = [
+    steps ? formatCount(steps.primaryValue, 'step', 'steps') : null,
+    seeds ? formatCount(seeds.primaryValue, 'seed', 'seeds') : null
+  ].filter((value): value is string => Boolean(value));
+  const advice = steps && seeds
+    ? 'We advise using the same number of steps; the results with fewer seeds could be noisier.'
+    : steps
+      ? 'We advise comparing runs with the same number of steps.'
+      : 'The results with fewer seeds could be noisier.';
+  return `The comparison run used ${comparisonParts.join(' and ')}; the primary run used ${primaryParts.join(' and ')}. ${advice}`;
+}
+
+/** Visible calibration explanation, kept separate from run-setup advice. */
+export function formatManualComparisonCalibrationNotice(
+  differences: ManualComparisonFieldDifference[]
+): string | null {
+  const calibration = differences.find((difference) => difference.field.key === 'CALIBRATION_VINTAGE');
+  if (!calibration) {
+    return null;
+  }
+  return `The comparison run uses ${calibrationVintage(calibration.comparisonValue)} and the primary run uses ${calibrationVintage(calibration.primaryValue)}, which changes housing supply as well as policy. The difference below reflects both.`;
+}
+
+/** The dropdown stays compact; only calibration vintage is useful before selection. */
+export function formatManualComparisonOptionAnnotation(
+  differences: ManualComparisonFieldDifference[]
+): string {
+  const calibration = differences.find(
+    (difference) => difference.field.key === 'CALIBRATION_VINTAGE'
+  );
+  if (!calibration) {
+    return '';
+  }
+  return calibrationVintage(calibration.comparisonValue).replace(/^the /, '');
+}
+
+/** Full audited detail for the disclosure; calibration is already one paired conceptual field. */
+export function buildManualComparisonDisclosureRows(
+  differences: ManualComparisonFieldDifference[]
+): ManualComparisonDisclosureRow[] {
+  return differences.map((difference) => ({
+    key: difference.field.key,
+    label: difference.field.label,
+    primaryValue: formatManualComparisonFieldValue(difference.primaryValue, difference.field.format),
+    comparisonValue: formatManualComparisonFieldValue(difference.comparisonValue, difference.field.format)
+  }));
+}
+
+/**
+ * Produces an ordinary builder draft with only the two matching setup values carried over. The
+ * standard builder supplies every other default, including the selected base policy's lever values.
+ */
+export function buildMatchingBaselineScenarioDraft(primary: ResultsRunSummary): ScenarioDraftV1 | null {
+  const configuration = primary.configuration;
+  const basePolicy = resolveRunBasePolicyId(primary);
+  const modelVersion = configuration?.modelVersion ?? extractVersionFromResultsRunId(primary.runId);
+  if (!configuration || !modelVersion || !basePolicy) {
+    return null;
+  }
+
+  const steps = configuration.parameterValues.N_STEPS;
+  const seeds = configuration.parameterValues.N_SIMS;
+  if (typeof steps !== 'number' || typeof seeds !== 'number') {
+    return null;
+  }
+
+  const primaryLabel = primary.title?.trim() || primary.runId;
+  return {
+    version: 1,
+    title: `Matched baseline for ${primaryLabel}`,
+    calibratedModel: modelVersion,
+    basePolicy,
+    formValues: {
+      N_STEPS: String(steps),
+      N_SIMS: String(seeds)
+    },
+    maxWorkers: '1',
+    lockedParameterKeys: ['N_STEPS', 'N_SIMS']
+  };
+}
+
 function findFirstDistinctRunId(runs: ResultsRunSummary[], excludeRunId = ''): string {
   return runs.find((run) => run.runId !== excludeRunId)?.runId ?? '';
 }
@@ -463,7 +849,8 @@ function findMostRecentRunId(runs: ResultsRunSummary[], excludeRunId = ''): stri
 export function resolveManualRunSelection(
   runs: ResultsRunSummary[],
   requestedBaselineRunId: string,
-  requestedComparisonRunId: string
+  requestedComparisonRunId: string,
+  options: { defaultToMatchedBaseline?: boolean } = {}
 ): ManualRunSelection {
   if (runs.length === 0) {
     return {
@@ -481,7 +868,12 @@ export function resolveManualRunSelection(
   if (requestedBaseline) {
     return {
       baselineRunId: requestedBaseline,
-      comparisonRunId: requestedComparison && requestedComparison !== requestedBaseline ? requestedComparison : ''
+      comparisonRunId:
+        requestedComparison && requestedComparison !== requestedBaseline
+          ? requestedComparison
+          : !hasRequestedComparison && options.defaultToMatchedBaseline !== false
+            ? findMatchedManualBaselineRun(runs, requestedBaseline)?.runId ?? ''
+            : ''
     };
   }
 
@@ -497,25 +889,28 @@ export function resolveManualRunSelection(
     findMostRecentRunId(runs) || findFirstDistinctRunId(runs);
   return {
     baselineRunId,
-    comparisonRunId: ''
+    comparisonRunId:
+      options.defaultToMatchedBaseline === false
+        ? ''
+        : findMatchedManualBaselineRun(runs, baselineRunId)?.runId ?? ''
   };
 }
 
 export function computeKpiPercentDelta(
-  baselineValue: number | null,
+  primaryValue: number | null,
   comparisonValue: number | null
 ): number | null {
   if (
-    baselineValue === null ||
+    primaryValue === null ||
     comparisonValue === null ||
-    !Number.isFinite(baselineValue) ||
+    !Number.isFinite(primaryValue) ||
     !Number.isFinite(comparisonValue) ||
-    Math.abs(baselineValue) < KPI_BASELINE_EPSILON
+    Math.abs(comparisonValue) < KPI_BASELINE_EPSILON
   ) {
     return null;
   }
 
-  return ((comparisonValue - baselineValue) / baselineValue) * 100;
+  return ((primaryValue - comparisonValue) / Math.abs(comparisonValue)) * 100;
 }
 
 export function getKpiMetricValue(kpi: KpiMetricSummary | null, key: KpiMetricKey): number | null {
@@ -612,26 +1007,26 @@ export function formatKpiValue(
 }
 
 export function computeKpiDeltaValue(
-  baselineValue: number | null,
+  primaryValue: number | null,
   comparisonValue: number | null,
   units: string
 ): number | null {
   if (
-    baselineValue === null ||
+    primaryValue === null ||
     comparisonValue === null ||
-    !Number.isFinite(baselineValue) ||
+    !Number.isFinite(primaryValue) ||
     !Number.isFinite(comparisonValue)
   ) {
     return null;
   }
 
   if (units === '%' || units === 'percentage points') {
-    return comparisonValue - baselineValue;
+    return primaryValue - comparisonValue;
   }
   if (units === 'rate') {
-    return (comparisonValue - baselineValue) * 100;
+    return (primaryValue - comparisonValue) * 100;
   }
-  return computeKpiPercentDelta(baselineValue, comparisonValue);
+  return computeKpiPercentDelta(primaryValue, comparisonValue);
 }
 
 export function getKpiDeltaLabel(units: string): string {
@@ -649,8 +1044,8 @@ export function formatKpiDeltaValue(value: number | null, units: string): string
   return formatSignedFixed(value, '%');
 }
 
-function formatRelativeDelta(baselineValue: number, comparisonValue: number): string | null {
-  const relativeDelta = computeKpiPercentDelta(baselineValue, comparisonValue);
+function formatRelativeDelta(primaryValue: number, comparisonValue: number): string | null {
+  const relativeDelta = computeKpiPercentDelta(primaryValue, comparisonValue);
   return relativeDelta === null ? null : formatSignedFixed(relativeDelta, '%');
 }
 
@@ -674,26 +1069,26 @@ export function getKpiComparisonDeltaLabel(units: string): string {
 }
 
 export function formatKpiComparisonDelta(
-  baselineValue: number | null,
+  primaryValue: number | null,
   comparisonValue: number | null,
   units: string,
   scaling?: ResultsIndicatorScaling
 ): string {
   if (
-    baselineValue === null ||
+    primaryValue === null ||
     comparisonValue === null ||
-    !Number.isFinite(baselineValue) ||
+    !Number.isFinite(primaryValue) ||
     !Number.isFinite(comparisonValue)
   ) {
     return 'n/a';
   }
 
-  const absoluteDelta = comparisonValue - baselineValue;
+  const absoluteDelta = primaryValue - comparisonValue;
   if (usesCompactFormat(scaling)) {
     const normalizedDelta = Math.abs(absoluteDelta) < KPI_BASELINE_EPSILON ? 0 : absoluteDelta;
     const sign = normalizedDelta >= 0 ? '+' : '-';
     const compact = formatCompactSignificant(Math.abs(normalizedDelta));
-    const relativeText = formatRelativeDelta(baselineValue, comparisonValue);
+    const relativeText = formatRelativeDelta(primaryValue, comparisonValue);
     const suffix = relativeText ? ` (${relativeText})` : '';
     return `${sign}${units === 'GBP' ? '£' : ''}${compact}${suffix}`;
   }
@@ -708,7 +1103,7 @@ export function formatKpiComparisonDelta(
     return formatSignedFixed(absoluteDelta, ' pp');
   }
 
-  const relativeText = formatRelativeDelta(baselineValue, comparisonValue);
+  const relativeText = formatRelativeDelta(primaryValue, comparisonValue);
   const suffix = relativeText ? ` (${relativeText})` : '';
   if (units === 'ratio') {
     return `${formatSignedFixed(absoluteDelta, 'x')}${suffix}`;

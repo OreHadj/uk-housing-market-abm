@@ -86,6 +86,27 @@ const firstStepMarkup = renderToStaticMarkup(
 assert.ok(firstStepMarkup.includes('Review and start'), 'The policy wizard should expose a fifth review step');
 assert.equal(firstStepMarkup.includes('Start policy scenario'), false, 'Submission must not appear before review');
 
+const matchingBaselineTechnicalMarkup = renderToStaticMarkup(
+  createElement(
+    MemoryRouter,
+    null,
+    createElement(ManualRunSetupCard, {
+      ...commonProps,
+      initialStep: 3,
+      lockedParameterKeys: ['N_STEPS', 'N_SIMS']
+    })
+  )
+);
+assert.ok(
+  /<input[^>]*(?:value="3500"[^>]*disabled|disabled[^>]*value="3500")/.test(matchingBaselineTechnicalMarkup) &&
+    /<input[^>]*(?:value="3"[^>]*disabled|disabled[^>]*value="3")/.test(matchingBaselineTechnicalMarkup),
+  'A matching-baseline draft should render its copied steps and seeds as disabled inputs'
+);
+assert.ok(
+  matchingBaselineTechnicalMarkup.includes('value="2"'),
+  'Other technical fields should retain their standard builder controls'
+);
+
 const unchangedReviewMarkup = renderToStaticMarkup(
   createElement(MemoryRouter, null, createElement(ManualRunSetupCard, { ...commonProps, initialStep: 4 }))
 );
@@ -97,6 +118,14 @@ assert.ok(
     unchangedReviewMarkup.includes('Run settings') &&
     unchangedReviewMarkup.includes('Recording configuration'),
   'The review should summarise the complete scenario and execution setup'
+);
+assert.ok(
+  unchangedReviewMarkup.includes(
+    'class="collapsible-section is-collapsed scenario-review-recording-settings"'
+  ) &&
+    unchangedReviewMarkup.includes('Recording configuration') &&
+    unchangedReviewMarkup.includes('aria-expanded="false"'),
+  'Recording configuration should start collapsed on the fifth review step'
 );
 assert.equal(
   (unchangedReviewMarkup.match(/scenario-policy-review-status is-unchanged/g) ?? []).length,

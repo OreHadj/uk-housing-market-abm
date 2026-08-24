@@ -83,6 +83,8 @@ const DEFAULT_RESULTS_CAP_MB = 400;
 const MANUAL_POINT_ID = 'manual';
 const MANUAL_POINT_LABEL = 'manual parameters';
 const OUTPUT_FILE_NAME = 'Output-run1.csv';
+// Multi-seed runs are normal experiments; warn only at 100x the former one-seed limit.
+export const MULTIPLE_SIMULATIONS_WARNING_LIMIT = 100;
 
 type ParameterDefinitionSeed = {
   key: string;
@@ -759,7 +761,7 @@ function createWarnings(valuesByKey: Map<string, number | boolean>): ModelRunWar
   }
 
   const nSims = Number(valuesByKey.get('N_SIMS') ?? 0);
-  if (nSims > 1) {
+  if (nSims > MULTIPLE_SIMULATIONS_WARNING_LIMIT) {
     warnings.push({
       code: 'multiple_simulations',
       message: `N_SIMS=${nSims} runs multiple simulations and may take much longer.`,

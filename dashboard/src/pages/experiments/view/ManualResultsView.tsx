@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type {
   KpiMetricSummary,
   LendingDistributionPayload,
@@ -35,46 +35,58 @@ import {
 import {
   buildLendingIndicatorAvailability,
   buildLendingKpis,
+  buildMatchingBaselineScenarioDraft,
   computeKpiDeltaValue,
+  findMatchedManualBaselineRun,
   formatKpiComparisonDelta,
   formatKpiValue,
+  formatManualComparisonCalibrationNotice,
+  formatManualComparisonMismatchWarning,
+  formatManualComparisonOptionAnnotation,
+  getManualComparisonFieldDifferences,
+  getPolicySettingDifferences,
   groupIndicatorsByPolicyQuestion,
+  isMatchedManualBaselineRun,
   isLendingKpiId,
+  MANUAL_COMPARISON_CALIBRATION_VERDICT,
+  MANUAL_COMPARISON_SETTINGS_VERDICT,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
   resolveSelectedIndicatorIds,
   sortKpis
 } from '../../../lib/manualResultsView';
-import { buildManualOverlayOption } from '../../../lib/manualOverlayChartOption';
+import {
+  buildManualOverlayOption,
+  COMPARISON_RUN_LABEL,
+  PRIMARY_RUN_LABEL
+} from '../../../lib/manualOverlayChartOption';
 import { NewLendingCard, unavailableMessage, type LendingView } from './NewLendingCard';
 import { FullRunDetailsDialog } from './FullRunDetailsDialog';
 import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
-import { formatModelName } from '../../../lib/modelAnchors';
+import { formatModelName, formatModelOptionLabel } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
+import {
+  createScenarioDraftId,
+  setActiveScenarioDraftId,
+  writeScenarioDraft
+} from '../../../lib/scenarioDraft';
 
 const PROTECTED_RESULTS_RUN_IDS = new Set(['v0-output', 'v4.0-output']);
+const SHOW_DWELLINGS_PER_HOUSEHOLD = false;
+const SHOW_NEW_LENDING_SECTION = false;
+const ANALYSIS_CUTOFF_OPTIONS = [0, 500, 1_000, 1_500, 2_000] as const;
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
 
-/**
- * The analysis window is page-wide: it is a dependency of the compare fetch, so it recomputes every
- * mean in the results table and every band in the lending card, not just the trend chart. The labels
- * live here so the page-level control and the chart's read-only restatement cannot drift apart.
- */
-const COMPARE_WINDOW_OPTIONS: Array<{ value: CompareWindow; label: string }> = [
-  { value: 'post500', label: 'After month 500' },
-  { value: 'post200', label: 'After month 200' },
-  { value: 'tail120', label: 'Latest 120 months' },
-  { value: 'full', label: 'Full run' }
-];
-
 function compareWindowLabel(window: CompareWindow): string {
-  return COMPARE_WINDOW_OPTIONS.find((option) => option.value === window)?.label ?? window;
+  if (window === 'full') return 'Full run';
+  if (window === 'tail120') return 'Latest 120 months';
+  return `After discarding the first ${Number.parseInt(window.slice(4), 10).toLocaleString('en-GB')} months`;
 }
 
 /**
@@ -197,7 +209,7 @@ function RunProvenancePills({
           {stepsDiffer && <span className="run-provenance-chip is-different">differs</span>}
         </span>
       )}
-      {provenance.dwellingsPerHousehold !== null && (
+      {SHOW_DWELLINGS_PER_HOUSEHOLD && provenance.dwellingsPerHousehold !== null && (
         <span
           className="run-provenance-pill"
           title={
@@ -247,6 +259,11 @@ function formatRunOptionLabel(run: ResultsRunSummary): string {
   return getRunPrimaryLabel(run);
 }
 
+function formatRunActionLabel(run: ResultsRunSummary): string {
+  const label = getRunPrimaryLabel(run);
+  return label === run.runId ? label : `${label} (${run.runId})`;
+}
+
 interface ManualResultsViewProps {
   canWrite: boolean;
   canDownloadResults: boolean;
@@ -275,11 +292,11 @@ function deltaClassName(): string {
 
 function deltaDirection(value: number | null): { symbol: string; label: string } {
   if (value === null || !Number.isFinite(value) || Math.abs(value) < 1e-12) {
-    return { symbol: '\u2014', label: 'No change' };
+    return { symbol: '\u2014', label: 'No difference between primary run and comparison run' };
   }
   return value > 0
-    ? { symbol: '\u2191', label: 'Increase' }
-    : { symbol: '\u2193', label: 'Decrease' };
+    ? { symbol: '\u2191', label: 'Primary run is higher than comparison run' }
+    : { symbol: '\u2193', label: 'Primary run is lower than comparison run' };
 }
 
 const QUEUE_STATUS_META: Record<ModelRunJobStatus, { label: string; className: string }> = {
@@ -331,6 +348,7 @@ export function ManualResultsView({
   onManualSelectionChange,
   sidebarSubtitle
 }: ManualResultsViewProps) {
+  const navigate = useNavigate();
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
@@ -347,7 +365,10 @@ export function ManualResultsView({
   const [runDetailsTarget, setRunDetailsTarget] = useState<ManifestTarget | null>(null);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
   const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
-  const [compareWindow, setCompareWindow] = useState<CompareWindow>('post500');
+  const [analysisCutoffMonths, setAnalysisCutoffMonths] = useState<number>(500);
+  const compareWindow: CompareWindow = analysisCutoffMonths === 0
+    ? 'full'
+    : `post${analysisCutoffMonths}` as CompareWindow;
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
   const [showBaselineTrend, setShowBaselineTrend] = useState<boolean>(true);
   const [showComparisonTrend, setShowComparisonTrend] = useState<boolean>(true);
@@ -372,6 +393,9 @@ export function ManualResultsView({
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
   const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
+  // Clearing the comparison is an explicit user choice for this primary run. Keep that choice
+  // locally so the URL's absent comparison id is not immediately reinterpreted as "choose default".
+  const [comparisonDefaultOptOutRunId, setComparisonDefaultOptOutRunId] = useState<string>('');
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
   // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
@@ -389,8 +413,11 @@ export function ManualResultsView({
   const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
 
   const resolvedSelection = useMemo(
-    () => resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId),
-    [historyRuns, requestedBaselineRunId, requestedComparisonRunId]
+    () =>
+      resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId, {
+        defaultToMatchedBaseline: comparisonDefaultOptOutRunId !== requestedBaselineRunId
+      }),
+    [comparisonDefaultOptOutRunId, historyRuns, requestedBaselineRunId, requestedComparisonRunId]
   );
   const baselineRunId = resolvedSelection.baselineRunId;
   const comparisonRunId = resolvedSelection.comparisonRunId;
@@ -400,7 +427,9 @@ export function ManualResultsView({
     [baselineRunId, comparisonRunId]
   );
   const manifestRunId = manifestTarget === 'comparison' && comparisonRunId ? comparisonRunId : baselineRunId;
-  const manifestTargetLabel = manifestTarget === 'comparison' && comparisonRunId ? 'Comparison' : 'Baseline';
+  const manifestTargetLabel = manifestTarget === 'comparison' && comparisonRunId
+    ? COMPARISON_RUN_LABEL
+    : PRIMARY_RUN_LABEL;
   const baselineVersionLabelState = useMemo(
     () => buildResultsRunVersionLabelState(baselineRunId, versions, inProgressVersions),
     [baselineRunId, inProgressVersions, versions]
@@ -775,20 +804,71 @@ export function ManualResultsView({
   };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
+  const matchedBaselineSummary = useMemo(
+    () => (baselineRunId ? findMatchedManualBaselineRun(historyRuns, baselineRunId) : null),
+    [baselineRunId, historyRuns]
+  );
+  const comparisonIsMatched = Boolean(
+    baselineSummary && comparisonSummary && isMatchedManualBaselineRun(baselineSummary, comparisonSummary)
+  );
+  const comparisonFieldDifferences = useMemo(
+    () =>
+      baselineSummary && comparisonSummary
+        ? getManualComparisonFieldDifferences(baselineSummary, comparisonSummary)
+        : [],
+    [baselineSummary, comparisonSummary]
+  );
+  const comparisonMismatchWarning = useMemo(
+    () =>
+      baselineSummary && comparisonSummary
+        ? formatManualComparisonMismatchWarning(comparisonFieldDifferences)
+        : null,
+    [baselineSummary, comparisonFieldDifferences, comparisonSummary]
+  );
+  const comparisonCalibrationNotice = useMemo(
+    () =>
+      baselineSummary && comparisonSummary
+        ? formatManualComparisonCalibrationNotice(comparisonFieldDifferences)
+        : null,
+    [baselineSummary, comparisonFieldDifferences, comparisonSummary]
+  );
+  const showMatchedBaselineSwitch = Boolean(
+    comparisonSummary && matchedBaselineSummary && !comparisonIsMatched
+  );
+  const matchingBaselineDraft = useMemo(
+    () => (baselineSummary ? buildMatchingBaselineScenarioDraft(baselineSummary) : null),
+    [baselineSummary]
+  );
+  const matchingBaselineSteps = matchingBaselineDraft
+    ? Number.parseInt(String(matchingBaselineDraft.formValues.N_STEPS ?? ''), 10)
+    : null;
+  const matchingBaselineSeeds = matchingBaselineDraft
+    ? Number.parseInt(String(matchingBaselineDraft.formValues.N_SIMS ?? ''), 10)
+    : null;
+  const configuredSteps = baselineSummary?.configuration?.parameterValues.N_STEPS;
+  const totalSimulationMonths = Math.max(
+    0,
+    Math.floor(
+      typeof configuredSteps === 'number'
+        ? configuredSteps
+        : baselineSummary?.provenance.nSteps ?? 0
+    )
+  );
+  const remainingAnalysisMonths = Math.max(0, totalSimulationMonths - analysisCutoffMonths);
   const availableIndicators = useMemo(() => baselineDetail?.indicators ?? [], [baselineDetail]);
 
   const policySettings = baselineDetail?.policySettings ?? [];
   // Collapsed, the disclosure is only worth opening if it says something. A plain count does that for
   // a single run; for a comparison the useful headline is how many settings actually differ.
-  const changedPolicyCount = useMemo(() => {
-    if (!comparisonDetail) {
-      return 0;
-    }
-    return policySettings.filter((setting) => {
-      const other = comparisonDetail.policySettings.find((item) => item.key === setting.key)?.value;
-      return other !== undefined && other !== setting.value;
-    }).length;
+  const changedPolicyKeys = useMemo(() => {
+    if (!comparisonDetail) return new Set<string>();
+    return new Set(
+      getPolicySettingDifferences(policySettings, comparisonDetail.policySettings).map(
+        (difference) => difference.key
+      )
+    );
   }, [comparisonDetail, policySettings]);
+  const changedPolicyCount = changedPolicyKeys.size;
 
   const policySettingsSummary = comparisonDetail
     ? `${changedPolicyCount} of ${policySettings.length} settings differ`
@@ -870,19 +950,6 @@ export function ManualResultsView({
     }
     return reasons;
   }, [availableIndicators, lendingIndicators]);
-  // Decision 4: the warning that matters when two runs disagree is not the scaling, which is handled
-  // per run, but the housing supply they were run at. Counts are not comparable across it.
-  const housingSupplyWarning = useMemo(() => {
-    const baseline = baselineSummary?.provenance.dwellingsPerHousehold ?? null;
-    const comparison = comparisonSummary?.provenance.dwellingsPerHousehold ?? null;
-    if (baseline === null || comparison === null || Math.abs(baseline - comparison) <= 0.0005) {
-      return null;
-    }
-    const percentGap = Math.abs(comparison / baseline - 1) * 100;
-    return `These runs were calibrated to different housing supplies: ${baseline.toFixed(3)} against ${comparison.toFixed(
-      3
-    )} dwellings per household, a gap of ${percentGap.toFixed(1)}%. Counts and tenure shares will differ for that reason alone, whatever the policy. Ratios, rates and prices are still comparable.`;
-  }, [baselineSummary, comparisonSummary]);
   const scalingConvention = useMemo(() => {
     const provenance = baselineSummary?.provenance ?? baselineDetail?.provenance ?? null;
     if (!provenance || provenance.ukHouseholds === null) {
@@ -969,10 +1036,34 @@ export function ManualResultsView({
     [onManualSelectionChange]
   );
 
+  const setComparisonSelection = useCallback(
+    (runId: string) => {
+      setComparisonDefaultOptOutRunId(runId ? '' : baselineRunId);
+      updateSelection(baselineRunId, runId);
+    },
+    [baselineRunId, updateSelection]
+  );
+
   const setBaselineSelection = (runId: string) => {
     // Deliberately leaves Run History open: selecting a run is often the first of several
     // comparisons, and collapsing the list would throw away the user's place in it.
-    updateSelection(runId, comparisonRunId === runId ? '' : comparisonRunId);
+    setComparisonDefaultOptOutRunId('');
+    updateSelection(runId, '');
+  };
+
+  const openMatchingBaselineBuilder = () => {
+    if (!matchingBaselineDraft) {
+      setLoadError('This run does not record enough setup detail to pre-fill a matching baseline.');
+      return;
+    }
+    const draftId = createScenarioDraftId();
+    writeScenarioDraft(draftId, matchingBaselineDraft);
+    setActiveScenarioDraftId(draftId);
+    const params = new URLSearchParams({
+      draft: draftId,
+      baseline: matchingBaselineDraft.calibratedModel
+    });
+    navigate(`/scenarios/new?${params.toString()}`);
   };
 
   const toggleComparisonSelection = (runId: string) => {
@@ -980,7 +1071,7 @@ export function ManualResultsView({
       return;
     }
 
-    updateSelection(baselineRunId, comparisonRunId === runId ? '' : runId);
+    setComparisonSelection(comparisonRunId === runId ? '' : runId);
   };
 
   // The KPI table reports a mean; the distribution is where a flow limit actually shows up. These
@@ -1177,9 +1268,19 @@ export function ManualResultsView({
           )}
 
           <article className="results-card manual-results-summary-card">
-            <div className="comparison-run-pickers">
-              <label>
-                <span>Selected policy run</span>
+            <div
+              className={`comparison-control-strip ${
+                comparisonCalibrationNotice ||
+                comparisonMismatchWarning ||
+                showMatchedBaselineSwitch ||
+                (baselineSummary && !matchedBaselineSummary)
+                  ? 'has-guidance'
+                  : ''
+              }`}
+            >
+              <div className="comparison-run-pickers">
+                <label>
+                <span>Primary run</span>
                 <select
                   value={baselineRunId}
                   disabled={historyRuns.length === 0}
@@ -1200,22 +1301,30 @@ export function ManualResultsView({
                     <RunProvenancePills provenance={baselineSummary.provenance} />
                   </>
                 )}
-              </label>
-              <label>
-                <span>Compare with</span>
+                </label>
+                <label>
+                <span>Comparison run</span>
                 <select
                   value={comparisonRunId}
                   disabled={!baselineRunId || historyRuns.length < 2}
-                  onChange={(event) => updateSelection(baselineRunId, event.target.value)}
+                  onChange={(event) => setComparisonSelection(event.target.value)}
                 >
-                  <option value="">No comparison</option>
+                  <option value="">No comparison run</option>
                   {historyRuns
                     .filter((run) => run.runId !== baselineRunId)
-                    .map((run) => (
-                      <option key={run.runId} value={run.runId}>
-                        {formatRunOptionLabel(run)}
-                      </option>
-                    ))}
+                    .map((run) => {
+                      const annotation = baselineSummary
+                        ? formatManualComparisonOptionAnnotation(
+                            getManualComparisonFieldDifferences(baselineSummary, run)
+                          )
+                        : '';
+                      return (
+                        <option key={run.runId} value={run.runId}>
+                          {formatRunOptionLabel(run)}
+                          {annotation ? ` — ${annotation}` : ''}
+                        </option>
+                      );
+                    })}
                 </select>
                 {comparisonSummary ? (
                   <>
@@ -1231,7 +1340,66 @@ export function ManualResultsView({
                 ) : (
                   <small>Select a run to compare values and graph lines.</small>
                 )}
-              </label>
+                </label>
+              </div>
+
+              {(comparisonCalibrationNotice ||
+                comparisonMismatchWarning ||
+                showMatchedBaselineSwitch ||
+                (baselineSummary && !matchedBaselineSummary)) && (
+                <div className="comparison-selection-guidance">
+                  {comparisonCalibrationNotice && (
+                    <div className="comparison-calibration-note" role="note">
+                      <p>
+                        <strong>{MANUAL_COMPARISON_CALIBRATION_VERDICT}.</strong>{' '}
+                        {comparisonCalibrationNotice}
+                      </p>
+                    </div>
+                  )}
+
+                  {comparisonMismatchWarning && (
+                    <div className="warning-banner comparison-mismatch-warning" role="alert">
+                      <p>
+                        <strong>{MANUAL_COMPARISON_SETTINGS_VERDICT}.</strong>{' '}
+                        {comparisonMismatchWarning}
+                      </p>
+                    </div>
+                  )}
+
+                  {showMatchedBaselineSwitch && matchedBaselineSummary && (
+                    <div className="comparison-match-suggestion">
+                      <button
+                        type="button"
+                        className="summary-link-inline summary-button-inline comparison-match-switch"
+                        onClick={() => setComparisonSelection(matchedBaselineSummary.runId)}
+                      >
+                        Use {formatRunActionLabel(matchedBaselineSummary)} instead
+                      </button>
+                    </div>
+                  )}
+
+                  {baselineSummary && !matchedBaselineSummary && (
+                    <div className="comparison-create-baseline-message">
+                      <p>
+                        <strong>
+                          No baseline run exists with the same seeds, steps, and calibration model.
+                        </strong>{' '}
+                        {matchingBaselineDraft && matchingBaselineSteps !== null && matchingBaselineSeeds !== null
+                          ? `For a better comparison, we suggest using “${formatModelOptionLabel(matchingBaselineDraft.calibratedModel)}” with ${formatWholeNumber(matchingBaselineSteps)} steps and ${formatWholeNumber(matchingBaselineSeeds)} ${matchingBaselineSeeds === 1 ? 'seed' : 'seeds'}.`
+                          : 'For a better comparison, we suggest creating a run with the same model, steps, and seeds.'}
+                      </p>
+                      <button
+                        type="button"
+                        className="primary-button comparison-create-baseline-action"
+                        disabled={!canWrite || !matchingBaselineDraft}
+                        onClick={openMatchingBaselineBuilder}
+                      >
+                        Create matching run
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {baselineDetail && policySettings.length > 0 && (
@@ -1246,7 +1414,9 @@ export function ManualResultsView({
                       run.configuration.basePolicy ?? summariseRunPolicy(run.policySettings).basePolicyId;
                     return (
                       <li key={run.runId}>
-                        <strong>{runLabel(run.runId)}</strong>
+                        <strong>
+                          {run.runId === baselineDetail.runId ? PRIMARY_RUN_LABEL : COMPARISON_RUN_LABEL}: {runLabel(run.runId)}
+                        </strong>
                         <span>model {getRunModelVersion(run) ?? 'not recorded'}</span>
                         <span>{referencePolicy ? `${referencePolicy} policy` : 'reference policy not recorded'}</span>
                       </li>
@@ -1259,9 +1429,9 @@ export function ManualResultsView({
                       <thead>
                         <tr>
                           <th>Setting</th>
-                          <th>{runLabel(baselineDetail.runId)}</th>
+                          <th>{PRIMARY_RUN_LABEL}: {runLabel(baselineDetail.runId)}</th>
                           {comparisonDetail && (
-                            <th>{runLabel(comparisonDetail.runId)}</th>
+                            <th>{COMPARISON_RUN_LABEL}: {runLabel(comparisonDetail.runId)}</th>
                           )}
                         </tr>
                       </thead>
@@ -1273,7 +1443,7 @@ export function ManualResultsView({
                           const comparisonValue = comparisonDetail?.policySettings.find(
                             (item) => item.key === setting.key
                           )?.value;
-                          const differs = comparisonValue !== undefined && comparisonValue !== setting.value;
+                          const differs = changedPolicyKeys.has(setting.key);
                           return (
                             <tr key={setting.key} className={differs ? 'policy-settings-row-changed' : undefined}>
                               <th scope="row" title={setting.key}>
@@ -1320,32 +1490,38 @@ export function ManualResultsView({
               )}
               {renderDownloadAction(
                 baselineRunId,
-                comparisonRunId ? 'Download primary raw files' : 'Download raw run files'
+                comparisonRunId ? 'Download primary run raw files' : 'Download raw run files'
               )}
-              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison raw files')}
+              {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison run raw files')}
             </div>
 
-            {housingSupplyWarning && <p className="warning-banner">{housingSupplyWarning}</p>}
             {scalingConvention && <p className="results-scaling-convention">{scalingConvention}</p>}
 
             <div className="results-analysis-window">
-              <label>
-                <span>Analysis window</span>
-                <select
-                  value={compareWindow}
-                  onChange={(event) => setCompareWindow(event.target.value as CompareWindow)}
-                >
-                  {COMPARE_WINDOW_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <small>
-                Applies to this whole page. Every mean, change and distribution below is computed over
-                the months in this window.
-              </small>
+              <p
+                className="results-analysis-window-intro"
+                title="A longer warm-up can reduce sensitivity to the model's starting state, but leaves fewer months for analysis."
+              >
+                <strong>Warm-up period</strong> — we suggest discarding at least the first 500 months, since the model starts from an artificial state and takes time to settle. In the paper, 2,000 months are discarded when 10,000 steps are used.
+              </p>
+              <div className="results-analysis-window-control">
+                <label>
+                  <span>Discard the first</span>
+                  <select
+                    value={analysisCutoffMonths}
+                    onChange={(event) => {
+                      setAnalysisCutoffMonths(Number.parseInt(event.target.value, 10));
+                    }}
+                  >
+                    {ANALYSIS_CUTOFF_OPTIONS.map((months) => (
+                      <option key={months} value={months}>{months.toLocaleString('en-GB')}</option>
+                    ))}
+                  </select>
+                  <span>months</span>
+                </label>
+                <span aria-live="polite">· {formatWholeNumber(remainingAnalysisMonths)} months remain</span>
+                <span>· applies to this page</span>
+              </div>
             </div>
           </article>
 
@@ -1401,9 +1577,13 @@ export function ManualResultsView({
                     <thead>
                       <tr>
                         <th scope="col">Indicator</th>
-                        <th scope="col">{mode === 'compare' ? 'Baseline' : 'Mean for a single run'}</th>
-                        {mode === 'compare' && <th scope="col">Comparison</th>}
-                        {mode === 'compare' && <th scope="col">Change</th>}
+                        <th scope="col">{mode === 'compare' ? PRIMARY_RUN_LABEL : 'Mean for a single run'}</th>
+                        {mode === 'compare' && <th scope="col">{COMPARISON_RUN_LABEL}</th>}
+                        {mode === 'compare' && (
+                          <th scope="col">
+                            Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL} ({comparisonIsMatched ? 'matched' : 'unmatched'})
+                          </th>
+                        )}
                         <th scope="col">Trend</th>
                       </tr>
                     </thead>
@@ -1503,7 +1683,7 @@ export function ManualResultsView({
                                             View trend
                                           </button>
                                         )}
-                                        {LENDING_METRIC_BY_INDICATOR[kpi.indicatorId] && (
+                                        {SHOW_NEW_LENDING_SECTION && LENDING_METRIC_BY_INDICATOR[kpi.indicatorId] && (
                                           <button
                                             type="button"
                                             className="policy-trend-link"
@@ -1602,14 +1782,14 @@ export function ManualResultsView({
                           baselineRunId,
                           comparisonRunId,
                           {
-                            Baseline: showBaselineTrend,
-                            Comparison: showComparisonTrend
+                            [PRIMARY_RUN_LABEL]: showBaselineTrend,
+                            [COMPARISON_RUN_LABEL]: showComparisonTrend
                           }
                         )}
                         className="trend-modal-chart"
                         onLegendSelectionChange={(selected) => {
-                          setShowBaselineTrend(selected.Baseline ?? showBaselineTrend);
-                          setShowComparisonTrend(selected.Comparison ?? showComparisonTrend);
+                          setShowBaselineTrend(selected[PRIMARY_RUN_LABEL] ?? showBaselineTrend);
+                          setShowComparisonTrend(selected[COMPARISON_RUN_LABEL] ?? showComparisonTrend);
                         }}
                       />
                     )}
@@ -1619,18 +1799,20 @@ export function ManualResultsView({
             </div>
           )}
 
-          <NewLendingCard
-            baseline={lendingBaseline}
-            comparison={lendingComparison}
-            isLoading={isLoadingLending}
-            error={lendingError}
-            activeView={lendingView}
-            onViewChange={setLendingView}
-            activeMetric={lendingMetric}
-            onMetricChange={setLendingMetric}
-            open={isLendingExpanded}
-            onOpenChange={setIsLendingExpanded}
-          />
+          {SHOW_NEW_LENDING_SECTION && (
+            <NewLendingCard
+              baseline={lendingBaseline}
+              comparison={lendingComparison}
+              isLoading={isLoadingLending}
+              error={lendingError}
+              activeView={lendingView}
+              onViewChange={setLendingView}
+              activeMetric={lendingMetric}
+              onMetricChange={setLendingMetric}
+              open={isLendingExpanded}
+              onOpenChange={setIsLendingExpanded}
+            />
+          )}
 
           <CollapsibleSection
             className="results-card run-history-card"
@@ -1733,8 +1915,8 @@ export function ManualResultsView({
                               )}
                             </div>
                             <div className="run-role-chips">
-                              {isBaselineSelected && <span className="run-role-chip">Primary</span>}
-                              {isComparisonSelected && <span className="run-role-chip comparison">Comparison</span>}
+                              {isBaselineSelected && <span className="run-role-chip">Primary run</span>}
+                              {isComparisonSelected && <span className="run-role-chip comparison">Comparison run</span>}
                             </div>
                           </div>
 
@@ -1744,7 +1926,7 @@ export function ManualResultsView({
                               className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
                               onClick={() => setBaselineSelection(run.runId)}
                             >
-                              {isBaselineSelected ? 'Primary selected' : 'Set primary'}
+                              {isBaselineSelected ? 'Primary run selected' : 'Set as primary run'}
                             </button>
                             <button
                               type="button"
@@ -1752,7 +1934,7 @@ export function ManualResultsView({
                               onClick={() => toggleComparisonSelection(run.runId)}
                               disabled={!baselineRunId || isBaselineSelected}
                             >
-                              {isComparisonSelected ? 'Clear comparison' : 'Set comparison'}
+                              {isComparisonSelected ? 'Clear comparison run' : 'Set as comparison run'}
                             </button>
                             {canWrite && renamingRunId !== run.runId && (
                               <button
@@ -1881,14 +2063,14 @@ export function ManualResultsView({
                     className={`filter-pill ${manifestTarget === 'baseline' ? 'active' : ''}`}
                     onClick={() => setManifestTarget('baseline')}
                   >
-                    Baseline
+                    Primary run
                   </button>
                   <button
                     type="button"
                     className={`filter-pill ${manifestTarget === 'comparison' ? 'active' : ''}`}
                     onClick={() => setManifestTarget('comparison')}
                   >
-                    Comparison
+                    Comparison run
                   </button>
                 </div>
               )}

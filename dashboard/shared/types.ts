@@ -517,8 +517,22 @@ export interface ResultsIndicatorMeta {
 }
 
 export type KpiMetricKey = 'mean' | 'cv' | 'annualisedTrend' | 'range';
-export type KpiMetricWindowType = 'post_500' | 'post_200' | 'tail_120' | 'full';
-export type ResultsCompareWindow = 'post500' | 'post200' | 'tail120' | 'full';
+export type KpiMetricWindowType =
+  | 'post_200'
+  | 'post_500'
+  | 'post_1000'
+  | 'post_1500'
+  | 'post_2000'
+  | 'tail_120'
+  | 'full';
+export type ResultsCompareWindow =
+  | 'post200'
+  | 'post500'
+  | 'post1000'
+  | 'post1500'
+  | 'post2000'
+  | 'tail120'
+  | 'full';
 
 export interface KpiMetricValues {
   mean: number | null;
@@ -594,6 +608,12 @@ export interface ResultsRunSummary {
   policySettings: ResultsPolicySetting[];
   /** Fields are null individually when the run's config does not record them. */
   provenance: ResultsRunProvenance;
+  /**
+   * Included in the list payload so the client can resolve a parameter-matched policy baseline
+   * before fetching either run's heavier KPI detail. Optional only for compatibility with older
+   * remote/list payloads; missing comparison metadata must never be treated as a match.
+   */
+  configuration?: ResultsRunConfiguration;
 }
 
 export type ResultsRunConfigurationValue = number | boolean | string;

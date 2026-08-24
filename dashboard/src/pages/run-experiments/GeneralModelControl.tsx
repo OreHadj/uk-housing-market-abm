@@ -13,6 +13,7 @@ interface GeneralModelControlProps {
   parameters: ModelRunParameterDefinition[];
   formValues: Record<string, FormValue>;
   executionDisabled: boolean;
+  disabledParameterKeys?: readonly string[];
   onFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
   maxWorkers?: string;
   maxWorkersCap?: number;
@@ -99,6 +100,7 @@ export function GeneralModelControl({
   parameters,
   formValues,
   executionDisabled,
+  disabledParameterKeys = [],
   onFormValueChange,
   maxWorkers,
   maxWorkersCap,
@@ -109,6 +111,7 @@ export function GeneralModelControl({
   includeFixedControls = false,
   embedded = false
 }: GeneralModelControlProps) {
+  const disabledKeys = new Set(disabledParameterKeys);
   const visibleParameters = parameters
     .filter((parameter) =>
       includeFixedControls
@@ -137,7 +140,7 @@ export function GeneralModelControl({
             key={parameter.key}
             parameter={parameter}
             value={formValues[parameter.key]}
-            executionDisabled={executionDisabled}
+            executionDisabled={executionDisabled || disabledKeys.has(parameter.key)}
             mode={mode}
             onChange={onFormValueChange}
           />
@@ -163,7 +166,7 @@ export function GeneralModelControl({
             key={parameter.key}
             parameter={parameter}
             value={formValues[parameter.key]}
-            executionDisabled={executionDisabled}
+            executionDisabled={executionDisabled || disabledKeys.has(parameter.key)}
             mode={mode}
             onChange={onFormValueChange}
           />

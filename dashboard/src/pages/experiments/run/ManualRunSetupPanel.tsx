@@ -32,6 +32,7 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled, initialSce
       parameters={controller.options?.parameters ?? []}
       policyParameters={controller.policyParameters}
       formValues={controller.formValues}
+      lockedParameterKeys={controller.manualLockedParameterKeys}
       onFormValueChange={controller.onFormValueChange}
       maxWorkers={controller.manualMaxWorkers}
       maxWorkersCap={controller.maxWorkersCap}

@@ -28,7 +28,11 @@ import type {
   SensitivityPolicyPackageDefinition,
   ExperimentProgressSnapshot
 } from '../../shared/types';
-import { getModelRunOptions, listModelRunJobs } from './modelRuns';
+import {
+  MULTIPLE_SIMULATIONS_WARNING_LIMIT,
+  getModelRunOptions,
+  listModelRunJobs
+} from './modelRuns';
 import {
   getBasePolicyOption,
   getDefaultBasePolicyId,
@@ -1121,7 +1125,7 @@ function createWarnings(
   }
 
   const nSims = Number(valuesByKey.get('N_SIMS') ?? 0);
-  if (nSims > 1) {
+  if (nSims > MULTIPLE_SIMULATIONS_WARNING_LIMIT) {
     warnings.push({
       code: 'multiple_simulations',
       message: `Seeds per sampled point=${nSims} runs multiple independent seed processes and may take much longer.`,

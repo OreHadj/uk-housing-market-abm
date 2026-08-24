@@ -190,7 +190,8 @@ try {
     {
       [SALE_FILE]: [
         { ...BASE_ROWS[0], modelTime: 100 },
-        { ...BASE_ROWS[1], modelTime: 600 }
+        { ...BASE_ROWS[1], modelTime: 600 },
+        { ...BASE_ROWS[1], modelTime: 1600 }
       ]
     },
     ['TIME_TO_START_RECORDING_TRANSACTIONS = 0', 'recordTransactions = true']
@@ -199,7 +200,12 @@ try {
   check('post500 is honoured when recording starts early', biting.window.effective, 'post500');
   check('no clamp reported', biting.window.clamped, false);
   check('window starts at the cutoff', biting.window.startModelTime, 500);
-  check('rows before the cutoff are dropped', biting.counts.mortgaged, 1);
+  check('rows before the cutoff are dropped', biting.counts.mortgaged, 2);
+
+  const bitingLong = getLendingDistribution(fixturePaths, 'fixture-early', 'post1500');
+  check('post1500 is honoured when recording starts early', bitingLong.window.effective, 'post1500');
+  check('post1500 starts at the requested cutoff', bitingLong.window.startModelTime, 1500);
+  check('post1500 drops earlier rows', bitingLong.counts.mortgaged, 1);
 
   console.log('\n=== fixture: seed pooling ===');
   // Multi-seed runs merge only Output-run1.csv and the coreIndicator files to the run root, so the

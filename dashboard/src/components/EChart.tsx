@@ -1,14 +1,15 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import * as echarts from 'echarts';
 
 interface EChartProps {
   option: echarts.EChartsOption;
   className?: string;
+  style?: CSSProperties;
   onClick?: (params: unknown) => void;
   onLegendSelectionChange?: (selected: Record<string, boolean>) => void;
 }
 
-export function EChart({ option, className, onClick, onLegendSelectionChange }: EChartProps) {
+export function EChart({ option, className, style, onClick, onLegendSelectionChange }: EChartProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
 
@@ -20,15 +21,24 @@ export function EChart({ option, className, onClick, onLegendSelectionChange }: 
     const instance = echarts.init(containerRef.current);
     instanceRef.current = instance;
     instance.setOption(option);
-    instance.resize();
+    let resizeFrame = 0;
+    const scheduleResize = () => {
+      window.cancelAnimationFrame(resizeFrame);
+      resizeFrame = window.requestAnimationFrame(() => instance.resize());
+    };
+    scheduleResize();
 
-    const resizeHandler = () => instance.resize();
+    const resizeHandler = () => scheduleResize();
     window.addEventListener('resize', resizeHandler);
-    const observer = new ResizeObserver(() => instance.resize());
+    const observer = new ResizeObserver(scheduleResize);
     observer.observe(containerRef.current);
+    if (containerRef.current.parentElement) {
+      observer.observe(containerRef.current.parentElement);
+    }
 
     return () => {
       window.removeEventListener('resize', resizeHandler);
+      window.cancelAnimationFrame(resizeFrame);
       observer.disconnect();
       instance.dispose();
       instanceRef.current = null;
@@ -36,7 +46,13 @@ export function EChart({ option, className, onClick, onLegendSelectionChange }: 
   }, []);
 
   useEffect(() => {
-    instanceRef.current?.setOption(option, true);
+    const instance = instanceRef.current;
+    if (!instance) {
+      return;
+    }
+    instance.setOption(option, true);
+    const resizeFrame = window.requestAnimationFrame(() => instance.resize());
+    return () => window.cancelAnimationFrame(resizeFrame);
   }, [option]);
 
   useEffect(() => {
@@ -75,5 +91,5 @@ export function EChart({ option, className, onClick, onLegendSelectionChange }: 
     };
   }, [onLegendSelectionChange]);
 
-  return <div ref={containerRef} className={className ?? 'chart'} />;
+  return <div ref={containerRef} className={className ?? 'chart'} style={style} />;
 }

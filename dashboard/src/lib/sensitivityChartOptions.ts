@@ -1,7 +1,16 @@
 // Author: Max Stoddard
 import type { EChartsOption } from 'echarts';
-import type { KpiMetricKey, SensitivityDeltaTrendSeries } from '../../shared/types';
+import type {
+  KpiMetricKey,
+  SensitivityDeltaTrendSeries,
+  SensitivityExperimentChartsPayload
+} from '../../shared/types';
 import { KPI_LABELS } from './kpiLabels';
+import {
+  formatResultsAxisTick,
+  resultsValueAxisNameGap,
+  wrapResultsAxisName
+} from './resultsChartLayout';
 
 interface AxisDomain {
   min: number;
@@ -55,16 +64,26 @@ export function buildDeltaTrendOption(
       }
     },
     grid: {
-      left: 80,
-      right: 24,
-      top: 20,
-      bottom: 48
+      left: 18,
+      right: 22,
+      top: 24,
+      bottom: 72,
+      containLabel: true
     },
     xAxis: {
       type: 'value',
-      name: parameterTitle,
-      nameGap: 30,
+      name: wrapResultsAxisName(parameterTitle),
+      nameGap: 34,
       nameLocation: 'middle',
+      nameTextStyle: {
+        lineHeight: 14,
+        align: 'center'
+      },
+      axisLabel: {
+        hideOverlap: true,
+        margin: 10,
+        formatter: formatResultsAxisTick
+      },
       scale: true,
       ...xDomain
     },
@@ -72,7 +91,15 @@ export function buildDeltaTrendOption(
       type: 'value',
       name: `% diff ${KPI_LABELS[kpi]?.short ?? kpi}`,
       nameLocation: 'middle',
-      nameGap: 48,
+      nameGap: resultsValueAxisNameGap(chartData.map((point) => point[1])),
+      nameTextStyle: {
+        fontWeight: 600
+      },
+      axisLabel: {
+        hideOverlap: true,
+        margin: 10,
+        formatter: formatResultsAxisTick
+      },
       scale: true,
       ...yDomain
     },
@@ -82,6 +109,74 @@ export function buildDeltaTrendOption(
         showSymbol: true,
         connectNulls: false,
         data: chartData
+      }
+    ]
+  };
+}
+
+export function buildSensitivityTornadoOption(
+  bars: SensitivityExperimentChartsPayload['tornado'],
+  kpi: KpiMetricKey
+): EChartsOption {
+  const sorted = [...bars].sort((left, right) => {
+    const leftValue = left.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
+    const rightValue = right.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
+    return rightValue - leftValue;
+  });
+  const values = sorted.map((item) => item.maxAbsDeltaByKpi[kpi]);
+
+  return {
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      valueFormatter: (value: unknown) => {
+        if (typeof value !== 'number' || Number.isNaN(value)) {
+          return 'n/a';
+        }
+        return `${value.toLocaleString('en-GB', { maximumFractionDigits: 6 })}%`;
+      }
+    },
+    grid: {
+      left: 16,
+      right: 24,
+      top: 16,
+      bottom: 58,
+      containLabel: true
+    },
+    xAxis: {
+      type: 'value',
+      name: `Max |% diff ${KPI_LABELS[kpi]?.short ?? kpi}|`,
+      nameLocation: 'middle',
+      nameGap: 36,
+      nameTextStyle: {
+        fontWeight: 600
+      },
+      axisLabel: {
+        hideOverlap: true,
+        margin: 10,
+        formatter: formatResultsAxisTick
+      }
+    },
+    yAxis: {
+      type: 'category',
+      inverse: true,
+      data: sorted.map((item) => item.title),
+      axisLabel: {
+        interval: 0,
+        width: 180,
+        overflow: 'break',
+        lineHeight: 14,
+        margin: 12,
+        fontSize: 11
+      }
+    },
+    series: [
+      {
+        type: 'bar',
+        data: values,
+        itemStyle: {
+          color: '#0b7285'
+        }
       }
     ]
   };

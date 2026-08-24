@@ -1,9 +1,12 @@
 // Author: Max Stoddard
 import type { EChartsOption } from 'echarts';
 import type { ResultsCompareIndicator, ResultsCompareSeries } from '../../shared/types';
+import { formatResultsAxisTick, resultsValueAxisNameGap } from './resultsChartLayout';
 
 export const BASELINE_COLOR = '#0b7285';
 export const COMPARISON_COLOR = '#18958b';
+export const PRIMARY_RUN_LABEL = 'Primary run';
+export const COMPARISON_RUN_LABEL = 'Comparison run';
 const FALLBACK_COLOR = '#495057';
 
 function formatOverlayValue(value: number, units: string): string {
@@ -21,10 +24,10 @@ function formatOverlayValue(value: number, units: string): string {
 
 function getRunRoleLabel(runId: string, baselineRunId: string, comparisonRunId: string): string {
   if (runId === baselineRunId) {
-    return 'Baseline';
+    return PRIMARY_RUN_LABEL;
   }
   if (comparisonRunId && runId === comparisonRunId) {
-    return 'Comparison';
+    return COMPARISON_RUN_LABEL;
   }
   return runId;
 }
@@ -58,6 +61,9 @@ export function buildManualOverlayOption(
   selectedSeries?: Record<string, boolean>
 ): EChartsOption {
   const xValues = indicatorPayload.seriesByRun[0]?.points.map((point) => String(point.modelTime)) ?? [];
+  const yValues = indicatorPayload.seriesByRun.flatMap((runSeries) =>
+    runSeries.points.map((point) => point.value)
+  );
   const meanBySeriesName = new Map<string, number>();
 
   const series = indicatorPayload.seriesByRun.map((runSeries) => {
@@ -132,21 +138,27 @@ export function buildManualOverlayOption(
     },
     legend: {
       top: 4,
+      left: 'center',
+      right: 16,
+      type: 'scroll',
       selected: selectedSeries
     },
     grid: {
-      left: 72,
-      right: 20,
-      top: 48,
-      bottom: 42
+      left: 18,
+      right: 24,
+      top: 52,
+      bottom: 56,
+      containLabel: true
     },
     xAxis: {
       type: 'category',
       data: xValues,
       name: 'Model Time (months)',
       nameLocation: 'middle',
-      nameGap: 30,
+      nameGap: 34,
       axisLabel: {
+        hideOverlap: true,
+        margin: 10,
         formatter: (value: string, index: number) => {
           return index % 120 === 0 ? value : '';
         }
@@ -156,7 +168,15 @@ export function buildManualOverlayOption(
       type: 'value',
       name: indicatorPayload.indicator.units,
       nameLocation: 'middle',
-      nameGap: 52,
+      nameGap: resultsValueAxisNameGap(yValues),
+      nameTextStyle: {
+        fontWeight: 600
+      },
+      axisLabel: {
+        hideOverlap: true,
+        margin: 10,
+        formatter: formatResultsAxisTick
+      },
       scale: true
     },
     series

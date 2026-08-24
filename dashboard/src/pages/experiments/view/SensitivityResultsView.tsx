@@ -22,7 +22,10 @@ import {
   isRetryableApiError
 } from '../../../lib/api';
 import { KPI_LABELS, SELECTABLE_KPI_KEYS } from '../../../lib/kpiLabels';
-import { buildDeltaTrendOption } from '../../../lib/sensitivityChartOptions';
+import {
+  buildDeltaTrendOption,
+  buildSensitivityTornadoOption
+} from '../../../lib/sensitivityChartOptions';
 import { BASE_POLICY_OPTIONS, CENTRAL_BANK_POLICY_KEYS } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { formatModelOptionLabel } from '../../../lib/modelAnchors';
@@ -189,53 +192,7 @@ function isComparableBar(bar: SensitivityExperimentChartsPayload['tornado'][numb
 }
 
 function buildTornadoOption(bars: SensitivityExperimentChartsPayload['tornado'], kpi: KpiMetricKey): EChartsOption {
-  const sorted = [...bars].sort((left, right) => {
-    const leftValue = left.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
-    const rightValue = right.maxAbsDeltaByKpi[kpi] ?? Number.NEGATIVE_INFINITY;
-    return rightValue - leftValue;
-  });
-
-  return {
-    animation: false,
-    tooltip: {
-      trigger: 'axis',
-      valueFormatter: (value: unknown) => {
-        if (typeof value !== 'number' || Number.isNaN(value)) {
-          return 'n/a';
-        }
-        return `${value.toLocaleString('en-GB', { maximumFractionDigits: 6 })}%`;
-      }
-    },
-    grid: {
-      left: 80,
-      right: 24,
-      top: 20,
-      bottom: 160
-    },
-    xAxis: {
-      type: 'category',
-      axisLabel: {
-        interval: 0,
-        rotate: 45
-      },
-      data: sorted.map((item) => item.title)
-    },
-    yAxis: {
-      type: 'value',
-      name: `Max |% diff ${KPI_LABELS[kpi]?.short ?? kpi}|`,
-      nameGap: 42,
-      nameLocation: 'middle'
-    },
-    series: [
-      {
-        type: 'bar',
-        data: sorted.map((item) => item.maxAbsDeltaByKpi[kpi]),
-        itemStyle: {
-          color: '#0b7285'
-        }
-      }
-    ]
-  };
+  return buildSensitivityTornadoOption(bars, kpi);
 }
 
 /**
@@ -500,8 +457,7 @@ export function SensitivityResultsView({
       {pageError && <p className="error-banner">{pageError}</p>}
 
       <article className="results-card sensitivity-summary-card">
-        <div className="results-card-head">
-          <h2>{selectedExperiment ? selectedExperiment.title || selectedExperiment.experimentId : 'Sensitivity run'}</h2>
+        <div className="results-card-head sensitivity-summary-actions">
           {detail && (
             !canDownloadResults ? (
               authEnabled ? (
@@ -651,137 +607,179 @@ export function SensitivityResultsView({
       </article>
 
       <div className="results-main">
-          {charts && (
-            <CollapsibleSection
-              className="results-card sensitivity-response-card"
-              title="Outcome responses"
-              description="Which indicators respond most across the tested range, and how the selected one moves."
-              defaultOpen={false}
+        {(charts || results) && (
+          <CollapsibleSection
+            className="results-card sensitivity-response-card sensitivity-tested-values-card"
+            title="Outcome responses and results by tested value"
+            description="See which indicators respond most, how the selected outcome moves, and the values behind that response."
+            summary={selectedIndicatorTitle}
+            defaultOpen={false}
+          >
+            <aside
+              className="info-banner sensitivity-interpretation-callout"
+              role="note"
+              aria-labelledby="sensitivity-interpretation-heading"
             >
-              <div className="sensitivity-trend-header">
-                <div>
-                  <h3>Largest outcome responses</h3>
-                  <p>
-                    Ranks indicators by their largest absolute percentage difference from the baseline policy
-                    anywhere in the tested range. Direction is shown in the response chart below.
+              <h3 id="sensitivity-interpretation-heading">How to interpret and use these results</h3>
+              <p>
+                Sensitivity analysis varies one policy setting while holding the others fixed. Choose Mean for the
+                typical monthly level, Volatility for relative month-to-month variation, or Dispersion for the gap
+                between the 95th and 5th percentiles.
+              </p>
+              <ol>
+                <li>
+                  <strong>Find the strongest responses.</strong> Use Largest outcome responses to identify which
+                  outcomes changed most. Bars show size, not direction.
+                </li>
+                <li>
+                  <strong>Check the direction.</strong> Use Response across policy values to see whether the selected
+                  outcome rises or falls relative to baseline. Zero means no change, positive means higher, and
+                  negative means lower.
+                </li>
+                <li>
+                  <strong>Verify the values.</strong> Use Results by tested value for the exact raw measures and signed
+                  percentage differences. Confirm that Status says succeeded; n/a means unavailable, not zero.
+                </li>
+              </ol>
+            </aside>
+            {charts && (
+              <>
+                <div className="sensitivity-trend-header">
+                  <div>
+                    <h3>Largest outcome responses</h3>
+                    <p>
+                      Ranks indicators by their largest absolute percentage difference from the baseline policy
+                      anywhere in the tested range. Direction is shown in the response chart below.
+                    </p>
+                  </div>
+                  <label>
+                    Outcome measure
+                    <select
+                      value={selectedKpiKey}
+                      onChange={(event) => setSelectedKpiKey(event.target.value as KpiMetricKey)}
+                    >
+                      {KPI_OPTIONS.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {comparableTornadoBars.length === 0 ? (
+                  <p className="info-banner">
+                    No indicator can be compared with the baseline policy on this measure. The baseline policy values
+                    sit too close to zero for a percentage difference to be meaningful.
                   </p>
+                ) : (
+                  <EChart
+                    className="validation-chart sensitivity-tornado-chart"
+                    style={{ height: `${Math.max(420, comparableTornadoBars.length * 34 + 96)}px` }}
+                    option={buildTornadoOption(comparableTornadoBars, selectedKpiKey)}
+                  />
+                )}
+
+                {incomparableTornadoTitles.length > 0 && (
+                  <p className="info-banner">
+                    Not ranked ({incomparableTornadoTitles.length}): {incomparableTornadoTitles.join(', ')}. The
+                    baseline policy value for these sits near zero relative to their own variation, so a percentage
+                    difference would be dominated by the denominator rather than by the policy. Compare them on the
+                    raw values in the table below instead.
+                  </p>
+                )}
+
+                <div className="sensitivity-trend-header">
+                  <div>
+                    <h3>Response across policy values</h3>
+                    <p>
+                      Shows the direction and size of the selected outcome&apos;s difference from the baseline policy.
+                    </p>
+                  </div>
+                  <label>
+                    Indicator
+                    <select
+                      value={selectedIndicatorId}
+                      onChange={(event) => setSelectedIndicatorId(event.target.value)}
+                    >
+                      {charts.deltaTrend.map((series) => (
+                        <option key={series.indicatorId} value={series.indicatorId}>
+                          {series.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 </div>
-                <label>
-                  Outcome measure
-                  <select
-                    value={selectedKpiKey}
-                    onChange={(event) => setSelectedKpiKey(event.target.value as KpiMetricKey)}
-                  >
-                    {KPI_OPTIONS.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
 
-              {comparableTornadoBars.length === 0 ? (
-                <p className="info-banner">
-                  No indicator can be compared with the baseline policy on this measure. The baseline policy values
-                  sit too close to zero for a percentage difference to be meaningful.
-                </p>
-              ) : (
-                <EChart className="validation-chart" option={buildTornadoOption(comparableTornadoBars, selectedKpiKey)} />
-              )}
+                {activeDeltaSeries ? (
+                  <EChart
+                    className="validation-chart"
+                    option={buildDeltaTrendOption(activeDeltaSeries, charts.parameter.title, selectedKpiKey)}
+                  />
+                ) : (
+                  <p className="info-banner">No trend data available.</p>
+                )}
+              </>
+            )}
 
-              {incomparableTornadoTitles.length > 0 && (
-                <p className="info-banner">
-                  Not ranked ({incomparableTornadoTitles.length}): {incomparableTornadoTitles.join(', ')}. The
-                  baseline policy value for these sits near zero relative to their own variation, so a percentage
-                  difference would be dominated by the denominator rather than by the policy. Compare them on the raw
-                  values in the table below instead.
-                </p>
-              )}
-
-              <div className="sensitivity-trend-header">
-                <div>
-                  <h3>Response across policy values</h3>
-                  <p>Shows the direction and size of the selected outcome&apos;s difference from the baseline policy.</p>
+            {results && (
+              <section
+                className="sensitivity-tested-values-section"
+                aria-labelledby="sensitivity-tested-values-heading"
+              >
+                <div className="sensitivity-trend-header">
+                  <div>
+                    <h3 id="sensitivity-tested-values-heading">Results by tested value</h3>
+                    <p>{selectedIndicatorTitle}</p>
+                  </div>
                 </div>
-                <label>
-                  Indicator
-                  <select
-                    value={selectedIndicatorId}
-                    onChange={(event) => setSelectedIndicatorId(event.target.value)}
-                  >
-                    {charts.deltaTrend.map((series) => (
-                      <option key={series.indicatorId} value={series.indicatorId}>
-                        {series.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              {activeDeltaSeries ? (
-                <EChart
-                  className="validation-chart"
-                  option={buildDeltaTrendOption(activeDeltaSeries, charts.parameter.title, selectedKpiKey)}
-                />
-              ) : (
-                <p className="info-banner">No trend data available.</p>
-              )}
-            </CollapsibleSection>
-          )}
-
-          {results && (
-            <CollapsibleSection
-              className="results-card sensitivity-tested-values-card"
-              title="Results by tested value"
-              summary={selectedIndicatorTitle}
-              defaultOpen={false}
-            >
-              {selectedIndicatorMetricByPoint.length === 0 ? (
-                <p className="info-banner">No executed points yet.</p>
-              ) : (
-                <div className="sensitivity-table-wrap">
-                  <table className="sensitivity-point-table">
-                    <thead>
-                      <tr>
-                        <th>Point</th>
-                        <th>Value</th>
-                        <th>Status</th>
-                        {SELECTABLE_KPI_KEYS.map((key) => (
-                          <Fragment key={key}>
-                            <th title={KPI_LABELS[key].label}>{KPI_LABELS[key].short}</th>
-                            <th title={`Percentage difference from the baseline policy — ${KPI_LABELS[key].label}`}>
-                              % diff {KPI_LABELS[key].short}
-                            </th>
-                          </Fragment>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedIndicatorMetricByPoint.map(({ point, metric }) => {
-                        const values = metric as SensitivityIndicatorPointMetric | null;
-                        return (
-                          <tr key={point.pointId}>
-                            <td>{point.label}</td>
-                            <td>{formatPointValue(point.value, point.valuesByKey)}</td>
-                            <td>
-                              <span className={statusClass(point.status)}>{formatStatus(point.status)}</span>
-                            </td>
-                            {SELECTABLE_KPI_KEYS.map((key) => (
-                              <Fragment key={key}>
-                                <td>{formatMetric(values?.kpi[key] ?? null)}</td>
-                                <td>{formatSignedPercent(values?.deltaFromBaseline[key] ?? null)}</td>
-                              </Fragment>
-                            ))}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </CollapsibleSection>
-          )}
+                {selectedIndicatorMetricByPoint.length === 0 ? (
+                  <p className="info-banner">No executed points yet.</p>
+                ) : (
+                  <div className="sensitivity-table-wrap">
+                    <table className="sensitivity-point-table">
+                      <thead>
+                        <tr>
+                          <th>Point</th>
+                          <th>Value</th>
+                          <th>Status</th>
+                          {SELECTABLE_KPI_KEYS.map((key) => (
+                            <Fragment key={key}>
+                              <th title={KPI_LABELS[key].label}>{KPI_LABELS[key].short}</th>
+                              <th title={`Percentage difference from the baseline policy — ${KPI_LABELS[key].label}`}>
+                                % diff {KPI_LABELS[key].short}
+                              </th>
+                            </Fragment>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedIndicatorMetricByPoint.map(({ point, metric }) => {
+                          const values = metric as SensitivityIndicatorPointMetric | null;
+                          return (
+                            <tr key={point.pointId}>
+                              <td>{point.label}</td>
+                              <td>{formatPointValue(point.value, point.valuesByKey)}</td>
+                              <td>
+                                <span className={statusClass(point.status)}>{formatStatus(point.status)}</span>
+                              </td>
+                              {SELECTABLE_KPI_KEYS.map((key) => (
+                                <Fragment key={key}>
+                                  <td>{formatMetric(values?.kpi[key] ?? null)}</td>
+                                  <td>{formatSignedPercent(values?.deltaFromBaseline[key] ?? null)}</td>
+                                </Fragment>
+                              ))}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+          </CollapsibleSection>
+        )}
       </div>
 
       <CollapsibleSection

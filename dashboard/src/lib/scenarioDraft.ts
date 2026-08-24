@@ -17,6 +17,8 @@ export interface ScenarioDraftV1 {
   basePolicy: BasePolicyId;
   formValues: Record<string, FormValue>;
   maxWorkers: string;
+  /** Builder fields fixed by the workflow that created this draft. Ordinary drafts omit it. */
+  lockedParameterKeys?: string[];
 }
 
 export interface RestoredScenarioDraft {
@@ -39,6 +41,9 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
     if (!parsed || parsed.version !== 1 || typeof parsed.title !== 'string' || typeof parsed.calibratedModel !== 'string') {
       return null;
     }
+    const lockedParameterKeys = Array.isArray(parsed.lockedParameterKeys)
+      ? parsed.lockedParameterKeys.filter((key): key is string => typeof key === 'string')
+      : [];
     return {
       version: 1,
       title: parsed.title,
@@ -46,6 +51,7 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
       basePolicy: typeof parsed.basePolicy === 'string' ? parsed.basePolicy : '2024',
       formValues: parsed.formValues && typeof parsed.formValues === 'object' ? parsed.formValues : {},
       maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1',
+      ...(lockedParameterKeys.length > 0 ? { lockedParameterKeys } : {})
     };
   } catch {
     return null;
@@ -127,9 +133,18 @@ export function restoreScenarioDraft(
   const parsedMaxWorkers = Number(stored.maxWorkers);
   const maxWorkers = Number.isInteger(parsedMaxWorkers) && parsedMaxWorkers > 0 ? stored.maxWorkers : fallback.maxWorkers;
   if (maxWorkers !== stored.maxWorkers) choicesChanged = true;
+  const lockedParameterKeys = (stored.lockedParameterKeys ?? []).filter((key) => parameterKeys.has(key));
+  if (lockedParameterKeys.length !== (stored.lockedParameterKeys?.length ?? 0)) choicesChanged = true;
 
   return {
     choicesChanged,
-    draft: { ...stored, calibratedModel, basePolicy, formValues, maxWorkers }
+    draft: {
+      ...stored,
+      calibratedModel,
+      basePolicy,
+      formValues,
+      maxWorkers,
+      ...(lockedParameterKeys.length > 0 ? { lockedParameterKeys } : { lockedParameterKeys: undefined })
+    }
   };
 }

@@ -9,7 +9,12 @@ import type {
   LendingJointGrid,
   LendingMetricId
 } from '../../shared/types';
-import { BASELINE_COLOR, COMPARISON_COLOR } from './manualOverlayChartOption';
+import {
+  BASELINE_COLOR,
+  COMPARISON_COLOR,
+  COMPARISON_RUN_LABEL,
+  PRIMARY_RUN_LABEL
+} from './manualOverlayChartOption';
 
 const CAP_RULE_COLOR = '#c92a2a';
 const BAND_COLORS = ['#0b7285', '#3bc9db', '#ffa8a8'];
@@ -116,7 +121,7 @@ export function buildLendingDistributionOption(
             xAxis: cap.value,
             lineStyle: { color: CAP_RULE_COLOR, type: 'solid' as const, width: 1.5 },
             label: {
-              formatter: capMoved ? `Baseline ${formatCapValue(cap)}` : capRuleLabel(cap),
+              formatter: capMoved ? `${PRIMARY_RUN_LABEL} ${formatCapValue(cap)}` : capRuleLabel(cap),
               position: 'insideEndTop' as const,
               color: CAP_RULE_COLOR
             }
@@ -129,7 +134,7 @@ export function buildLendingDistributionOption(
             xAxis: comparisonCap.value,
             lineStyle: { color: COMPARISON_COLOR, type: 'dashed' as const, width: 1.5 },
             label: {
-              formatter: `Comparison ${formatCapValue(comparisonCap)}`,
+              formatter: `${COMPARISON_RUN_LABEL} ${formatCapValue(comparisonCap)}`,
               position: 'insideEndBottom' as const,
               color: COMPARISON_COLOR
             }
@@ -140,7 +145,7 @@ export function buildLendingDistributionOption(
 
   const series: EChartsOption['series'] = [
     {
-      name: 'Baseline',
+      name: PRIMARY_RUN_LABEL,
       type: 'line',
       smooth: false,
       showSymbol: false,
@@ -156,7 +161,7 @@ export function buildLendingDistributionOption(
 
   if (comparisonHistogram) {
     series.push({
-      name: 'Comparison',
+      name: COMPARISON_RUN_LABEL,
       type: 'line',
       smooth: false,
       showSymbol: false,
@@ -171,7 +176,10 @@ export function buildLendingDistributionOption(
       trigger: 'axis',
       valueFormatter: (value) => `${Number(value).toFixed(2)}%`
     },
-    legend: { top: 0, data: comparisonHistogram ? ['Baseline', 'Comparison'] : ['Baseline'] },
+    legend: {
+      top: 0,
+      data: comparisonHistogram ? [PRIMARY_RUN_LABEL, COMPARISON_RUN_LABEL] : [PRIMARY_RUN_LABEL]
+    },
     grid: { left: 64, right: 24, top: 40, bottom: 52, containLabel: true },
     xAxis: {
       type: 'category',
@@ -213,7 +221,7 @@ export function buildLendingTailBandOption(
     const colour = BAND_COLORS[index % BAND_COLORS.length];
     const bars: EChartsOption['series'] = [
       {
-        name: comparisonGroup ? `${band.label} · baseline` : band.label,
+        name: comparisonGroup ? `${band.label} · primary run` : band.label,
         type: 'bar',
         stack: 'baseline',
         itemStyle: { color: colour },
@@ -223,7 +231,7 @@ export function buildLendingTailBandOption(
     ];
     if (comparisonGroup) {
       bars.push({
-        name: `${band.label} · comparison`,
+        name: `${band.label} · comparison run`,
         type: 'bar',
         stack: 'comparison',
         itemStyle: { color: colour, opacity: 0.55, borderColor: COMPARISON_COLOR, borderWidth: 1 },

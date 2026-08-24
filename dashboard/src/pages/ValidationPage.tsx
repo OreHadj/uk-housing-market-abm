@@ -18,6 +18,7 @@ import {
 } from '../lib/api';
 import {
   buildModelOptions,
+  getDefaultModelVersion,
   formatModelName,
   formatModelSubtitle
 } from '../lib/modelAnchors';
@@ -287,9 +288,13 @@ function lossFamilyDescription(metric: ValidationMetricSummary): string {
     bounded_share: 'Bounded share',
     diagnostic: 'Diagnostic'
   };
-  return metric.lossFamily
-    ? `${labels[metric.lossFamily]}${metric.lossTransform ? ` · ${metric.lossTransform.replaceAll('_', ' ')}` : ''}`
-    : 'Not applicable';
+  return metric.lossFamily ? labels[metric.lossFamily] : 'Not applicable';
+}
+
+function lossTransformDescription(metric: ValidationMetricSummary): string | null {
+  if (!metric.lossTransform) return null;
+  const description = metric.lossTransform.replaceAll('_', ' ');
+  return `${description.charAt(0).toUpperCase()}${description.slice(1)}`;
 }
 
 /* Retained with the temporarily hidden model-development trend chart.
@@ -723,7 +728,15 @@ export function ValidationMetricDetailsPanel({
       </div>
       <div className="validation-metric-detail">
         <dl>
-          <div><dt>Loss family</dt><dd>{lossFamilyDescription(detail.metric)}</dd></div>
+          <div className="validation-loss-family-detail">
+            <dt>Loss family</dt>
+            <dd>
+              <strong>{lossFamilyDescription(detail.metric)}</strong>
+              {lossTransformDescription(detail.metric) && (
+                <small><span>Transform</span>{lossTransformDescription(detail.metric)}</small>
+              )}
+            </dd>
+          </div>
         </dl>
         <section className="validation-source-section" aria-label="Sources and provenance">
           <h5>Sources and provenance</h5>
@@ -878,6 +891,33 @@ export function ValidationMetricTable({
   );
 }
 
+export function resolveValidationModelsForEvidenceYear(
+  overview: Pick<
+    ValidationOverviewPayload,
+    'availableVersions' | 'availableValidationTargetYearsByVersion'
+  > | null,
+  selectedVersion: string,
+  comparisonVersion: string,
+  evidenceYear: number,
+  inProgressVersions: readonly string[] = []
+) {
+  const eligibleVersions = (overview?.availableVersions ?? []).filter((version) =>
+    (overview?.availableValidationTargetYearsByVersion[version] ?? []).includes(evidenceYear)
+  );
+  const nextSelectedVersion = eligibleVersions.includes(selectedVersion)
+    ? selectedVersion
+    : getDefaultModelVersion(eligibleVersions, inProgressVersions);
+  const nextComparisonVersion =
+    comparisonVersion !== nextSelectedVersion && eligibleVersions.includes(comparisonVersion)
+      ? comparisonVersion
+      : '';
+  return {
+    eligibleVersions,
+    selectedVersion: nextSelectedVersion,
+    comparisonVersion: nextComparisonVersion
+  };
+}
+
 export function ValidationPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedVersion = searchParams.get('version')?.trim() ?? '';
@@ -928,6 +968,26 @@ export function ValidationPage() {
           fetchVersions()
         ]);
         if (cancelled) return;
+        const requestedYearSelection = resolveValidationModelsForEvidenceYear(
+          response,
+          selectedVersion,
+          comparisonVersion,
+          selectedValidationTargetYear,
+          versions.inProgressVersions
+        );
+        if (
+          response.selectedValidationTargetYear !== selectedValidationTargetYear &&
+          requestedYearSelection.eligibleVersions.length > 0 &&
+          requestedYearSelection.selectedVersion !== response.selectedVersion
+        ) {
+          setSelectionNotice(
+            'That model is unavailable for the selected evidence year. Showing an eligible validated model.'
+          );
+          setSelectedVersion(requestedYearSelection.selectedVersion);
+          setComparisonVersion(requestedYearSelection.comparisonVersion);
+          setInProgressVersions(versions.inProgressVersions);
+          return;
+        }
         const requestedCombinationChanged =
           (selectedVersion.length > 0 && response.selectedVersion !== selectedVersion) ||
           response.selectedValidationTargetYear !== selectedValidationTargetYear;
@@ -937,6 +997,14 @@ export function ValidationPage() {
         setOverview(response);
         setSelectedVersion(response.selectedVersion);
         setSelectedValidationTargetYear(response.selectedValidationTargetYear);
+        const resolvedComparison = resolveValidationModelsForEvidenceYear(
+          response,
+          response.selectedVersion,
+          comparisonVersion,
+          response.selectedValidationTargetYear,
+          versions.inProgressVersions
+        ).comparisonVersion;
+        if (resolvedComparison !== comparisonVersion) setComparisonVersion(resolvedComparison);
         setInProgressVersions(versions.inProgressVersions);
       } catch (loadError) {
         if (cancelled) return;
@@ -948,7 +1016,6 @@ export function ValidationPage() {
         if (selectedVersion) {
           setSelectionNotice('That model version has no published validation evidence. Showing the latest available validated model.');
           setSelectedVersion('');
-          setSelectedValidationTargetYear(DEFAULT_VALIDATION_TARGET_YEAR);
           return;
         }
         setError((loadError as Error).message);
@@ -993,11 +1060,28 @@ export function ValidationPage() {
   const summary = overview?.selectedSummary ?? null;
   const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
   const versionLabel = (version: string) => formatModelName(version);
-  // Selection is limited to the four named models; the trend charts below still plot every
-  // version, because that series is the recalibration trajectory rather than a set of choices.
+  const eligibleVersions = useMemo(
+    () => resolveValidationModelsForEvidenceYear(
+      overview,
+      selectedVersion,
+      comparisonVersion,
+      selectedValidationTargetYear,
+      inProgressVersions
+    ).eligibleVersions,
+    [comparisonVersion, inProgressVersions, overview, selectedValidationTargetYear, selectedVersion]
+  );
+  // The main 2024 view stays limited to named models, while the compact 2011 reference catalogue
+  // includes every eligible overlay (notably v0o2, which is intentionally not a named anchor).
   const orderedVersions = useMemo(
-    () => buildModelOptions(overview?.availableVersions ?? [], selectedVersion, inProgressSet).map((option) => option.version),
-    [overview, selectedVersion, inProgressSet]
+    () => {
+      if (selectedValidationTargetYear === 2011) return eligibleVersions;
+      const versions = buildModelOptions(eligibleVersions, selectedVersion, inProgressSet).map((option) => option.version);
+      if (comparisonVersion && eligibleVersions.includes(comparisonVersion) && !versions.includes(comparisonVersion)) {
+        versions.push(comparisonVersion);
+      }
+      return versions;
+    },
+    [comparisonVersion, eligibleVersions, inProgressSet, selectedValidationTargetYear, selectedVersion]
   );
   const scorecard = useMemo(() => buildValidationScorecard(summary?.metrics ?? []), [summary]);
   const decomposition = useMemo(() => buildValidationLossDecomposition(summary?.metrics ?? []), [summary]);
@@ -1070,9 +1154,20 @@ export function ValidationPage() {
     setSelectedValidationTargetYear(year);
   };
   const handleVersionChange = (version: string) => {
-    const years = overview?.availableValidationTargetYearsByVersion[version] ?? [DEFAULT_VALIDATION_TARGET_YEAR];
     if (version === comparisonVersion) setComparisonVersion('');
-    selectVersionAndValidationYear(version, years.includes(selectedValidationTargetYear) ? selectedValidationTargetYear : 2024);
+    selectVersionAndValidationYear(version, selectedValidationTargetYear);
+  };
+  const handleEvidenceYearChange = (year: number) => {
+    const resolved = resolveValidationModelsForEvidenceYear(
+      overview,
+      selectedVersion,
+      comparisonVersion,
+      year,
+      inProgressVersions
+    );
+    setSelectedVersion(resolved.selectedVersion);
+    setComparisonVersion(resolved.comparisonVersion);
+    setSelectedValidationTargetYear(year);
   };
   // const handleChartClick = (year: 2024 | 2011) => (raw: unknown) => {
   //   const point = raw as { name?: string };
@@ -1122,13 +1217,27 @@ export function ValidationPage() {
               Runs launched on the Experiments page do not update these validation results.
             </p>
             <p className="validation-evidence-statement">
-              The evidence used to validate this model was from <strong>{selectedValidationTargetYear}</strong>.
+              {selectedValidationTargetYear === 2011 ? (
+                <>Showing the <strong>2011 reference evidence overlay</strong>. This is a historical reference view, not a continuation of the 2024 validation evidence.</>
+              ) : (
+                <>The selected model is validated against <strong>2024 evidence</strong>.</>
+              )}
             </p>
           </div>
           <ValidationStatusLegend />
         </div>
 
         <div className="validation-model-picker-toolbar">
+          <label className="validation-selector validation-evidence-year-selector">
+            <span>Evidence year</span>
+            <select
+              value={selectedValidationTargetYear}
+              onChange={(event) => handleEvidenceYearChange(Number(event.target.value))}
+            >
+              <option value={2024}>2024 evidence</option>
+              <option value={2011}>2011 reference evidence</option>
+            </select>
+          </label>
           <label className="validation-selector">
             <span>Sort models by</span>
             <select value={sortMetricId} onChange={(event) => setSortMetricId(event.target.value)}>
@@ -1274,7 +1383,7 @@ export function ValidationPage() {
               <h4>Where this model&rsquo;s error sits</h4>
               <p className="validation-card-subtitle validation-decomposition-description">
                 Each theme&rsquo;s share of the total metric loss. A <strong>smaller</strong> share means this model version fits
-                the 2024 evidence better for that group of indicators.
+                the {selectedValidationTargetYear}{selectedValidationTargetYear === 2011 ? ' reference' : ''} evidence better for that group of indicators.
               </p>
               {comparisonSummary && (
                 <div className="validation-decomposition-legend" aria-label="Theme loss bar colours">
@@ -1384,7 +1493,8 @@ export function ValidationPage() {
               <div>
                 <p>
                   Sort by metric name, off-target distance, seeds in band, or loss within a theme. Each table starts
-                  with the highest-loss metric first; open Details for its loss family and source provenance.
+                  with the highest-loss metric first. Open Details to see its loss family and source provenance. Lower
+                  loss is better.
                 </p>
               </div>
             </div>

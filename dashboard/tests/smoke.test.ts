@@ -34,6 +34,8 @@ import {
   getModelRunOptions,
   getResultsStorageSummary,
   listModelRunJobs,
+  MULTIPLE_SIMULATIONS_WARNING_LIMIT,
+  prepareModelRunSubmission,
   submitModelRun
 } from '../server/lib/modelRuns.js';
 import {
@@ -47,6 +49,7 @@ import {
   getSensitivityExperimentResults,
   hasActiveSensitivityExperiment,
   listSensitivityExperiments,
+  prepareSensitivityExperimentSubmission,
   submitSensitivityExperiment
 } from '../server/lib/sensitivityRuns.js';
 import {
@@ -115,7 +118,12 @@ import {
   validateTrustedDesktopIpcSender,
   type DesktopFrameLike
 } from '../shared/desktopSecurity.js';
-import { CENTRAL_BANK_POLICY_KEYS, DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../shared/policyCatalogue.js';
+import {
+  CENTRAL_BANK_POLICY_KEYS,
+  DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID,
+  getBasePolicyOption
+} from '../shared/policyCatalogue.js';
+import type { ResultsRunSummary } from '../shared/types.js';
 import { CENTRAL_BANK_POLICY_DISPLAY } from '../shared/policyDisplay.js';
 import {
   INSTRUMENT_POLICY_KEYS,
@@ -127,15 +135,26 @@ import {
 } from '../src/lib/manualScenarioPolicy.js';
 import {
   KPI_DETAIL_ROWS,
+  MANUAL_COMPARISON_CALIBRATION_VERDICT,
+  MANUAL_COMPARISON_MATCH_FIELDS,
+  MANUAL_COMPARISON_SETTINGS_VERDICT,
+  buildManualComparisonDisclosureRows,
+  buildMatchingBaselineScenarioDraft,
   computeKpiDeltaValue,
   computeKpiPercentDelta,
+  findMatchedManualBaselineRun,
   formatKpiComparisonDelta,
   formatKpiDeltaValue,
   formatKpiValue,
+  formatManualComparisonCalibrationNotice,
+  formatManualComparisonMismatchWarning,
+  formatManualComparisonOptionAnnotation,
+  getManualComparisonFieldDifferences,
   getKpiComparisonDeltaLabel,
   getKpiMetricValue,
   getKpiDeltaLabel,
   groupIndicatorsByPolicyQuestion,
+  isMatchedManualBaselineRun,
   resolveActiveIndicatorId,
   resolveActiveIndicatorPayload,
   resolveManualRunSelection,
@@ -176,7 +195,15 @@ import {
   normalizeManualScenarioFormValues,
   toInitialFormValues
 } from '../src/lib/experimentRunDefaults.js';
-import { buildDeltaTrendOption } from '../src/lib/sensitivityChartOptions.js';
+import {
+  buildDeltaTrendOption,
+  buildSensitivityTornadoOption
+} from '../src/lib/sensitivityChartOptions.js';
+import {
+  formatResultsAxisTick,
+  resultsValueAxisNameGap,
+  wrapResultsAxisName
+} from '../src/lib/resultsChartLayout.js';
 import { computeKpiFromValues, selectPost200Window } from '../server/lib/stats/kpi.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -712,6 +739,290 @@ assert.equal(
   'Expected the original published run to stay selectable as an explicit baseline'
 );
 
+function makeMatchedBaselineFixtureRun(input: {
+  runId: string;
+  createdAt: string;
+  policyOverrides?: Record<string, number>;
+  parameterOverrides?: Record<string, number>;
+  provenanceOverrides?: Partial<ResultsRunSummary['provenance']>;
+  modelVersion?: string | null;
+}): ResultsRunSummary {
+  const basePolicy = getBasePolicyOption('2024');
+  const ukHouseholds = input.provenanceOverrides?.ukHouseholds ?? 28_609_000;
+  const ukDwellings = input.provenanceOverrides?.ukDwellings ?? 30_676_974;
+  return {
+    runId: input.runId,
+    path: `Results/${input.runId}`,
+    modifiedAt: input.createdAt,
+    createdAt: input.createdAt,
+    sizeBytes: 1,
+    fileCount: 1,
+    title: input.runId,
+    policySettings: Object.entries({ ...basePolicy.values, ...input.policyOverrides }).map(([key, value]) => ({
+      key,
+      value
+    })),
+    status: 'complete',
+    configAvailable: true,
+    provenance: {
+      ukHouseholds,
+      ukDwellings,
+      dwellingsPerHousehold: ukDwellings / ukHouseholds,
+      targetPopulation: 10_000,
+      meanModelHouseholds: 10_000,
+      meanScaleFactor: ukHouseholds / 10_000,
+      nSteps: 3_500,
+      seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      seedSource: 'manifest',
+      ...input.provenanceOverrides
+    },
+    configuration: {
+      modelVersion: input.modelVersion === undefined ? 'v5o3' : input.modelVersion,
+      basePolicy: '2024',
+      maxWorkers: 10,
+      parameterValues: {
+        N_STEPS: 3_500,
+        TIME_TO_START_RECORDING_TRANSACTIONS: 1_000,
+        N_SIMS: 10,
+        CUMULATIVE_WEIGHT_BEYOND_YEAR: 0.14,
+        ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS: 6,
+        ...input.parameterOverrides
+      }
+    },
+    parseCoverage: {
+      requiredCount: 1,
+      supportedCount: 1,
+      emptyCount: 0,
+      errorCount: 0
+    }
+  };
+}
+
+const matchedPrimaryRun = makeMatchedBaselineFixtureRun({
+  runId: 'policy-v5o3',
+  createdAt: '2026-08-23T10:00:00.000Z',
+  policyOverrides: { CENTRAL_BANK_LTI_SOFT_MAX_FTB: 4 }
+});
+const olderMatchedBaselineRun = makeMatchedBaselineFixtureRun({
+  runId: 'base-v5o3-old',
+  createdAt: '2026-08-23T08:00:00.000Z'
+});
+const newerMatchedBaselineRun = makeMatchedBaselineFixtureRun({
+  runId: 'base-v5o3-new',
+  createdAt: '2026-08-23T09:00:00.000Z'
+});
+const nStepsOnlyMismatchRun = makeMatchedBaselineFixtureRun({
+  runId: 'base-v5o3-2000-steps',
+  createdAt: '2026-08-23T09:30:00.000Z',
+  parameterOverrides: { N_STEPS: 2_000 },
+  provenanceOverrides: { nSteps: 2_000 }
+});
+const seedOnlyMismatchRun = makeMatchedBaselineFixtureRun({
+  runId: 'base-v5o3-one-seed',
+  createdAt: '2026-08-23T09:35:00.000Z',
+  parameterOverrides: { N_SIMS: 1 },
+  provenanceOverrides: { seeds: [1] }
+});
+const v0VintageRun = makeMatchedBaselineFixtureRun({
+  runId: 'v0-output',
+  createdAt: '2026-08-23T09:45:00.000Z',
+  provenanceOverrides: {
+    ukHouseholds: 26_442_100,
+    ukDwellings: 22_626_000,
+    dwellingsPerHousehold: 22_626_000 / 26_442_100,
+    meanScaleFactor: 26_442_100 / 10_000
+  }
+});
+const v0VintageAndStepsRun = makeMatchedBaselineFixtureRun({
+  runId: 'v0-2000-steps-output',
+  createdAt: '2026-08-23T09:46:00.000Z',
+  parameterOverrides: { N_STEPS: 2_000 },
+  provenanceOverrides: {
+    ukHouseholds: 26_442_100,
+    ukDwellings: 22_626_000,
+    dwellingsPerHousehold: 22_626_000 / 26_442_100,
+    meanScaleFactor: 26_442_100 / 10_000,
+    nSteps: 2_000
+  }
+});
+const matchedSelectionRuns = [
+  matchedPrimaryRun,
+  olderMatchedBaselineRun,
+  newerMatchedBaselineRun,
+  nStepsOnlyMismatchRun,
+  v0VintageRun
+];
+
+assert.deepEqual(
+  resolveManualRunSelection(matchedSelectionRuns, matchedPrimaryRun.runId, ''),
+  { baselineRunId: matchedPrimaryRun.runId, comparisonRunId: newerMatchedBaselineRun.runId },
+  'Expected a policy run to default to its most recent parameter-matched base-policy run'
+);
+assert.equal(
+  isMatchedManualBaselineRun(matchedPrimaryRun, newerMatchedBaselineRun),
+  true,
+  'Expected the selected default to qualify as a matched baseline'
+);
+assert.equal(
+  findMatchedManualBaselineRun([...matchedSelectionRuns].reverse(), matchedPrimaryRun.runId)?.runId,
+  newerMatchedBaselineRun.runId,
+  'Expected matched-baseline recency to be independent of API list order'
+);
+assert.deepEqual(
+  resolveManualRunSelection(
+    [matchedPrimaryRun, nStepsOnlyMismatchRun, v0VintageRun],
+    matchedPrimaryRun.runId,
+    ''
+  ),
+  { baselineRunId: matchedPrimaryRun.runId, comparisonRunId: '' },
+  'Expected no comparison, rather than v0-output, when no matched baseline exists'
+);
+assert.deepEqual(
+  resolveManualRunSelection(matchedSelectionRuns, matchedPrimaryRun.runId, '', {
+    defaultToMatchedBaseline: false
+  }),
+  { baselineRunId: matchedPrimaryRun.runId, comparisonRunId: '' },
+  'Expected an explicit No comparison choice to suppress automatic reselection'
+);
+
+assert.deepEqual(
+  MANUAL_COMPARISON_MATCH_FIELDS.map((field) => field.key),
+  ['N_STEPS', 'N_SIMS', 'CALIBRATION_VINTAGE'],
+  'Expected the comparison audit to contain only steps, seeds, and one paired calibration check'
+);
+
+const policyOnlyDifferences = getManualComparisonFieldDifferences(matchedPrimaryRun, newerMatchedBaselineRun);
+assert.deepEqual(policyOnlyDifferences, [], 'Expected CENTRAL_BANK policy differences to stay outside the mismatch audit');
+assert.equal(formatManualComparisonMismatchWarning(policyOnlyDifferences), null);
+assert.equal(formatManualComparisonCalibrationNotice(policyOnlyDifferences), null);
+assert.equal(formatManualComparisonOptionAnnotation(policyOnlyDifferences), '');
+
+const ignoredSetupDifferenceRun = makeMatchedBaselineFixtureRun({
+  runId: 'intended-experiment',
+  createdAt: '2026-08-23T09:47:00.000Z',
+  modelVersion: 'another-model-version',
+  parameterOverrides: {
+    TIME_TO_START_RECORDING_TRANSACTIONS: 500,
+    CUMULATIVE_WEIGHT_BEYOND_YEAR: 0.5,
+    ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS: 12
+  },
+  provenanceOverrides: { targetPopulation: 25_000 }
+});
+assert.deepEqual(
+  getManualComparisonFieldDifferences(matchedPrimaryRun, ignoredSetupDifferenceRun),
+  [],
+  'Expected behavioural, recording, population, rolling-window, and model-version differences to stay outside the audit'
+);
+
+const v0Differences = getManualComparisonFieldDifferences(matchedPrimaryRun, v0VintageRun);
+const v0Warning = formatManualComparisonMismatchWarning(v0Differences);
+const v0CalibrationNotice = formatManualComparisonCalibrationNotice(v0Differences);
+const v0DisclosureRows = buildManualComparisonDisclosureRows(v0Differences);
+assert.deepEqual(
+  v0Differences.map((difference) => difference.field.key),
+  ['CALIBRATION_VINTAGE'],
+  'Expected household and dwelling counts to be detected as one calibration difference'
+);
+assert.equal(v0Warning, null, 'Expected a calibration-only comparison not to show run-settings advice');
+assert.equal(
+  v0CalibrationNotice,
+  'The comparison run uses the 2011 calibration and the primary run uses the 2024 calibration, which changes housing supply as well as policy. The difference below reflects both.',
+  'Expected a cross-vintage note to explain rather than criticise the comparison'
+);
+assert.ok(
+  !v0CalibrationNotice.includes('UK_HOUSEHOLDS') && !v0CalibrationNotice.includes('UK_DWELLINGS'),
+  'Expected the visible calibration note to omit raw parameter names'
+);
+assert.deepEqual(
+  v0DisclosureRows.map((row) => row.key),
+  ['CALIBRATION_VINTAGE'],
+  'Expected the full mismatch disclosure to collapse household and dwelling counts into one calibration row'
+);
+assert.ok(
+  v0DisclosureRows[0]?.primaryValue.includes('28,609,000 households') &&
+    v0DisclosureRows[0]?.primaryValue.includes('30,676,974 dwellings') &&
+    v0DisclosureRows[0]?.comparisonValue.includes('26,442,100 households') &&
+    v0DisclosureRows[0]?.comparisonValue.includes('22,626,000 dwellings'),
+  'Expected the calibration disclosure to retain both values for both audited fields'
+);
+
+const nStepsDifferences = getManualComparisonFieldDifferences(matchedPrimaryRun, nStepsOnlyMismatchRun);
+const nStepsWarning = formatManualComparisonMismatchWarning(nStepsDifferences);
+assert.deepEqual(
+  nStepsDifferences.map((difference) => difference.field.key),
+  ['N_STEPS'],
+  'Expected a run differing only in duration to report only N_STEPS'
+);
+assert.ok(
+  nStepsWarning?.includes('The comparison run used 2,000 steps; the primary run used 3,500 steps.') &&
+    nStepsWarning.includes('same number of steps') &&
+    !nStepsWarning.includes('N_STEPS'),
+  'Expected the short duration warning to show both values in plain language'
+);
+assert.deepEqual(
+  buildManualComparisonDisclosureRows(nStepsDifferences),
+  [{ key: 'N_STEPS', label: 'N_STEPS', primaryValue: '3,500', comparisonValue: '2,000' }],
+  'Expected the full disclosure to show both values for every non-calibration mismatch'
+);
+const seedDifferences = getManualComparisonFieldDifferences(matchedPrimaryRun, seedOnlyMismatchRun);
+const seedWarning = formatManualComparisonMismatchWarning(seedDifferences);
+assert.deepEqual(seedDifferences.map((difference) => difference.field.key), ['N_SIMS']);
+assert.ok(
+  seedWarning?.includes('The comparison run used 1 seed; the primary run used 10 seeds.') &&
+    seedWarning.includes('results with fewer seeds could be noisier') &&
+    !seedWarning.includes('same number of seeds'),
+  'Expected the seed warning to explain extra variability without calling the comparison invalid'
+);
+
+const stepsAndSeedsMismatchRun = makeMatchedBaselineFixtureRun({
+  runId: 'base-v5o3-short-one-seed',
+  createdAt: '2026-08-23T09:40:00.000Z',
+  parameterOverrides: { N_STEPS: 2_000, N_SIMS: 1 },
+  provenanceOverrides: { nSteps: 2_000, seeds: [1] }
+});
+const stepsAndSeedsWarning = formatManualComparisonMismatchWarning(
+  getManualComparisonFieldDifferences(matchedPrimaryRun, stepsAndSeedsMismatchRun)
+);
+assert.ok(
+  stepsAndSeedsWarning?.includes('same number of steps') &&
+    stepsAndSeedsWarning.includes('results with fewer seeds could be noisier'),
+  'Expected combined setup advice to distinguish run length from seed-related variability'
+);
+
+const calibrationAndDurationDifferences = getManualComparisonFieldDifferences(
+  matchedPrimaryRun,
+  v0VintageAndStepsRun
+);
+const calibrationAndDurationWarning = formatManualComparisonMismatchWarning(calibrationAndDurationDifferences);
+const calibrationAndDurationNotice = formatManualComparisonCalibrationNotice(calibrationAndDurationDifferences);
+assert.ok(calibrationAndDurationNotice && calibrationAndDurationWarning);
+assert.equal(
+  (`${MANUAL_COMPARISON_CALIBRATION_VERDICT} — ${calibrationAndDurationNotice}`.match(/[.!?](?:\s|$)/g) ?? []).length,
+  2,
+  'Expected the calibration message to contain at most two sentences'
+);
+assert.equal(
+  (`${MANUAL_COMPARISON_SETTINGS_VERDICT} — ${calibrationAndDurationWarning}`.match(/[.!?](?:\s|$)/g) ?? []).length,
+  2,
+  'Expected the setup message to contain at most two sentences'
+);
+assert.equal(formatManualComparisonOptionAnnotation(policyOnlyDifferences), '');
+assert.equal(formatManualComparisonOptionAnnotation(nStepsDifferences), '');
+assert.equal(formatManualComparisonOptionAnnotation(seedDifferences), '');
+assert.equal(formatManualComparisonOptionAnnotation(v0Differences), '2011 calibration');
+
+const matchingBaselineDraft = buildMatchingBaselineScenarioDraft(matchedPrimaryRun);
+assert.ok(matchingBaselineDraft, 'Expected a fully recorded run to produce a builder draft');
+assert.equal(matchingBaselineDraft?.calibratedModel, 'v5o3');
+assert.equal(matchingBaselineDraft?.formValues.N_STEPS, '3500');
+assert.equal(matchingBaselineDraft?.formValues.N_SIMS, '10');
+assert.deepEqual(matchingBaselineDraft?.lockedParameterKeys, ['N_STEPS', 'N_SIMS']);
+assert.deepEqual(
+  Object.keys(matchingBaselineDraft?.formValues ?? {}).sort(),
+  ['N_SIMS', 'N_STEPS'],
+  'Expected the ordinary builder to supply every field except the copied setup locks from its normal defaults'
+);
+
 assert.equal(
   extractVersionFromResultsRunId('v4.0-output'),
   'v4.0',
@@ -784,7 +1095,16 @@ const singleOverlayOption = buildManualOverlayOption(
   ''
 );
 const singleOverlaySeries = (singleOverlayOption.series as Array<Record<string, any>>) ?? [];
+const singleOverlayGrid = singleOverlayOption.grid as Record<string, any>;
+const singleOverlayYAxis = singleOverlayOption.yAxis as Record<string, any>;
 assert.equal(singleOverlaySeries.length, 1, 'Expected single-run overlay to include one plotted series');
+assert.equal(singleOverlayGrid.containLabel, true, 'Expected manual overlays to reserve room for axis labels');
+assert.ok(singleOverlayYAxis.nameGap >= 48, 'Expected manual overlays to separate the y-axis unit from ticks');
+assert.equal(
+  singleOverlayYAxis.axisLabel.formatter(1_250_000),
+  '1.3M',
+  'Expected large manual-overlay ticks to use compact, meaning-preserving labels'
+);
 assert.equal(singleOverlaySeries[0]?.lineStyle?.color, '#0b7285', 'Expected baseline overlay series to use the baseline color');
 assert.equal(
   singleOverlaySeries[0]?.markLine?.data?.[0]?.yAxis,
@@ -829,8 +1149,8 @@ const compareOverlayOption = buildManualOverlayOption(
 );
 const compareOverlaySeries = (compareOverlayOption.series as Array<Record<string, any>>) ?? [];
 assert.equal(compareOverlaySeries.length, 2, 'Expected compare overlay to include both plotted series');
-assert.equal(compareOverlaySeries[0]?.name, 'Baseline', 'Expected baseline overlay series to use the baseline role label');
-assert.equal(compareOverlaySeries[1]?.name, 'Comparison', 'Expected comparison overlay series to use the comparison role label');
+assert.equal(compareOverlaySeries[0]?.name, 'Primary run', 'Expected the first overlay series to use the primary-run role label');
+assert.equal(compareOverlaySeries[1]?.name, 'Comparison run', 'Expected the second overlay series to use the comparison-run role label');
 assert.equal(compareOverlaySeries[1]?.lineStyle?.color, '#18958b', 'Expected comparison overlay series to use the comparison color');
 assert.equal(compareOverlaySeries[0]?.markLine?.data?.[0]?.yAxis, 15, 'Expected baseline overlay mean to be computed from displayed data');
 assert.equal(compareOverlaySeries[1]?.markLine?.data?.[0]?.yAxis, 35, 'Expected comparison overlay mean to be computed from displayed data');
@@ -884,13 +1204,57 @@ const deltaTrendOption = buildDeltaTrendOption(
   },
   'Soft max LTI FTB + HM',
   'mean'
-) as { xAxis: { min: number; max: number; scale?: boolean }; yAxis: { min: number; max: number; scale?: boolean } };
+) as {
+  grid: { containLabel?: boolean };
+  xAxis: { min: number; max: number; scale?: boolean; name?: string; axisLabel?: { hideOverlap?: boolean } };
+  yAxis: { min: number; max: number; scale?: boolean; nameGap?: number; axisLabel?: { hideOverlap?: boolean } };
+};
+assert.equal(deltaTrendOption.grid.containLabel, true, 'Expected sensitivity trends to contain axis labels');
 assert.equal(deltaTrendOption.xAxis.scale, true, 'Expected delta trend x axis to use data scaling');
 assert.equal(deltaTrendOption.yAxis.scale, true, 'Expected delta trend y axis to use data scaling');
+assert.equal(deltaTrendOption.xAxis.axisLabel?.hideOverlap, true, 'Expected sensitivity x ticks to avoid collisions');
+assert.equal(deltaTrendOption.yAxis.axisLabel?.hideOverlap, true, 'Expected sensitivity y ticks to avoid collisions');
+assert.ok((deltaTrendOption.yAxis.nameGap ?? 0) >= 48, 'Expected sensitivity y-axis units to clear tick labels');
 assert.ok(deltaTrendOption.xAxis.min < 4 && deltaTrendOption.xAxis.max > 5, 'Expected delta trend x axis to pad data domain');
 assert.ok(
   deltaTrendOption.yAxis.min > 0 && deltaTrendOption.yAxis.max > 14,
   'Expected delta trend y axis to span positive data without forcing zero'
+);
+
+const tornadoOption = buildSensitivityTornadoOption(
+  [
+    {
+      indicatorId: 'core_mortgageApprovals',
+      title: 'Mortgage approvals with a deliberately long indicator name',
+      units: 'count/month',
+      maxAbsDeltaByKpi: { mean: 1_250_000, cv: 12.5, annualisedTrend: 0.0012, range: 950_000 }
+    },
+    {
+      indicatorId: 'core_ooLTI',
+      title: 'Owner-occupier loan-to-income ratio',
+      units: 'ratio',
+      maxAbsDeltaByKpi: { mean: 12, cv: 3, annualisedTrend: 0.02, range: 4 }
+    }
+  ],
+  'mean'
+) as {
+  grid: { containLabel?: boolean };
+  xAxis: { type?: string; axisLabel?: { hideOverlap?: boolean; formatter?: (value: number) => string } };
+  yAxis: { type?: string; inverse?: boolean; axisLabel?: { width?: number; overflow?: string } };
+};
+assert.equal(tornadoOption.grid.containLabel, true, 'Expected tornado charts to contain long category labels');
+assert.equal(tornadoOption.xAxis.type, 'value', 'Expected tornado response magnitudes on the numeric x axis');
+assert.equal(tornadoOption.yAxis.type, 'category', 'Expected long tornado indicator names on the category y axis');
+assert.equal(tornadoOption.yAxis.inverse, true, 'Expected the largest tornado response to remain first');
+assert.equal(tornadoOption.yAxis.axisLabel?.overflow, 'break', 'Expected long tornado names to wrap rather than clip');
+assert.equal(tornadoOption.xAxis.axisLabel?.formatter?.(1_250_000), '1.3M');
+
+assert.equal(formatResultsAxisTick(2_450_000), '2.5M');
+assert.equal(formatResultsAxisTick(0.00012), '1.2e-4');
+assert.ok(resultsValueAxisNameGap([10, 1_000_000]) >= 48);
+assert.equal(
+  wrapResultsAxisName('Central Bank affordability hard maximum for first-time buyers', 24),
+  'Central Bank\naffordability hard\nmaximum for first-time\nbuyers'
 );
 
 const inProgressManualStatusMarkup = renderToStaticMarkup(
@@ -928,14 +1292,20 @@ assert.ok(
 
 assert.equal(
   computeKpiPercentDelta(100, 125),
-  25,
-  'Expected KPI percent deltas to compute relative to the baseline run'
+  -20,
+  'Expected KPI percent deltas to show primary run minus comparison run relative to the comparison run'
 );
 
 assert.equal(
   computeKpiPercentDelta(0, 125),
+  -100,
+  'Expected a zero primary value to remain a valid signed difference'
+);
+
+assert.equal(
+  computeKpiPercentDelta(125, 0),
   null,
-  'Expected KPI percent deltas to be null when the baseline magnitude is too small'
+  'Expected KPI percent deltas to be null when the comparison magnitude is too small'
 );
 
 assert.equal(
@@ -979,44 +1349,44 @@ assert.equal(getKpiDeltaLabel('%'), 'pp delta', 'Expected percent-like KPI rows 
 
 assertClose(
   computeKpiDeltaValue(-0.96, 1.33, '%') ?? NaN,
-  2.29,
+  -2.29,
   1e-9,
   'Expected House Price Growth deltas to be computed in percentage points'
 );
 
 assert.equal(
   formatKpiDeltaValue(computeKpiDeltaValue(-0.96, 1.33, '%'), '%'),
-  '+2.29 pp',
+  '-2.29 pp',
   'Expected percent-like KPI deltas to render in percentage points'
 );
 
 assert.equal(
   computeKpiDeltaValue(100, 125, 'count'),
-  25,
+  -20,
   'Expected non-percent KPI deltas to remain relative percent changes'
 );
 
 assert.equal(
   formatKpiDeltaValue(computeKpiDeltaValue(100, 125, 'count'), 'count'),
-  '+25.00%',
+  '-20.00%',
   'Expected non-percent KPI deltas to keep percent formatting'
 );
 
 assert.equal(
   formatKpiComparisonDelta(100_000, 105_000, 'GBP'),
-  '+£5,000 (+5.00%)',
+  '-£5,000 (-4.76%)',
   'Expected price comparisons to show both pound and relative changes'
 );
 
 assert.equal(
   formatKpiComparisonDelta(4.5, 4.7, 'ratio'),
-  '+0.20x (+4.44%)',
+  '-0.20x (-4.26%)',
   'Expected ratio comparisons to show both ratio-point and relative changes'
 );
 
 assert.equal(
   formatKpiComparisonDelta(2.7, 2.5, 'percentage points'),
-  '-0.20 pp',
+  '+0.20 pp',
   'Expected interest-rate spread comparisons to use percentage-point changes'
 );
 
@@ -1225,6 +1595,17 @@ assert.equal(
   post500CompareSearchParams.get('window'),
   'post500',
   'Expected compare query params to encode the post500 window.'
+);
+const post2000CompareSearchParams = buildResultsCompareSearchParams(
+  ['fixture-complete-output'],
+  ['core_btlLTV'],
+  'post2000',
+  0
+);
+assert.equal(
+  post2000CompareSearchParams.get('window'),
+  'post2000',
+  'Expected compare query params to encode the post2000 window.'
 );
 assert.deepEqual(
   parseResultsCompareQueryValues({ runId: commaContainingManualRunId }, 'runId', 'runIds'),
@@ -4797,6 +5178,11 @@ try {
   const fullRun = resultsRuns.find((run) => run.runId === fixture.runIds.complete);
   assert.ok(fullRun, 'Expected complete fixture run in discovery results');
   assert.equal(fullRun?.status, 'complete', 'Expected complete fixture run to be classified as complete');
+  assert.equal(
+    fullRun?.configuration?.parameterValues.N_STEPS,
+    2_000,
+    'Expected the run-list payload to carry recorded parameters needed for baseline matching'
+  );
 
   const emptyRun = resultsRuns.find((run) => run.runId === fixture.runIds.emptyOutput);
   assert.ok(emptyRun, 'Expected empty-output fixture run in discovery results');
@@ -5146,6 +5532,48 @@ try {
     ?.kpiSummary.find((kpi) => kpi.indicatorId === 'core_mortgageApprovals');
   assert.equal(post500Kpi?.windowType, 'post_500', 'Expected post500 compare KPIs to identify their window');
   assert.ok(post500Kpi?.mean !== null, 'Expected post500 compare KPI mean to be populated');
+
+  const post1500Compare = getResultsCompare(
+    fixture.root,
+    [fixture.runIds.complete],
+    ['core_mortgageApprovals'],
+    'post1500',
+    0
+  );
+  const post1500Series = post1500Compare.indicators[0]?.seriesByRun.find(
+    (series) => series.runId === fixture.runIds.complete
+  );
+  assert.ok(post1500Series, 'Expected post1500 compare series for complete run');
+  assert.ok(
+    post1500Series?.points.every((point) => point.modelTime >= 1500),
+    'Expected post1500 compare window to exclude the first 1,500 model ticks'
+  );
+  const post1500Kpi = post1500Compare.kpiSummaryByRun
+    .find((entry) => entry.runId === fixture.runIds.complete)
+    ?.kpiSummary.find((kpi) => kpi.indicatorId === 'core_mortgageApprovals');
+  assert.equal(post1500Kpi?.windowType, 'post_1500', 'Expected post1500 compare KPIs to identify their window');
+  assert.ok(post1500Kpi?.mean !== null, 'Expected post1500 compare KPI mean to be populated');
+
+  const post2000Compare = getResultsCompare(
+    fixture.root,
+    [fixture.runIds.complete],
+    ['core_mortgageApprovals'],
+    'post2000',
+    0
+  );
+  const post2000Series = post2000Compare.indicators[0]?.seriesByRun.find(
+    (series) => series.runId === fixture.runIds.complete
+  );
+  assert.deepEqual(
+    post2000Series?.points.map((point) => point.modelTime),
+    [2000],
+    'Expected the 2,000-month cutoff to leave only the final fixture point'
+  );
+  const post2000Kpi = post2000Compare.kpiSummaryByRun
+    .find((entry) => entry.runId === fixture.runIds.complete)
+    ?.kpiSummary.find((kpi) => kpi.indicatorId === 'core_mortgageApprovals');
+  assert.equal(post2000Kpi?.windowType, 'post_2000', 'Expected post2000 compare KPIs to identify their window');
+  assert.ok(post2000Kpi?.mean !== null, 'Expected post2000 compare KPI mean to be populated');
 
   const fullCompare = getResultsCompare(
     fixture.root,
@@ -5629,6 +6057,31 @@ try {
   assert.equal(restoredDraft.draft.calibratedModel, runOptions.requestedBaseline, 'Expected a stale model to fall back safely');
   assert.equal(restoredDraft.draft.basePolicy, DEFAULT_EXPERIMENT_BASE_POLICY_ID, 'Expected a stale policy to fall back safely');
   assert.ok(!('REMOVED_PARAMETER' in restoredDraft.draft.formValues), 'Expected stale parameter keys to be discarded');
+  const restoredLockedDraft = restoreScenarioDraft(
+    {
+      ...staleDraft,
+      calibratedModel: runOptions.requestedBaseline,
+      basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+      formValues: { N_STEPS: '3500', N_SIMS: '8' },
+      lockedParameterKeys: ['N_STEPS', 'N_SIMS']
+    },
+    runOptions,
+    {
+      ...staleDraft,
+      calibratedModel: runOptions.requestedBaseline,
+      basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+      formValues: defaultManualExperimentFormValues,
+      maxWorkers: '1'
+    }
+  );
+  assert.deepEqual(restoredLockedDraft.draft.lockedParameterKeys, ['N_STEPS', 'N_SIMS']);
+  assert.equal(restoredLockedDraft.draft.formValues.N_STEPS, '3500');
+  assert.equal(restoredLockedDraft.draft.formValues.N_SIMS, '8');
+  assert.equal(
+    restoredLockedDraft.draft.formValues.TIME_TO_START_RECORDING_TRANSACTIONS,
+    defaultManualExperimentFormValues.TIME_TO_START_RECORDING_TRANSACTIONS,
+    'A matching-baseline draft should merge its two copied values into the normal builder defaults'
+  );
   const normalizedManualDraft = normalizeManualScenarioFormValues({
     ...restoredDraft.draft.formValues,
     recordCoreIndicators: false,
@@ -6148,6 +6601,42 @@ try {
     spawnedProcesses.push(fakeProcess);
     return fakeProcess as never;
   });
+
+  assert.equal(MULTIPLE_SIMULATIONS_WARNING_LIMIT, 100, 'Expected the seed-count warning limit to be 100x higher');
+  const atSeedWarningLimit = prepareModelRunSubmission(
+    modelRunFixtureRoot,
+    {
+      baseline: 'v1.0',
+      title: 'seed-warning-limit',
+      overrides: { N_SIMS: MULTIPLE_SIMULATIONS_WARNING_LIMIT },
+      confirmWarnings: false
+    },
+    { ignoreStorageCap: true }
+  );
+  const atSeedWarningLimitWarnings = atSeedWarningLimit.accepted
+    ? atSeedWarningLimit.prepared.warnings
+    : atSeedWarningLimit.warnings;
+  assert.ok(
+    atSeedWarningLimitWarnings.every((warning) => warning.code !== 'multiple_simulations'),
+    'Expected 100 seeds not to show the runtime warning'
+  );
+  const aboveSeedWarningLimit = prepareModelRunSubmission(
+    modelRunFixtureRoot,
+    {
+      baseline: 'v1.0',
+      title: 'above-seed-warning-limit',
+      overrides: { N_SIMS: MULTIPLE_SIMULATIONS_WARNING_LIMIT + 1 },
+      confirmWarnings: false
+    },
+    { ignoreStorageCap: true }
+  );
+  const aboveSeedWarningLimitWarnings = aboveSeedWarningLimit.accepted
+    ? aboveSeedWarningLimit.prepared.warnings
+    : aboveSeedWarningLimit.warnings;
+  assert.ok(
+    aboveSeedWarningLimitWarnings.some((warning) => warning.code === 'multiple_simulations'),
+    'Expected the runtime warning above 100 seeds'
+  );
 
   const warningResponse = submitModelRun(modelRunFixtureRoot, {
     baseline: 'v1.0',
@@ -7024,6 +7513,38 @@ try {
     ...seedWarningFormValues,
     N_SIMS: '1'
   });
+  const sensitivityAtSeedWarningLimit = prepareSensitivityExperimentSubmission(seedWarningFixtureRoot, {
+    baseline: 'v1.0',
+    basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+    policyPackageId: DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID,
+    min: 4,
+    max: 5,
+    overrides: { ...seedWarningOverrides, N_SIMS: MULTIPLE_SIMULATIONS_WARNING_LIMIT },
+    confirmWarnings: false
+  });
+  const sensitivityAtSeedWarningLimitWarnings = sensitivityAtSeedWarningLimit.accepted
+    ? sensitivityAtSeedWarningLimit.prepared.warnings
+    : sensitivityAtSeedWarningLimit.warnings;
+  assert.ok(
+    sensitivityAtSeedWarningLimitWarnings.every((warning) => warning.code !== 'multiple_simulations'),
+    'Expected sensitivity runs at 100 seeds per point not to show the runtime warning'
+  );
+  const sensitivityAboveSeedWarningLimit = prepareSensitivityExperimentSubmission(seedWarningFixtureRoot, {
+    baseline: 'v1.0',
+    basePolicy: DEFAULT_EXPERIMENT_BASE_POLICY_ID,
+    policyPackageId: DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID,
+    min: 4,
+    max: 5,
+    overrides: { ...seedWarningOverrides, N_SIMS: MULTIPLE_SIMULATIONS_WARNING_LIMIT + 1 },
+    confirmWarnings: false
+  });
+  const sensitivityAboveSeedWarningLimitWarnings = sensitivityAboveSeedWarningLimit.accepted
+    ? sensitivityAboveSeedWarningLimit.prepared.warnings
+    : sensitivityAboveSeedWarningLimit.warnings;
+  assert.ok(
+    sensitivityAboveSeedWarningLimitWarnings.some((warning) => warning.code === 'multiple_simulations'),
+    'Expected sensitivity runs above 100 seeds per point to show the runtime warning'
+  );
   __setSensitivityRunSpawnForTests((_repoRoot, configPath, outputPath) => {
     const config = parseConfigFile(configPath);
     const softMaxFtb = Number.parseFloat(config.get('CENTRAL_BANK_LTI_SOFT_MAX_FTB') ?? '0');
@@ -8710,6 +9231,79 @@ assert.equal(
   'Manual policy groups should share one consistently aligned results table'
 );
 assert.ok(
+  manualResultsViewSource.includes('Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL}') &&
+    manualResultsViewSource.includes('<span>Primary run</span>') &&
+    manualResultsViewSource.includes('<span>Comparison run</span>') &&
+    !manualResultsViewSource.includes("'Baseline'") &&
+    !manualResultsViewSource.includes('>Baseline<') &&
+    manualResultsViewSource.includes('className="warning-banner comparison-mismatch-warning"') &&
+    manualResultsViewSource.includes('MANUAL_COMPARISON_SETTINGS_VERDICT') &&
+    manualResultsViewSource.includes('MANUAL_COMPARISON_CALIBRATION_VERDICT') &&
+    !manualResultsViewSource.includes('What&apos;s different') &&
+    !manualResultsViewSource.includes('comparison-differences-disclosure') &&
+    manualResultsViewSource.includes('Use {formatRunActionLabel(matchedBaselineSummary)} instead') &&
+    manualResultsViewSource.includes('setComparisonSelection(matchedBaselineSummary.runId)'),
+  'Manual comparisons should label match state, warn on mismatches, and offer the matched-baseline switch'
+);
+assert.ok(
+  manualResultsViewSource.includes(
+    'No baseline run exists with the same seeds, steps, and calibration model.'
+  ) &&
+    manualResultsViewSource.includes('For a better comparison, we suggest using') &&
+    manualResultsViewSource.includes('matchingBaselineDraft.calibratedModel') &&
+    manualResultsViewSource.includes('formatModelOptionLabel(matchingBaselineDraft.calibratedModel)') &&
+    manualResultsViewSource.includes('formatWholeNumber(matchingBaselineSteps)') &&
+    manualResultsViewSource.includes('formatWholeNumber(matchingBaselineSeeds)') &&
+    !manualResultsViewSource.includes('roughly one minute') &&
+    manualResultsViewSource.includes('Create matching run') &&
+    manualResultsViewSource.includes('buildMatchingBaselineScenarioDraft') &&
+    manualResultsViewSource.includes('writeScenarioDraft(draftId, matchingBaselineDraft)') &&
+    !manualResultsViewSource.includes('submitModelRun('),
+  'A missing baseline should name the matching model, steps, and seeds, then open a pre-filled builder without submitting a job'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.comparison-create-baseline-message {\n  display: flex;') &&
+    manualResultsStylesSource.includes('justify-content: space-between;') &&
+    manualResultsStylesSource.includes('.comparison-create-baseline-action {\n  flex: 0 0 auto;') &&
+    manualResultsStylesSource.includes('margin-left: auto;') &&
+    manualResultsStylesSource.includes('font-size: 1rem;') &&
+    manualResultsStylesSource.includes('.comparison-calibration-note {\n  padding: 0.7rem 0.85rem;\n  border-left: 3px solid #b45309;') &&
+    manualResultsStylesSource.includes('background: #fef6e7;'),
+  'The create action should sit at the far right in larger type, and calibration notes should use the yellow caution style'
+);
+assert.ok(
+  manualResultsViewSource.includes('formatManualComparisonOptionAnnotation') &&
+    !manualResultsViewSource.includes("' — not comparable'"),
+  'Comparison options should use calibration-only annotations instead of setup counts or a blanket verdict'
+);
+assert.ok(
+  manualResultsViewSource.includes('const SHOW_NEW_LENDING_SECTION = false;') &&
+    manualResultsViewSource.includes('SHOW_NEW_LENDING_SECTION && (') &&
+    manualResultsViewSource.includes('SHOW_NEW_LENDING_SECTION && LENDING_METRIC_BY_INDICATOR') &&
+    manualResultsViewSource.includes('<NewLendingCard'),
+  'New lending and its Distribution actions should be hidden behind one reversible flag'
+);
+assert.ok(
+  manualResultsViewSource.includes('const SHOW_DWELLINGS_PER_HOUSEHOLD = false;') &&
+    manualResultsViewSource.includes('SHOW_DWELLINGS_PER_HOUSEHOLD && provenance.dwellingsPerHousehold'),
+  'The dwellings-per-household readout should remain implemented but hidden from the selector strip'
+);
+assert.ok(
+  manualResultsViewSource.includes('<strong>Warm-up period</strong>') &&
+    manualResultsViewSource.includes('const ANALYSIS_CUTOFF_OPTIONS = [0, 500, 1_000, 1_500, 2_000] as const;') &&
+    manualResultsViewSource.includes('discarding at least the first 500 months') &&
+    manualResultsViewSource.includes('2,000 months are discarded when 10,000 steps are used') &&
+    manualResultsViewSource.includes('analysisCutoffMonths') &&
+    manualResultsViewSource.includes('{formatWholeNumber(remainingAnalysisMonths)} months remain') &&
+    manualResultsViewSource.includes('applies to this page') &&
+    !manualResultsViewSource.includes('analysis-window-suggested'),
+  'The warm-up control should offer the requested cutoffs without a suggested badge and update the remaining-month count'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.comparison-control-strip.has-guidance {\n  grid-template-columns: 1fr;'),
+  'Comparison guidance should use the full-width fallback directly beneath the run selectors'
+);
+assert.ok(
   manualResultsViewSource.includes('useState<string[]>([])') &&
     !manualResultsViewSource.includes("useState<string[]>(['credit_access'])"),
   'Every policy-results group should start collapsed until the user opens it'
@@ -8756,6 +9350,27 @@ const sensitivityResultsViewSource = fs.readFileSync(
   'utf-8'
 );
 assert.ok(
+    sensitivityResultsViewSource.includes('title="Outcome responses and results by tested value"') &&
+    sensitivityResultsViewSource.includes('className="info-banner sensitivity-interpretation-callout"') &&
+    sensitivityResultsViewSource.includes('How to interpret and use these results') &&
+    sensitivityResultsViewSource.includes('<strong>Find the strongest responses.</strong>') &&
+    sensitivityResultsViewSource.includes('<strong>Check the direction.</strong>') &&
+    sensitivityResultsViewSource.includes('<strong>Verify the values.</strong>') &&
+    !sensitivityResultsViewSource.includes("selectedExperiment.title || selectedExperiment.experimentId") &&
+    sensitivityResultsViewSource.includes('<h3 id="sensitivity-tested-values-heading">Results by tested value</h3>') &&
+    sensitivityResultsViewSource.includes('className="validation-chart sensitivity-tornado-chart"') &&
+    sensitivityResultsViewSource.includes('comparableTornadoBars.length * 34 + 96') &&
+    !sensitivityResultsViewSource.includes('title="Outcome responses"') &&
+    !sensitivityResultsViewSource.includes('title="Results by tested value"'),
+  'Sensitivity results should share one disclosure and give dense tornado labels enough vertical room'
+);
+assert.ok(
+  manualResultsStylesSource.includes('.validation-chart {\n  width: 100%;\n  min-width: 0;') &&
+    manualResultsStylesSource.includes('.sensitivity-trend-header {\n    align-items: stretch;\n    flex-direction: column;') &&
+    manualResultsStylesSource.includes('.trend-modal-head h3 {\n  overflow-wrap: anywhere;'),
+  'Results chart containers, selectors, and modal headings should fit narrow viewports without clipping'
+);
+assert.ok(
   sensitivityResultsViewSource.includes('window.confirm') &&
     sensitivityResultsViewSource.includes('window.prompt') &&
     sensitivityResultsViewSource.includes('deleteSensitivityExperiment'),
@@ -8772,7 +9387,7 @@ assert.ok(
     manualResultsViewSource.includes("setRunDetailsTarget('comparison')") &&
     manualResultsViewSource.includes('aria-haspopup="dialog"') &&
     manualResultsViewSource.indexOf('View comparison run details') <
-      manualResultsViewSource.indexOf("'Download primary raw files'") &&
+      manualResultsViewSource.indexOf("'Download primary run raw files'") &&
     manualResultsViewSource.includes('<FullRunDetailsDialog') &&
     sensitivityResultsViewSource.includes('title="Policy settings used"') &&
     sensitivityResultsViewSource.includes('defaultOpen={false}'),
@@ -8780,8 +9395,8 @@ assert.ok(
 );
 assert.ok(
   manualResultsViewSource.includes("'Download raw run files'") &&
-    manualResultsViewSource.includes("'Download primary raw files'") &&
-    manualResultsViewSource.includes("'Download comparison raw files'") &&
+    manualResultsViewSource.includes("'Download primary run raw files'") &&
+    manualResultsViewSource.includes("'Download comparison run raw files'") &&
     manualResultsViewSource.includes("complete raw output directory") &&
     sensitivityResultsViewSource.includes('Export experiment summary') &&
     sensitivityResultsViewSource.includes('aggregated experiment summary, metadata, and reproducibility manifest'),
@@ -8796,7 +9411,7 @@ assert.ok(
 assert.ok(
   !manualResultsViewSource.includes('manual-results-provenance') &&
     !manualResultsViewSource.includes('manual-results-mode-pill') &&
-    manualResultsStylesSource.includes('.manual-results-summary-card > .comparison-run-pickers'),
+    manualResultsStylesSource.includes('.comparison-control-strip > .comparison-run-pickers'),
   'Policy results should begin with run selection instead of repeating a changing selected-run summary'
 );
 assert.ok(
@@ -9211,10 +9826,12 @@ assert.ok(
   'Validation page should leave metric weights in the payload without displaying them'
 );
 assert.ok(
-  validationPageSource.includes('<span>Version</span>') &&
-    validationPageSource.includes('<span>Validation Year</span>') &&
-    validationPageSource.includes('availableValidationTargetYears.map'),
-  'Validation page should always render the version selector and derive validation-year options from the selected version'
+  validationPageSource.includes('<span>Evidence year</span>') &&
+    validationPageSource.includes('<option value={2024}>2024 evidence</option>') &&
+    validationPageSource.includes('<option value={2011}>2011 reference evidence</option>') &&
+    validationPageSource.includes('resolveValidationModelsForEvidenceYear') &&
+    validationPageSource.includes('availableValidationTargetYearsByVersion'),
+  'Validation page should offer both evidence years and derive compatible models from API availability'
 );
 assert.ok(
   validationPageSource.includes('fetchVersions') &&
@@ -9481,8 +10098,11 @@ assert.ok(
 assert.ok(
   eChartSource.includes('onClick?: (params: unknown) => void;') &&
     eChartSource.includes("instance.on('click', clickHandler)") &&
-    eChartSource.includes("instance.off('click', clickHandler)"),
-  'EChart should expose an optional click handler and attach it to the ECharts instance'
+    eChartSource.includes("instance.off('click', clickHandler)") &&
+    eChartSource.includes('new ResizeObserver(scheduleResize)') &&
+    eChartSource.includes('observer.observe(containerRef.current.parentElement)') &&
+    eChartSource.includes('window.requestAnimationFrame(() => instance.resize())'),
+  'EChart should attach click handling and resize after modal, collapsible, or viewport layout changes'
 );
 assert.ok(
   apiSource.includes("/api/validation-overview") && apiSource.includes("validationTargetYear"),
@@ -9573,6 +10193,11 @@ assert.ok(
     !comparePageSource.includes('Why output calibration is necessary') &&
     !comparePageSource.includes('Seeds, run length, bounds and provenance'),
   'Calibration provenance should be typed by model state and render the universal model-aware origin section'
+);
+assert.ok(
+  comparePageSource.indexOf('<BehaviouralParameterOriginSection') >
+    comparePageSource.indexOf('title="Other model assumptions"'),
+  'Calibration should place behavioural-parameter provenance after the other calibration sections'
 );
 assert.ok(
   comparePageSource.includes('export function FittedParameterRow') &&

@@ -661,10 +661,6 @@ export function ComparePage() {
     {error && <p className="error-banner">{error}</p>}{waiting && <p className="waiting-banner">Waiting for API to become available. Retrying every 2 seconds…</p>}
     {loading && !overview ? <LoadingSkeletonGroup count={4} ariaLabel="Loading calibration analysis" /> : overview && <>
       <main className="calibration-main">
-        <BehaviouralParameterOriginSection
-          model={overview.primary}
-          differentEvidenceProfile={mode === 'compare' && !overview.sameEvidenceProfile}
-        />
         <CalibrationSection
           className="calibration-parameters"
           title="Five fitted behavioural parameters"
@@ -684,49 +680,53 @@ export function ComparePage() {
             />
           )}
         </CalibrationSection>
+        <CalibrationSection
+          className="assumption-reference assumption-reference-full"
+          title="Other model assumptions"
+          summary={mode === 'compare'
+            ? `${referenceItems.length} assumptions · ${referenceItems.filter((item) => !item.unchanged).length} changed`
+            : `${referenceItems.length} assumptions`}
+          defaultOpen={false}
+        >
+          <p className="assumption-reference-intro">
+            These are the model inputs outside the five fitted behavioural parameters. Each row represents one
+            related assumption or input dataset. Use the values to see what the selected model contains
+            {mode === 'compare' ? ' and whether it changed between the two models' : ''}. “Basis for assumption” says
+            whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
+            Source/evidence records the specific evidence it came from.
+          </p>
+          <div className="assumption-groups">
+            {[...referenceGroups.entries()].map(([group, items]) =>
+              <AssumptionGroupDisclosure key={group as ParameterGroup} group={group} assumptionCount={items.length}>
+                <div className="assumption-table" role="table">
+                  <div className="assumption-table-head" role="row">
+                    <span>Assumption and config key</span>
+                    <span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span>
+                    <span>Basis for assumption</span>
+                    <span>Source / evidence</span>
+                  </div>
+                  {items.map((item) => {
+                    const meta = catalog.find((entry) => entry.id === item.id)!;
+                    const complex = item.visualPayload.type !== 'scalar';
+                    const derivation = meta.keyMetadata[0]?.derivation;
+                    return <div className="assumption-table-row" role="row" key={item.id}>
+                      <div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div>
+                      <div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div>
+                      <div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div>
+                      <div><SourceSummary item={item} mode={mode} meta={meta} /></div>
+                    </div>;
+                  })}
+                </div>
+              </AssumptionGroupDisclosure>
+            )}
+          </div>
+          {referenceGroups.size === 0 && <p className="info-banner">No model assumptions are available.</p>}
+        </CalibrationSection>
+        <BehaviouralParameterOriginSection
+          model={overview.primary}
+          differentEvidenceProfile={mode === 'compare' && !overview.sameEvidenceProfile}
+        />
       </main>
-    <CalibrationSection
-      className="assumption-reference assumption-reference-full"
-      title="Other model assumptions"
-      summary={mode === 'compare'
-        ? `${referenceItems.length} assumptions · ${referenceItems.filter((item) => !item.unchanged).length} changed`
-        : `${referenceItems.length} assumptions`}
-      defaultOpen={false}
-    >
-      <p className="assumption-reference-intro">
-        These are the model inputs outside the five fitted behavioural parameters. Each row represents one
-        related assumption or input dataset. Use the values to see what the selected model contains
-        {mode === 'compare' ? ' and whether it changed between the two models' : ''}. “Basis for assumption” says
-        whether it was calculated from observed data, postulated, policy-set, technically set, or output-calibrated.
-        Source/evidence records the specific evidence it came from.
-      </p>
-      <div className="assumption-groups">
-        {[...referenceGroups.entries()].map(([group, items]) =>
-          <AssumptionGroupDisclosure key={group as ParameterGroup} group={group} assumptionCount={items.length}>
-            <div className="assumption-table" role="table">
-              <div className="assumption-table-head" role="row">
-                <span>Assumption and config key</span>
-                <span>{mode === 'compare' ? 'Model values and change' : 'Model value'}</span>
-                <span>Basis for assumption</span>
-                <span>Source / evidence</span>
-              </div>
-              {items.map((item) => {
-                const meta = catalog.find((entry) => entry.id === item.id)!;
-                const complex = item.visualPayload.type !== 'scalar';
-                const derivation = meta.keyMetadata[0]?.derivation;
-                return <div className="assumption-table-row" role="row" key={item.id}>
-                  <div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div>
-                  <div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div>
-                  <div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div>
-                  <div><SourceSummary item={item} mode={mode} meta={meta} /></div>
-                </div>;
-              })}
-            </div>
-          </AssumptionGroupDisclosure>
-        )}
-      </div>
-      {referenceGroups.size === 0 && <p className="info-banner">No model assumptions are available.</p>}
-    </CalibrationSection>
     </>}
     {inspectionItem && <div
       className="scenario-create-modal-backdrop"

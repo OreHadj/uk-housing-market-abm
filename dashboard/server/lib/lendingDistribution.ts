@@ -513,7 +513,15 @@ function readRunLendingConfig(runPath: string): RunLendingConfig {
 }
 
 export function normalizeLendingWindow(rawWindow: string | undefined): ResultsCompareWindow {
-  if (rawWindow === 'post200' || rawWindow === 'tail120' || rawWindow === 'full') {
+  if (
+    rawWindow === 'post200' ||
+    rawWindow === 'post500' ||
+    rawWindow === 'post1000' ||
+    rawWindow === 'post1500' ||
+    rawWindow === 'post2000' ||
+    rawWindow === 'tail120' ||
+    rawWindow === 'full'
+  ) {
     return rawWindow;
   }
   return 'post500';
@@ -557,7 +565,13 @@ function resolveWindow(
   }
 
   const requestedCutoff =
-    requested === 'post500' ? POST_500_CUTOFF_TICKS : requested === 'post200' ? SPIN_UP_CUTOFF_TICKS : dataStart;
+    requested === 'post500'
+      ? POST_500_CUTOFF_TICKS
+      : requested === 'post200'
+        ? SPIN_UP_CUTOFF_TICKS
+        : requested.startsWith('post')
+          ? Number.parseInt(requested.slice(4), 10)
+          : dataStart;
   const start = Math.max(dataStart, requestedCutoff);
   const clamped = requested !== 'full' && requestedCutoff <= dataStart;
   return {

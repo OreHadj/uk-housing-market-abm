@@ -13,6 +13,7 @@ import {
   formatValidationScorecardValue,
   formatValidationSnapshotProtocol,
   hasMetricProvenance,
+  resolveValidationModelsForEvidenceYear,
   sortValidationMetrics,
   VALIDATION_METRIC_DETAILS_PANEL_ID,
   ValidationMetricDetailsPanel,
@@ -74,10 +75,52 @@ function renderValidation(entry: string): string {
 
 const singleMarkup = renderValidation('/validation?version=v5o3&evidenceYear=2024');
 assert.ok(
-  singleMarkup.includes('The evidence used to validate this model was from <strong>2024</strong>.'),
-  'The fixed evidence year should be explanatory text'
+  singleMarkup.includes('The selected model is validated against <strong>2024 evidence</strong>.'),
+  'The selected evidence year should be explanatory text'
 );
-assert.equal(singleMarkup.includes('>Evidence year</span>'), false, 'Evidence year should not look selectable');
+assert.ok(singleMarkup.includes('>Evidence year</span>'), 'Evidence year should be selectable');
+assert.ok(singleMarkup.includes('>2024 evidence</option>'));
+assert.ok(singleMarkup.includes('>2011 reference evidence</option>'));
+
+const referenceMarkup = renderValidation('/validation?version=v0o2&evidenceYear=2011');
+assert.ok(
+  referenceMarkup.includes('<strong>2011 reference evidence overlay</strong>') &&
+    referenceMarkup.includes('historical reference view'),
+  'The 2011 choice should be clearly identified as a reference evidence overlay'
+);
+
+const validationAvailability = {
+  availableVersions: ['v0', 'v0o2', 'v0o7', 'v5o3'],
+  availableValidationTargetYearsByVersion: {
+    v0: [2024, 2011],
+    v0o2: [2024, 2011],
+    v0o7: [2024, 2011],
+    v5o3: [2024]
+  }
+};
+assert.deepEqual(
+  resolveValidationModelsForEvidenceYear(validationAvailability, 'v0o2', 'v0', 2011),
+  {
+    eligibleVersions: ['v0', 'v0o2', 'v0o7'],
+    selectedVersion: 'v0o2',
+    comparisonVersion: 'v0'
+  },
+  'A compatible primary and comparison should survive the evidence-year change, with v0o2 offered'
+);
+assert.deepEqual(
+  resolveValidationModelsForEvidenceYear(validationAvailability, 'v5o3', 'v0', 2011),
+  {
+    eligibleVersions: ['v0', 'v0o2', 'v0o7'],
+    selectedVersion: 'v0o7',
+    comparisonVersion: 'v0'
+  },
+  'An incompatible primary should fall back to the latest eligible named model'
+);
+assert.equal(
+  resolveValidationModelsForEvidenceYear(validationAvailability, 'v0', 'v5o3', 2011).comparisonVersion,
+  '',
+  'An incompatible comparison should be cleared'
+);
 assert.ok(
   singleMarkup.includes('If you want to understand the difference between two models, visit the') &&
     singleMarkup.includes('>calibration page</a>'),
@@ -446,8 +489,10 @@ assert.ok(
     metricDetailsMarkup.includes('tabindex="-1"') &&
     metricDetailsMarkup.includes('aria-labelledby="validation-metric-details-heading-core_mortgageApprovals"') &&
     metricDetailsMarkup.includes('Mortgage Approvals') &&
-    metricDetailsMarkup.includes('Loss family') &&
-    metricDetailsMarkup.includes('Positive level · log ratio') &&
+    metricDetailsMarkup.includes('validation-loss-family-detail') &&
+    metricDetailsMarkup.includes('<dt>Loss family</dt>') &&
+    metricDetailsMarkup.includes('<strong>Positive level</strong>') &&
+    metricDetailsMarkup.includes('<small><span>Transform</span>Log ratio</small>') &&
     metricDetailsMarkup.includes('Sources and provenance') &&
     metricDetailsMarkup.includes('Fixture evidence source'),
   'The external panel should be labelled by the metric and retain loss-family and provenance content'

@@ -602,17 +602,16 @@ function normalizeSmoothWindow(rawWindow: number | undefined): SmoothWindow {
 }
 
 function normalizeWindow(rawWindow: string | undefined): CompareWindow {
-  if (rawWindow === 'post500') {
-    return 'post500';
-  }
-  if (rawWindow === 'full') {
-    return 'full';
-  }
-  if (rawWindow === 'tail120') {
-    return 'tail120';
-  }
-  if (rawWindow === 'post200') {
-    return 'post200';
+  if (
+    rawWindow === 'post200' ||
+    rawWindow === 'post500' ||
+    rawWindow === 'post1000' ||
+    rawWindow === 'post1500' ||
+    rawWindow === 'post2000' ||
+    rawWindow === 'tail120' ||
+    rawWindow === 'full'
+  ) {
+    return rawWindow;
   }
   return 'post500';
 }
@@ -1202,6 +1201,12 @@ function toKpiWindowType(window: CompareWindow): KpiMetricWindowType {
       return 'post_500';
     case 'post200':
       return 'post_200';
+    case 'post1000':
+      return 'post_1000';
+    case 'post1500':
+      return 'post_1500';
+    case 'post2000':
+      return 'post_2000';
     case 'tail120':
       return 'tail_120';
     default:
@@ -1247,13 +1252,15 @@ function applyCompareWindow(points: ResultsSeriesPoint[], window: CompareWindow)
   if (window === 'full') {
     return points;
   }
-  if (window === 'post500') {
-    return points.filter((point) => point.modelTime >= POST_500_CUTOFF_TICKS);
+  if (window === 'tail120') {
+    return points.slice(Math.max(0, points.length - 120));
   }
-  if (window === 'post200') {
-    return points.filter((point) => point.modelTime >= SPIN_UP_CUTOFF_TICKS);
-  }
-  return points.slice(Math.max(0, points.length - 120));
+  const cutoff = window === 'post500'
+    ? POST_500_CUTOFF_TICKS
+    : window === 'post200'
+      ? SPIN_UP_CUTOFF_TICKS
+      : Number.parseInt(window.slice(4), 10);
+  return points.filter((point) => point.modelTime >= cutoff);
 }
 
 function alignSeriesByModelTime(seriesByRun: Array<{ runId: string; points: ResultsSeriesPoint[] }>) {
@@ -1526,6 +1533,7 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
   const configAvailable = fs.existsSync(configPath);
   const policySettings = readCentralBankPolicySettings(configPath);
   const title = readRunTitle(runPath);
+  const configuration = getRunConfiguration(runPath);
 
   const indicators: ResultsIndicatorAvailability[] = ALL_INDICATORS.map((indicator) => {
     const series = getRawSeriesForIndicator(runPath, indicator.id);
@@ -1557,12 +1565,13 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
     configAvailable,
     parseCoverage: coverage,
     policySettings,
-    provenance: getRunProvenance(runPath)
+    provenance: getRunProvenance(runPath),
+    configuration
   };
 
   const detail: ResultsRunDetail = {
     ...summary,
-    configuration: getRunConfiguration(runPath),
+    configuration,
     indicators,
     kpiSummary
   };
