@@ -18,6 +18,20 @@ const modelJarName = 'housing-model-1.0-SNAPSHOT-windows-release.jar';
 const releaseLayoutVersion = 1;
 const releaseInputVersionAllowlist = new Set(['v0o7', 'v0', 'v4.26', 'v5o3']);
 
+// The Calibration page renders campaign provenance from these files. The wider
+// calibration-evidence tree is ~61 MB of research output and stays out of the release;
+// only the artifacts the dashboard actually reads are shipped (~571 KB).
+const releaseCalibrationEvidenceAllowlist = [
+  'calibration-evidence/output-grid-smm-v0-2011-carro-3level/OutputGridSmmMetadata.json',
+  'calibration-evidence/output-five-parameter-turbo-v0o7/OutputParameterTurboCalibrationSummary.json',
+  'calibration-evidence/output-five-parameter-turbo-v0o7/OutputParameterTurboMetadata.json',
+  'calibration-evidence/output-five-parameter-turbo-v0o7/README.md',
+  'calibration-evidence/output-five-parameter-turbo-v5o3/OutputParameterTurboCalibrationSummary.json',
+  'calibration-evidence/output-five-parameter-turbo-v5o3/OutputParameterTurboMetadata.json',
+  'calibration-evidence/output-five-parameter-turbo-v5o3/README.md',
+  'CALIBRATION_PARAMETER_CHANGELOG.md'
+];
+
 function usage() {
   return `Usage: node scripts/windows/assemble-release-resources.mjs [options]
 
@@ -366,6 +380,14 @@ function assembleReleaseData(outputRoot) {
     path.join(releaseInputRoot, 'validation-overlays')
   );
 
+  for (const relativePath of releaseCalibrationEvidenceAllowlist) {
+    const sourcePath = path.join(inputDataRoot, relativePath);
+    if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+      fail(`Missing calibration provenance file for release-data: ${sourcePath}`);
+    }
+    copyFile(sourcePath, path.join(releaseInputRoot, relativePath));
+  }
+
   return writeReleaseDataManifest(releaseDataRoot);
 }
 
@@ -428,10 +450,14 @@ function validateReleaseDataAllowlist(releaseDataRoot) {
     'node_modules',
     'dist',
     'dist-server',
-    'calibration-evidence',
     'validation-sources',
     'agents'
   ]);
+  // calibration-evidence is not denied outright: the dashboard reads a handful of provenance
+  // artifacts from it. Anything outside that allowlist is still rejected.
+  const allowedCalibrationEvidence = new Set(
+    releaseCalibrationEvidenceAllowlist.map((entry) => `input-data-versions/${entry}`)
+  );
   const disallowedBasenames = [/^AGENTS?\.md$/i, /^AGENT.*\.md$/i, /^CLAUDE\.md$/i, /^PROMPT\.md$/i, /^\.env/i];
 
   for (const filePath of listFiles(releaseDataRoot)) {
@@ -439,6 +465,9 @@ function validateReleaseDataAllowlist(releaseDataRoot) {
     const parts = relativePath.split('/');
     if (parts.some((part) => disallowedParts.has(part))) {
       fail(`Disallowed path found in release-data: ${relativePath}`);
+    }
+    if (parts.includes('calibration-evidence') && !allowedCalibrationEvidence.has(relativePath)) {
+      fail(`Non-allowlisted calibration-evidence file found in release-data: ${relativePath}`);
     }
     const baseName = path.basename(relativePath);
     if (disallowedBasenames.some((pattern) => pattern.test(baseName))) {
