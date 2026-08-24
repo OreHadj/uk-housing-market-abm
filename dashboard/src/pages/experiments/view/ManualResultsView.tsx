@@ -78,6 +78,7 @@ import {
 const PROTECTED_RESULTS_RUN_IDS = new Set(['v0-output', 'v4.0-output']);
 const SHOW_DWELLINGS_PER_HOUSEHOLD = false;
 const SHOW_NEW_LENDING_SECTION = false;
+const SHOW_LENDING_DERIVED_INDICATORS = false;
 const ANALYSIS_CUTOFF_OPTIONS = [0, 500, 1_000, 1_500, 2_000] as const;
 
 type CompareWindow = ResultsCompareWindow;
@@ -272,6 +273,7 @@ interface ManualResultsViewProps {
   authEnabled: boolean;
   requestedBaselineRunId: string;
   requestedComparisonRunId: string;
+  queueInitiallyExpanded?: boolean;
   onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string }) => void;
   sidebarSubtitle: string;
 }
@@ -345,6 +347,7 @@ export function ManualResultsView({
   authEnabled,
   requestedBaselineRunId,
   requestedComparisonRunId,
+  queueInitiallyExpanded = false,
   onManualSelectionChange,
   sidebarSubtitle
 }: ManualResultsViewProps) {
@@ -392,7 +395,7 @@ export function ManualResultsView({
   const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
   const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
-  const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(false);
+  const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
   // Clearing the comparison is an explicit user choice for this primary run. Keep that choice
   // locally so the URL's absent comparison id is not immediately reinterpreted as "choose default".
   const [comparisonDefaultOptOutRunId, setComparisonDefaultOptOutRunId] = useState<string>('');
@@ -897,15 +900,21 @@ export function ManualResultsView({
     [lendingBaseline]
   );
   const lendingIndicators = useMemo(
-    () => (lendingBaseline ? buildLendingIndicatorAvailability(lendingBaseline, lendingUnavailableNote) : []),
+    () => (SHOW_LENDING_DERIVED_INDICATORS && lendingBaseline
+      ? buildLendingIndicatorAvailability(lendingBaseline, lendingUnavailableNote)
+      : []),
     [lendingBaseline, lendingUnavailableNote]
   );
   const lendingKpis = useMemo(
-    () => (lendingBaseline ? buildLendingKpis(lendingBaseline, kpiWindowType) : []),
+    () => (SHOW_LENDING_DERIVED_INDICATORS && lendingBaseline
+      ? buildLendingKpis(lendingBaseline, kpiWindowType)
+      : []),
     [kpiWindowType, lendingBaseline]
   );
   const lendingComparisonKpis = useMemo(
-    () => (lendingComparison ? buildLendingKpis(lendingComparison, kpiWindowType) : []),
+    () => (SHOW_LENDING_DERIVED_INDICATORS && lendingComparison
+      ? buildLendingKpis(lendingComparison, kpiWindowType)
+      : []),
     [kpiWindowType, lendingComparison]
   );
 
@@ -1579,11 +1588,7 @@ export function ManualResultsView({
                         <th scope="col">Indicator</th>
                         <th scope="col">{mode === 'compare' ? PRIMARY_RUN_LABEL : 'Mean for a single run'}</th>
                         {mode === 'compare' && <th scope="col">{COMPARISON_RUN_LABEL}</th>}
-                        {mode === 'compare' && (
-                          <th scope="col">
-                            Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL} ({comparisonIsMatched ? 'matched' : 'unmatched'})
-                          </th>
-                        )}
+                        {mode === 'compare' && <th scope="col">Primary vs comparison</th>}
                         <th scope="col">Trend</th>
                       </tr>
                     </thead>

@@ -41,6 +41,7 @@ interface SensitivityResultsViewProps {
   deleteKeyRequired: boolean;
   authEnabled: boolean;
   requestedExperimentId: string;
+  queueInitiallyExpanded?: boolean;
   onSelectedExperimentIdChange: (experimentId: string) => void;
   sidebarSubtitle: string;
 }
@@ -210,6 +211,7 @@ export function SensitivityResultsView({
   deleteKeyRequired,
   authEnabled,
   requestedExperimentId,
+  queueInitiallyExpanded = false,
   onSelectedExperimentIdChange,
   sidebarSubtitle
 }: SensitivityResultsViewProps) {
@@ -225,6 +227,10 @@ export function SensitivityResultsView({
   const [isDownloadingExperiment, setIsDownloadingExperiment] = useState<boolean>(false);
   const [isDeletingExperimentId, setIsDeletingExperimentId] = useState<string>('');
   const [pageError, setPageError] = useState<string>('');
+  const activeExperiments = useMemo(
+    () => experiments.filter((experiment) => experiment.status === 'queued' || experiment.status === 'running'),
+    [experiments]
+  );
 
   useEffect(() => {
     // Wait for the experiment list to load before syncing the selection back to the URL. On mount
@@ -455,6 +461,35 @@ export function SensitivityResultsView({
   return (
     <section className="results-layout">
       {pageError && <p className="error-banner">{pageError}</p>}
+
+      {activeExperiments.length > 0 && (
+        <CollapsibleSection
+          className="results-card run-queue-card sensitivity-run-queue-card"
+          title="Queue"
+          description="Sensitivity analyses that are running or waiting to run."
+          summary={`${activeExperiments.length} active ${activeExperiments.length === 1 ? 'run' : 'runs'}`}
+          defaultOpen={queueInitiallyExpanded}
+        >
+          <ul className="run-list sensitivity-run-history-list">
+            {activeExperiments.map((experiment) => (
+              <li key={experiment.experimentId} className="run-item">
+                <div className="run-item-head">
+                  <strong>{experiment.title || experiment.experimentId}</strong>
+                  <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
+                </div>
+                <p>Instrument: {experiment.parameter.title}</p>
+                <button
+                  type="button"
+                  className="run-select-btn"
+                  onClick={() => setSelectedExperimentId(experiment.experimentId)}
+                >
+                  View run
+                </button>
+              </li>
+            ))}
+          </ul>
+        </CollapsibleSection>
+      )}
 
       <article className="results-card sensitivity-summary-card">
         <div className="results-card-head sensitivity-summary-actions">

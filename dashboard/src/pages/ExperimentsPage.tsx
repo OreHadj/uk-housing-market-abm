@@ -43,6 +43,7 @@ export function ExperimentsPage({
   const baselineRunId = searchParams.get('baselineRunId')?.trim() || searchParams.get('runId')?.trim() || '';
   const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
+  const queueInitiallyExpanded = searchParams.get('queue') === 'open';
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
   const draftId = searchParams.get('draft')?.trim() ?? '';
 
@@ -179,10 +180,10 @@ export function ExperimentsPage({
               initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
               initialSensitivityStep={searchParams.get('step') === 'model-baseline' ? 2 : 0}
               onManualRunAccepted={(runId) => navigate(
-                `/results?type=manual${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`
+                `/results?type=manual&queue=open${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`
               )}
               onSensitivityRunAccepted={(id) => navigate(
-                `/results?type=sensitivity${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`
+                `/results?type=sensitivity&queue=open${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`
               )}
               onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
               onOpenManualResults={(runId) => {
@@ -207,6 +208,7 @@ export function ExperimentsPage({
           authEnabled={authEnabled}
           requestedBaselineRunId={baselineRunId}
           requestedComparisonRunId={comparisonRunId}
+          queueInitiallyExpanded={queueInitiallyExpanded}
           onManualSelectionChange={(selection) => updateSearch(selection)}
           sidebarSubtitle="Manage policy scenario runs"
         />
@@ -218,6 +220,7 @@ export function ExperimentsPage({
           deleteKeyRequired={deleteKeyRequired}
           authEnabled={authEnabled}
           requestedExperimentId={experimentId}
+          queueInitiallyExpanded={queueInitiallyExpanded}
           onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
           sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />

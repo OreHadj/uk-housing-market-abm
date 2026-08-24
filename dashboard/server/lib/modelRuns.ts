@@ -53,6 +53,12 @@ import {
   writeManualRunManifest
 } from './runManifest';
 import {
+  cancelQueuedLocalExperiment,
+  enqueueLocalExperiment,
+  finishLocalExperiment,
+  resetLocalExperimentQueueForTests
+} from './localExperimentExecutionQueue';
+import {
   MANAGED_RUN_MARKER,
   isDashboardManagedRun,
   writeDashboardManagedRunMarker
@@ -83,8 +89,8 @@ const DEFAULT_RESULTS_CAP_MB = 400;
 const MANUAL_POINT_ID = 'manual';
 const MANUAL_POINT_LABEL = 'manual parameters';
 const OUTPUT_FILE_NAME = 'Output-run1.csv';
-// Multi-seed runs are normal experiments; warn only at 100x the former one-seed limit.
-export const MULTIPLE_SIMULATIONS_WARNING_LIMIT = 100;
+// Multi-seed runs are normal experiments; warn only once a run asks for more than 50 seeds.
+export const MULTIPLE_SIMULATIONS_WARNING_LIMIT = 50;
 
 type ParameterDefinitionSeed = {
   key: string;
@@ -1288,23 +1294,24 @@ async function executeRunningModelJob(job: ModelRunJobInternal): Promise<void> {
       `Run ${job.job.jobId} ended with status ${job.job.status}; ${formatProgressBrief(createProgressSnapshot(job, job.job.status))}`
     );
     runningJobId = null;
-    startNextQueuedJob();
+    finishLocalExperiment(`manual:${job.job.jobId}`);
   }
 }
 
-function startNextQueuedJob(): void {
+function startQueuedJob(jobId: string): void {
   if (shutdownRequested) {
+    finishLocalExperiment(`manual:${jobId}`);
     return;
   }
   if (runningJobId !== null) {
+    finishLocalExperiment(`manual:${jobId}`);
     return;
   }
 
-  const queuedJob = jobOrder
-    .map((jobId) => jobsById.get(jobId))
-    .find((job): job is ModelRunJobInternal => job !== undefined && job.job.status === 'queued');
+  const queuedJob = jobsById.get(jobId);
 
-  if (!queuedJob) {
+  if (!queuedJob || queuedJob.job.status !== 'queued') {
+    finishLocalExperiment(`manual:${jobId}`);
     return;
   }
 
@@ -1320,7 +1327,7 @@ function startNextQueuedJob(): void {
       appendLogLine(queuedJob.logBuffer, `[stderr] ${(error as Error).message}`, MAX_LOG_LINES);
       removeRunDirectoryIfDashboardManaged(queuedJob.runAbsolutePath, queuedJob.job.runId);
       fs.rmSync(queuedJob.tempDirPath, { recursive: true, force: true });
-      startNextQueuedJob();
+      finishLocalExperiment(`manual:${jobId}`);
       return;
     }
   }
@@ -1339,7 +1346,7 @@ function startNextQueuedJob(): void {
       MAX_LOG_LINES
     );
     fs.rmSync(queuedJob.tempDirPath, { recursive: true, force: true });
-    startNextQueuedJob();
+    finishLocalExperiment(`manual:${jobId}`);
     return;
   }
 
@@ -1440,7 +1447,7 @@ export function cancelModelRunJob(_pathsInput: RuntimePathInput, jobId: string):
     job.job.status = 'canceled';
     job.job.endedAt = new Date().toISOString();
     fs.rmSync(job.tempDirPath, { recursive: true, force: true });
-    startNextQueuedJob();
+    cancelQueuedLocalExperiment(`manual:${job.job.jobId}`);
     return toPublicJob(job);
   }
 
@@ -1718,7 +1725,7 @@ export function submitModelRun(
 
   jobsById.set(job.jobId, internalJob);
   jobOrder.push(job.jobId);
-  startNextQueuedJob();
+  enqueueLocalExperiment(`manual:${job.jobId}`, () => startQueuedJob(job.jobId));
 
   return {
     accepted: true,
@@ -1757,6 +1764,7 @@ export function shutdownModelRunProcesses(): void {
 
 export function __resetModelRunManagerForTests(): void {
   shutdownModelRunProcesses();
+  resetLocalExperimentQueueForTests('manual:');
   jobsById.clear();
   jobOrder.length = 0;
   runningJobId = null;

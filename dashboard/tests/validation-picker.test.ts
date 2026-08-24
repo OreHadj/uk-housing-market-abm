@@ -82,7 +82,7 @@ assert.ok(singleMarkup.includes('>Evidence year</span>'), 'Evidence year should 
 assert.ok(singleMarkup.includes('>2024 evidence</option>'));
 assert.ok(singleMarkup.includes('>2011 reference evidence</option>'));
 
-const referenceMarkup = renderValidation('/validation?version=v0o2&evidenceYear=2011');
+const referenceMarkup = renderValidation('/validation?version=v0o7&evidenceYear=2011');
 assert.ok(
   referenceMarkup.includes('<strong>2011 reference evidence overlay</strong>') &&
     referenceMarkup.includes('historical reference view'),
@@ -101,16 +101,16 @@ const validationAvailability = {
 assert.deepEqual(
   resolveValidationModelsForEvidenceYear(validationAvailability, 'v0o2', 'v0', 2011),
   {
-    eligibleVersions: ['v0', 'v0o2', 'v0o7'],
-    selectedVersion: 'v0o2',
+    eligibleVersions: ['v0', 'v0o7'],
+    selectedVersion: 'v0o7',
     comparisonVersion: 'v0'
   },
-  'A compatible primary and comparison should survive the evidence-year change, with v0o2 offered'
+  'A historical calibration step should fall back to the latest runnable model'
 );
 assert.deepEqual(
   resolveValidationModelsForEvidenceYear(validationAvailability, 'v5o3', 'v0', 2011),
   {
-    eligibleVersions: ['v0', 'v0o2', 'v0o7'],
+    eligibleVersions: ['v0', 'v0o7'],
     selectedVersion: 'v0o7',
     comparisonVersion: 'v0'
   },

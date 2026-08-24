@@ -55,6 +55,7 @@ export function ResultsPage({
   const baselineRunId = searchParams.get('baselineRunId')?.trim() || searchParams.get('runId')?.trim() || '';
   const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
+  const queueInitiallyExpanded = searchParams.get('queue') === 'open';
 
   const updateSearch = useCallback(
     (updates: Record<string, string>) => {
@@ -102,6 +103,7 @@ export function ResultsPage({
           authEnabled={authEnabled}
           requestedBaselineRunId={baselineRunId}
           requestedComparisonRunId={comparisonRunId}
+          queueInitiallyExpanded={queueInitiallyExpanded}
           onManualSelectionChange={(selection) => updateSearch(selection)}
           sidebarSubtitle="Manage policy scenario runs"
         />
@@ -113,6 +115,7 @@ export function ResultsPage({
           deleteKeyRequired={deleteKeyRequired}
           authEnabled={authEnabled}
           requestedExperimentId={experimentId}
+          queueInitiallyExpanded={queueInitiallyExpanded}
           onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
           sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />

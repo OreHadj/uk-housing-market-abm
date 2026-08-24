@@ -47,6 +47,7 @@ import type { RouteContext } from './routeContext';
 const MODEL_RUNS_DISABLED_REASON_CONFIG =
   'Model execution is disabled in this environment.';
 const FINISHED_EXPERIMENT_STATUSES = new Set(['succeeded', 'failed', 'canceled']);
+const ALLOW_MIXED_EXPERIMENT_QUEUEING = true;
 
 function contentDispositionFileName(fileName: string): string {
   const quoted = fileName.replace(/["\\]/g, '_');
@@ -390,7 +391,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
 
-    if (hasActiveSensitivityExperiment(context.runtimePaths)) {
+    if (!ALLOW_MIXED_EXPERIMENT_QUEUEING && hasActiveSensitivityExperiment(context.runtimePaths)) {
       const experimentId = getActiveSensitivityExperimentId(context.runtimePaths);
       res.status(409).json({
         error: `Cannot queue manual runs while sensitivity experiment ${experimentId ?? ''} is active.`.trim()

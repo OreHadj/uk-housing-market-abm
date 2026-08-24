@@ -212,8 +212,7 @@ export function SensitivitySetupCard({
   const basePolicyValues = selectedPackage && selectedBasePolicy ? formatPackageBaseValues(selectedPackage, selectedBasePolicy) : null;
   const simulationDuration = String(formValues.N_STEPS ?? '');
   const seedsPerPoint = parsePositiveIntegerForDisplay(formValues.N_SIMS);
-  const submissionBlocked =
-    isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual || hasActiveSensitivityJob;
+  const submissionBlocked = isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual;
 
   const pointCount = sampleValues.length;
   const sweepSentence = (() => {

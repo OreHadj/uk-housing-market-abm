@@ -1283,8 +1283,8 @@ export class RemoteExecutionManager {
     return {
       jobs,
       locks: {
-        manualSubmissionLocked: Boolean(activeSensitivity),
-        sensitivitySubmissionLocked: Boolean(activeManual),
+        manualSubmissionLocked: false,
+        sensitivitySubmissionLocked: false,
         activeManualJobRef: activeManual?.jobRef ?? null,
         activeSensitivityJobRef: activeSensitivity?.jobRef ?? null
       }
@@ -1319,6 +1319,7 @@ export class RemoteExecutionManager {
     job.status = 'canceled';
     job.endedAt = isoNow();
     await this.saveIndex(index);
+    await this.startQueuedRemoteJobs(index);
     return { job: this.toExperimentJobSummary(job) };
   }
 
@@ -1370,11 +1371,6 @@ export class RemoteExecutionManager {
     }
 
     const index = await this.refreshIndex();
-    const activeCount = index.jobs.filter((item) => isActive(item.status)).length;
-    if (activeCount >= this.config.maxActiveRemoteRuns) {
-      throw new Error(`Remote experiment capacity reached (${this.config.maxActiveRemoteRuns}).`);
-    }
-
     const request: RemoteRunRequest = {
       schemaVersion: 1,
       jobRef: job.jobRef,
@@ -1389,24 +1385,49 @@ export class RemoteExecutionManager {
     await this.adapter.putJson(this.config.artifactsBucket, job.requestKey, request);
     index.jobs.push(job);
     await this.saveIndex(index);
-    try {
-      const commandId = await this.adapter.sendRunCommand({
-        instanceId: this.config.runnerInstanceId,
-        bucket: this.config.artifactsBucket,
-        region: this.config.region,
-        requestKey: job.requestKey,
-        jobRef: job.jobRef
-      });
-      job.ssmCommandId = commandId;
-      job.status = 'running';
-      job.startedAt = isoNow();
+    await this.startQueuedRemoteJobs(index);
+    if (job.status === 'failed') {
+      throw new Error(job.failureReason ?? `Failed to start remote experiment ${job.jobRef}.`);
+    }
+  }
+
+  private async startQueuedRemoteJobs(index: RemoteJobIndex): Promise<void> {
+    let availableSlots = Math.max(
+      0,
+      this.config.maxActiveRemoteRuns - index.jobs.filter((item) => item.status === 'running').length
+    );
+    if (availableSlots === 0) {
+      return;
+    }
+
+    const queuedJobs = index.jobs.filter((item) => item.status === 'queued' && !item.ssmCommandId);
+    let changed = false;
+    for (const queuedJob of queuedJobs) {
+      if (availableSlots === 0) {
+        break;
+      }
+      try {
+        const commandId = await this.adapter.sendRunCommand({
+          instanceId: this.config.runnerInstanceId,
+          bucket: this.config.artifactsBucket,
+          region: this.config.region,
+          requestKey: queuedJob.requestKey,
+          jobRef: queuedJob.jobRef
+        });
+        queuedJob.ssmCommandId = commandId;
+        queuedJob.status = 'running';
+        queuedJob.startedAt = isoNow();
+        availableSlots -= 1;
+      } catch (error) {
+        queuedJob.status = 'failed';
+        queuedJob.endedAt = isoNow();
+        queuedJob.failureReason = (error as Error).message.slice(0, 500);
+      }
+      changed = true;
+    }
+
+    if (changed) {
       await this.saveIndex(index);
-    } catch (error) {
-      job.status = 'failed';
-      job.endedAt = isoNow();
-      job.failureReason = (error as Error).message.slice(0, 500);
-      await this.saveIndex(index);
-      throw error;
     }
   }
 
@@ -1460,6 +1481,7 @@ export class RemoteExecutionManager {
     if (changed) {
       await this.saveIndex(index);
     }
+    await this.startQueuedRemoteJobs(index);
     return index;
   }
 

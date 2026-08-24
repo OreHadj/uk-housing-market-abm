@@ -20,7 +20,8 @@ import {
   buildModelOptions,
   getDefaultModelVersion,
   formatModelName,
-  formatModelSubtitle
+  formatModelSubtitle,
+  isModelAnchor
 } from '../lib/modelAnchors';
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
@@ -901,8 +902,10 @@ export function resolveValidationModelsForEvidenceYear(
   evidenceYear: number,
   inProgressVersions: readonly string[] = []
 ) {
-  const eligibleVersions = (overview?.availableVersions ?? []).filter((version) =>
-    (overview?.availableValidationTargetYearsByVersion[version] ?? []).includes(evidenceYear)
+  const eligibleVersions = (overview?.availableVersions ?? []).filter(
+    (version) =>
+      isModelAnchor(version) &&
+      (overview?.availableValidationTargetYearsByVersion[version] ?? []).includes(evidenceYear)
   );
   const nextSelectedVersion = eligibleVersions.includes(selectedVersion)
     ? selectedVersion
@@ -976,12 +979,11 @@ export function ValidationPage() {
           versions.inProgressVersions
         );
         if (
-          response.selectedValidationTargetYear !== selectedValidationTargetYear &&
           requestedYearSelection.eligibleVersions.length > 0 &&
           requestedYearSelection.selectedVersion !== response.selectedVersion
         ) {
           setSelectionNotice(
-            'That model is unavailable for the selected evidence year. Showing an eligible validated model.'
+            'That model is unavailable to run with the selected evidence year. Showing an eligible runnable model.'
           );
           setSelectedVersion(requestedYearSelection.selectedVersion);
           setComparisonVersion(requestedYearSelection.comparisonVersion);
@@ -1070,11 +1072,9 @@ export function ValidationPage() {
     ).eligibleVersions,
     [comparisonVersion, inProgressVersions, overview, selectedValidationTargetYear, selectedVersion]
   );
-  // The main 2024 view stays limited to named models, while the compact 2011 reference catalogue
-  // includes every eligible overlay (notably v0o2, which is intentionally not a named anchor).
+  // Validation uses the same named, runnable model catalogue as the experiment setup pages.
   const orderedVersions = useMemo(
     () => {
-      if (selectedValidationTargetYear === 2011) return eligibleVersions;
       const versions = buildModelOptions(eligibleVersions, selectedVersion, inProgressSet).map((option) => option.version);
       if (comparisonVersion && eligibleVersions.includes(comparisonVersion) && !versions.includes(comparisonVersion)) {
         versions.push(comparisonVersion);
@@ -1466,7 +1466,7 @@ export function ValidationPage() {
               <>
                 <h3>{REFERENCE_VALIDATION_SERIES_NAME}</h3>
                 <p className="validation-card-subtitle">
-                  Historical reference points for v0, v0o2, and v0o7. This is not a continuation of the 2024 timeline.
+                  Historical reference points for v0 and v0o7. This is not a continuation of the 2024 timeline.
                   Click a point to inspect that model, or switch Evidence year to 2024 for the recalibration trend.
                 </p>
                 {chart2011 ? <EChart option={chart2011} className="chart validation-chart" onClick={handleChartClick(2011)} /> : <p className="info-banner">No 2011 reference points are available.</p>}

@@ -80,8 +80,8 @@ export function listExperimentJobs(pathsInput: RuntimePathInput): ExperimentJobs
   return {
     jobs,
     locks: {
-      manualSubmissionLocked: Boolean(activeSensitivity),
-      sensitivitySubmissionLocked: Boolean(activeManual),
+      manualSubmissionLocked: false,
+      sensitivitySubmissionLocked: false,
       activeManualJobRef: activeManual?.jobRef ?? null,
       activeSensitivityJobRef: activeSensitivity?.jobRef ?? null
     }

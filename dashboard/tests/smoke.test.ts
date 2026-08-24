@@ -3130,8 +3130,8 @@ try {
   );
   assert.equal(
     remoteJobs.locks.manualSubmissionLocked,
-    true,
-    'Expected active remote sensitivity job to lock manual submission'
+    false,
+    'Expected active remote sensitivity jobs not to lock another submission'
   );
   const remoteSensitivityLogs = await remoteManager.getExperimentJobLogs(`sensitivity:${sensitivityExperimentId}`, 0, 20);
   assert.equal(remoteSensitivityLogs.progress?.percentComplete, 25, 'Expected remote SSM sensitivity logs to expose progress');
@@ -6602,7 +6602,7 @@ try {
     return fakeProcess as never;
   });
 
-  assert.equal(MULTIPLE_SIMULATIONS_WARNING_LIMIT, 100, 'Expected the seed-count warning limit to be 100x higher');
+  assert.equal(MULTIPLE_SIMULATIONS_WARNING_LIMIT, 50, 'Expected the seed-count warning limit to be 50 seeds');
   const atSeedWarningLimit = prepareModelRunSubmission(
     modelRunFixtureRoot,
     {
@@ -6618,7 +6618,7 @@ try {
     : atSeedWarningLimit.warnings;
   assert.ok(
     atSeedWarningLimitWarnings.every((warning) => warning.code !== 'multiple_simulations'),
-    'Expected 100 seeds not to show the runtime warning'
+    'Expected 50 seeds not to show the runtime warning'
   );
   const aboveSeedWarningLimit = prepareModelRunSubmission(
     modelRunFixtureRoot,
@@ -6635,7 +6635,7 @@ try {
     : aboveSeedWarningLimit.warnings;
   assert.ok(
     aboveSeedWarningLimitWarnings.some((warning) => warning.code === 'multiple_simulations'),
-    'Expected the runtime warning above 100 seeds'
+    'Expected the runtime warning above 50 seeds'
   );
 
   const warningResponse = submitModelRun(modelRunFixtureRoot, {
@@ -7527,7 +7527,7 @@ try {
     : sensitivityAtSeedWarningLimit.warnings;
   assert.ok(
     sensitivityAtSeedWarningLimitWarnings.every((warning) => warning.code !== 'multiple_simulations'),
-    'Expected sensitivity runs at 100 seeds per point not to show the runtime warning'
+    'Expected sensitivity runs at 50 seeds per point not to show the runtime warning'
   );
   const sensitivityAboveSeedWarningLimit = prepareSensitivityExperimentSubmission(seedWarningFixtureRoot, {
     baseline: 'v1.0',
@@ -7543,7 +7543,7 @@ try {
     : sensitivityAboveSeedWarningLimit.warnings;
   assert.ok(
     sensitivityAboveSeedWarningLimitWarnings.some((warning) => warning.code === 'multiple_simulations'),
-    'Expected sensitivity runs above 100 seeds per point to show the runtime warning'
+    'Expected sensitivity runs above 50 seeds per point to show the runtime warning'
   );
   __setSensitivityRunSpawnForTests((_repoRoot, configPath, outputPath) => {
     const config = parseConfigFile(configPath);
@@ -8468,6 +8468,25 @@ try {
   assert.equal(cancelSubmit.accepted, true, 'Expected cancel target sensitivity submit to be accepted');
   const cancelExperimentId = cancelSubmit.experiment?.experimentId ?? '';
   await waitUntil(() => sensitivityProcesses.length > 0);
+  __resetModelRunManagerForTests();
+  __setModelRunSpawnForTests(() => new FakeModelProcess() as never);
+  const manualQueuedBehindSensitivity = submitModelRun(sensitivityFixtureRoot, {
+    baseline: 'v1.0',
+    title: 'manual-behind-sensitivity',
+    overrides: {},
+    confirmWarnings: true
+  });
+  assert.equal(
+    manualQueuedBehindSensitivity.accepted,
+    true,
+    'Expected a manual run to be accepted while a sensitivity experiment is active'
+  );
+  assert.equal(
+    listModelRunJobs().find((job) => job.jobId === manualQueuedBehindSensitivity.job?.jobId)?.status,
+    'queued',
+    'Expected the manual run to wait in the shared queue behind the sensitivity experiment'
+  );
+  cancelModelRunJob(sensitivityFixtureRoot, manualQueuedBehindSensitivity.job?.jobId ?? '');
   assert.throws(
     () => deleteSensitivityExperiment(sensitivityFixtureRoot, cancelExperimentId),
     /Only finished sensitivity experiments can be deleted/,
@@ -8510,8 +8529,8 @@ try {
   );
   assert.equal(
     unifiedJobs.locks.sensitivitySubmissionLocked,
-    true,
-    'Expected unified locks to block sensitivity submission when manual queue is active'
+    false,
+    'Expected an active manual run not to block another experiment submission'
   );
   const unifiedSensitivityLogs = getExperimentJobLogs(
     sensitivityFixtureRoot,
@@ -8520,17 +8539,23 @@ try {
     200
   );
   assert.ok(unifiedSensitivityLogs.lines.length > 0, 'Expected unified logs endpoint to return sensitivity logs');
-  assert.throws(
-    () =>
-      submitSensitivityExperiment(sensitivityFixtureRoot, {
-        baseline: 'v1.0',
-        parameterKey: 'CENTRAL_BANK_INITIAL_BASE_RATE',
-        min: 0.004,
-        max: 0.006,
-        confirmWarnings: true
-      }),
-    /manual model runs are queued or running/,
-    'Expected sensitivity submission to be blocked while manual run queue is active'
+  const queuedSensitivitySubmit = submitSensitivityExperiment(sensitivityFixtureRoot, {
+    baseline: 'v1.0',
+    basePolicy: '2011',
+    parameterKey: 'CENTRAL_BANK_INITIAL_BASE_RATE',
+    min: 0.004,
+    max: 0.006,
+    confirmWarnings: true
+  });
+  assert.equal(queuedSensitivitySubmit.accepted, true, 'Expected sensitivity submission to queue behind a manual run');
+  assert.equal(
+    queuedSensitivitySubmit.experiment?.status,
+    'queued',
+    'Expected the accepted sensitivity experiment to remain queued while the manual run is active'
+  );
+  cancelSensitivityExperiment(
+    sensitivityFixtureRoot,
+    queuedSensitivitySubmit.experiment?.experimentId ?? ''
   );
   cancelExperimentJob(sensitivityFixtureRoot, `manual:${lockedManualJobId}`);
   await waitUntil(() => {
@@ -9231,7 +9256,8 @@ assert.equal(
   'Manual policy groups should share one consistently aligned results table'
 );
 assert.ok(
-  manualResultsViewSource.includes('Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL}') &&
+  manualResultsViewSource.includes('<th scope="col">Primary vs comparison</th>') &&
+    !manualResultsViewSource.includes('Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL}') &&
     manualResultsViewSource.includes('<span>Primary run</span>') &&
     manualResultsViewSource.includes('<span>Comparison run</span>') &&
     !manualResultsViewSource.includes("'Baseline'") &&
@@ -9282,6 +9308,12 @@ assert.ok(
     manualResultsViewSource.includes('SHOW_NEW_LENDING_SECTION && LENDING_METRIC_BY_INDICATOR') &&
     manualResultsViewSource.includes('<NewLendingCard'),
   'New lending and its Distribution actions should be hidden behind one reversible flag'
+);
+assert.ok(
+  manualResultsViewSource.includes('const SHOW_LENDING_DERIVED_INDICATORS = false;') &&
+    manualResultsViewSource.includes('SHOW_LENDING_DERIVED_INDICATORS && lendingBaseline') &&
+    manualResultsViewSource.includes('SHOW_LENDING_DERIVED_INDICATORS && lendingComparison'),
+  'Unavailable lending-derived indicators should remain implemented but be hidden behind one reversible flag'
 );
 assert.ok(
   manualResultsViewSource.includes('const SHOW_DWELLINGS_PER_HOUSEHOLD = false;') &&
@@ -9579,10 +9611,16 @@ assert.ok(
 );
 assert.ok(
   experimentsPageSource.includes('onManualRunAccepted={(runId) => navigate(') &&
-    experimentsPageSource.includes('/results?type=manual') &&
+    experimentsPageSource.includes('/results?type=manual&queue=open') &&
     experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
-    experimentsPageSource.includes('/results?type=sensitivity'),
-  'Accepted scenario and sensitivity submissions should move into the matching Results view'
+    experimentsPageSource.includes('/results?type=sensitivity&queue=open') &&
+    experimentsPageSource.includes('queueInitiallyExpanded={queueInitiallyExpanded}') &&
+    resultsPageSource.includes("searchParams.get('queue') === 'open'") &&
+    (resultsPageSource.match(/queueInitiallyExpanded=\{queueInitiallyExpanded\}/g)?.length ?? 0) === 2 &&
+    manualResultsViewSource.includes('useState<boolean>(queueInitiallyExpanded)') &&
+    sensitivityResultsViewSource.includes('title="Queue"') &&
+    sensitivityResultsViewSource.includes('defaultOpen={queueInitiallyExpanded}'),
+  'Accepted scenario and sensitivity submissions should move into Results with the queue expanded'
 );
 assert.ok(
   resultsPageSource.includes('className="results-view-switcher"') &&

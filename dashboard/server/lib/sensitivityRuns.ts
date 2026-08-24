@@ -34,6 +34,12 @@ import {
   listModelRunJobs
 } from './modelRuns';
 import {
+  cancelQueuedLocalExperiment,
+  enqueueLocalExperiment,
+  finishLocalExperiment,
+  resetLocalExperimentQueueForTests
+} from './localExperimentExecutionQueue';
+import {
   getBasePolicyOption,
   getDefaultBasePolicyId,
   getSensitivityPolicyPackageById,
@@ -2203,6 +2209,7 @@ async function runExperiment(pathsInput: RuntimePathInput, record: ExperimentRec
 
   if (metadata.status === 'canceled' || record.cancelRequested) {
     appendLifecycle(record, `Experiment ${metadata.experimentId} did not start because it was canceled while queued`);
+    finishLocalExperiment(`sensitivity:${metadata.experimentId}`);
     return;
   }
 
@@ -2299,6 +2306,7 @@ async function runExperiment(pathsInput: RuntimePathInput, record: ExperimentRec
       record,
       `Experiment ${metadata.experimentId} ended with status ${metadata.status}; ${formatProgressBrief(createProgressSnapshot(record))}`
     );
+    finishLocalExperiment(`sensitivity:${metadata.experimentId}`);
   }
 }
 
@@ -2436,14 +2444,15 @@ export function submitSensitivityExperiment(
   const state = getRepoState(paths);
   const launcher = resolveSensitivityLauncher(options.launcher);
 
-  if (state.activeExperimentId) {
+  const allowQueuedSensitivityExperiments = true;
+  if (!allowQueuedSensitivityExperiments && state.activeExperimentId) {
     const active = state.experimentsById.get(state.activeExperimentId);
     if (active && !isTerminal(active.metadata.status)) {
       throw new Error(`Sensitivity experiment already in progress: ${active.metadata.experimentId}`);
     }
   }
 
-  if (hasActiveManualModelRuns()) {
+  if (!allowQueuedSensitivityExperiments && hasActiveManualModelRuns()) {
     throw new Error('Cannot start sensitivity experiment while manual model runs are queued or running.');
   }
 
@@ -2537,11 +2546,9 @@ export function submitSensitivityExperiment(
 
   state.experimentsById.set(experimentId, record);
   state.order.push(experimentId);
-  state.activeExperimentId = experimentId;
-
-  queueMicrotask(() => {
+  enqueueLocalExperiment(`sensitivity:${experimentId}`, () => {
     void runExperiment(paths, record);
-  });
+  }, { deferStart: true });
 
   return {
     accepted: true,
@@ -2586,6 +2593,7 @@ export function cancelSensitivityExperiment(
     if (state.activeExperimentId === normalized) {
       state.activeExperimentId = null;
     }
+    cancelQueuedLocalExperiment(`sensitivity:${normalized}`);
     appendLifecycle(record, `Experiment ${record.metadata.experimentId} canceled before start`);
     publishProgress(record, true);
     return { experiment: record.metadata };
@@ -2644,6 +2652,7 @@ export function shutdownSensitivityRunProcesses(): void {
 
 export function __resetSensitivityRunsForTests(): void {
   shutdownSensitivityRunProcesses();
+  resetLocalExperimentQueueForTests('sensitivity:');
   repoStates.clear();
   __setSensitivityRunSpawnForTests(null);
 }
