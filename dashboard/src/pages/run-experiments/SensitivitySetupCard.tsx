@@ -212,6 +212,8 @@ export function SensitivitySetupCard({
   const basePolicyValues = selectedPackage && selectedBasePolicy ? formatPackageBaseValues(selectedPackage, selectedBasePolicy) : null;
   const simulationDuration = String(formValues.N_STEPS ?? '');
   const seedsPerPoint = parsePositiveIntegerForDisplay(formValues.N_SIMS);
+  // Fields stay editable when execution is unavailable; only starting a run is gated, matching the policy builder.
+  const formDisabled = isSubmitting;
   const submissionBlocked = isSubmitting || executionDisabled || sensitivitySubmissionLockedByManual;
 
   const pointCount = sampleValues.length;
@@ -327,7 +329,7 @@ export function SensitivitySetupCard({
                   <input
                     type="text"
                     value={title}
-                    disabled={executionDisabled}
+                    disabled={formDisabled}
                     onChange={(event) => {
                       clearValidationError();
                       onTitleChange(event.target.value);
@@ -347,7 +349,7 @@ export function SensitivitySetupCard({
                   <InfoLabel label="Policy instrument to vary" info={SETTING_HELP.sensitivityPolicyPackage} />
                   <select
                     value={policyPackageId}
-                    disabled={executionDisabled}
+                    disabled={formDisabled}
                     onChange={(event) => {
                       clearValidationError();
                       onPolicyPackageChange(event.target.value);
@@ -368,7 +370,7 @@ export function SensitivitySetupCard({
                       type="number"
                       step={selectedPackage?.type === 'integer' ? 1 : 'any'}
                       value={minValue}
-                      disabled={executionDisabled}
+                      disabled={formDisabled}
                       onChange={(event) => {
                         clearValidationError();
                         onMinValueChange(event.target.value);
@@ -381,7 +383,7 @@ export function SensitivitySetupCard({
                       type="number"
                       step={selectedPackage?.type === 'integer' ? 1 : 'any'}
                       value={maxValue}
-                      disabled={executionDisabled}
+                      disabled={formDisabled}
                       onChange={(event) => {
                         clearValidationError();
                         onMaxValueChange(event.target.value);
@@ -395,7 +397,7 @@ export function SensitivitySetupCard({
                       step={1}
                       min={2}
                       value={sampleCount}
-                      disabled={executionDisabled}
+                      disabled={formDisabled}
                       onChange={(event) => {
                         clearValidationError();
                         onSampleCountChange(event.target.value);
@@ -425,7 +427,7 @@ export function SensitivitySetupCard({
                   <InfoLabel label="Model version" info={SETTING_HELP.calibrationParameterVersion} />
                   <select
                     value={selectedBaseline}
-                    disabled={executionDisabled}
+                    disabled={formDisabled}
                     onChange={(event) => {
                       clearValidationError();
                       onBaselineChange(event.target.value);
@@ -459,7 +461,7 @@ export function SensitivitySetupCard({
                   <InfoLabel label="Baseline policy" info={SETTING_HELP.basePolicy} />
                   <select
                     value={basePolicy}
-                    disabled={executionDisabled}
+                    disabled={formDisabled}
                     onChange={(event) => {
                       clearValidationError();
                       onBasePolicyChange(event.target.value as BasePolicyId);
@@ -492,7 +494,7 @@ export function SensitivitySetupCard({
                       mode="sensitivity"
                       parameters={parameters}
                       formValues={formValues}
-                      executionDisabled={executionDisabled}
+                      executionDisabled={formDisabled}
                       onFormValueChange={(parameter, value) => {
                         clearValidationError();
                         onFormValueChange(parameter, value);
