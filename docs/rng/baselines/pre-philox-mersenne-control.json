@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Plan-of-record Step 1 control frozen before any RNG ownership or Philox refactoring",
+  "recordedAtUtc": "2026-08-17T08:25:56Z",
+  "source": {
+    "branch": "orestes/gpu-acceleration",
+    "commit": "b07fd6b6c7cdb08cb7e5d1c22767c86753dd0608",
+    "tree": "5ce8546a2f5f7f707946cc393adb46d11d6177fc",
+    "cleanExportMethod": "git archive of the pinned commit into a temporary directory",
+    "cleanExportContainsWorkingTreeChanges": false,
+    "equivalentEarlierControlTree": {
+      "commit": "46f19074f12a7f99badff61ff84df3b50cd8b525",
+      "tree": "5ce8546a2f5f7f707946cc393adb46d11d6177fc"
+    },
+    "excludedUnrelatedTrackedChanges": [
+      "scripts/model/model-speed-lib.sh",
+      "scripts/model/profile-model.sh",
+      "scripts/model/run-speed-benchmark.sh"
+    ],
+    "untrackedFilesIncludedInCleanExport": false
+  },
+  "toolchain": {
+    "os": "macOS 26.5 (25F71)",
+    "kernel": "Darwin 25.5.0",
+    "architecture": "arm64",
+    "java": "OpenJDK 25.0.3 Homebrew build 25.0.3",
+    "maven": "Apache Maven 3.9.15"
+  },
+  "mavenSuite": {
+    "standard": {
+      "command": [
+        "./mvnw",
+        "clean",
+        "test"
+      ],
+      "finishedAt": "2026-08-17T11:20:11+03:00",
+      "tests": 49,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "status": "PASS"
+    },
+    "explicitMultiSimulationIsolation": {
+      "reason": "Surefire does not discover the *IT class in its default test-name patterns",
+      "command": [
+        "./mvnw",
+        "-Dtest=housing.ModelMultiSimulationIsolationIT",
+        "test"
+      ],
+      "finishedAt": "2026-08-17T11:20:21+03:00",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "status": "PASS"
+    }
+  },
+  "exactOutput": {
+    "rng": "Legacy Apache Commons Math MersenneTwister; housing.rng does not exist at this revision",
+    "runtimeProperties": {
+      "housing.orderbook": "array"
+    },
+    "javaOptions": [
+      "-Xms1g",
+      "-Xmx4g"
+    ],
+    "configuration": {
+      "snapshot": "v0",
+      "mode": "e2e-default-5k-s1",
+      "seed": 1,
+      "targetPopulation": 5000,
+      "steps": 2000,
+      "simulations": 1,
+      "outputCsvFiles": 25,
+      "manifestEntriesIncludingConfig": 26,
+      "materializedConfigSha256": "0318f676922a74e02fabdcd60cb2fcba77006dcb0e92804ce2a0fc4a5f723e49"
+    },
+    "repeatCount": 3,
+    "execution": "Three separate JVM processes",
+    "manifestPath": "docs/rng/baselines/pre-philox-mersenne-macos-arm64-jdk25.sha256",
+    "manifestSha256": "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164",
+    "repeatManifestSha256": [
+      "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164",
+      "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164",
+      "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164"
+    ],
+    "repeatConsistency": "PASS",
+    "defaultTreeVersusArray": {
+      "status": "PASS",
+      "treeManifestSha256": "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164"
+    },
+    "originalMasterVersusCurrentArray": {
+      "baselineCommit": "7772f3ecacea7c5c3ca1ad879737e479629400d1",
+      "status": "PASS",
+      "baselineManifestSha256": "856403d2727d5f3f97e3a843a6c5ce20849af24da4ddbfd0a3c83898bc2fd164",
+      "note": "A clean original-master run on the same toolchain used the same materialized config and matched all 26 manifest entries."
+    },
+    "historicalTrackedManifest": {
+      "path": "docs/model-speed/baselines/v0-e2e-default-5k-s1.exact.sha256",
+      "sha256": "2562a1ca7d02150ef6c00bdda0f7cfc0a548dec8a66063254d887eb77370ec6e",
+      "introducedByCommit": "8faed06f2b634a5bd6147162f34390be10c7e97b",
+      "configEntryMatches": true,
+      "outputHashComparison": "FAIL_25_OF_25",
+      "staleBecauseSourceChanged": {
+        "evidence": "git diff --stat 8faed06..7772f3e -- src/main/java/",
+        "filesChanged": 5,
+        "insertions": 82,
+        "deletions": 43,
+        "paths": [
+          "src/main/java/data/Wealth.java",
+          "src/main/java/housing/Household.java",
+          "src/main/java/housing/RentalAgreement.java",
+          "src/main/java/utilities/BinnedDataDouble.java"
+        ],
+        "mechanism": "data/Wealth and BinnedDataDouble feed data.Wealth.getDesiredBankBalance at Household.java:66, i.e. every household's initial bank balance, so every output file necessarily differs."
+      },
+      "interpretation": "Stale by source change, not by platform: the model source changed between this manifest's commit and the original-master baseline, so a 25/25 mismatch is expected and is not evidence of a defect. Retained unchanged. The meaningful check is that current b07fd6b matches original master 7772f3e exactly on this platform, which passed; the new manifest is the migration control for this toolchain."
+    },
+    "platformLock": {
+      "status": "ASSUMED_NOT_MEASURED",
+      "scope": "macOS 26.5 / arm64 / OpenJDK 25.0.3 Homebrew",
+      "reason": "The model calls java.lang.Math.exp and Math.pow rather than StrictMath -- including Config.java:381-382, where derived parameters are computed, so any difference propagates into every household and every output file. Java specifies these to within 1 ulp and semi-monotonicity but NOT to cross-implementation identity; only StrictMath guarantees that.",
+      "consequence": "This manifest is a valid byte-identity oracle ONLY on the recording platform and JDK. The Plan-of-Record Step 3 gate ('facade must reproduce byte-for-byte') MUST therefore be verified on this same machine. Verifying it on ccgpu4 against this manifest would fail all 26 entries spuriously.",
+      "howToConfirmIfEverNeeded": "Run the same snapshot/mode at b07fd6b on ccgpu4 and compare; a mismatch there with matching config entry confirms platform sensitivity. Not required in order to proceed -- the safe rule (verify on the recording platform) costs nothing.",
+      "relatedDecision": "Independently supports PROJECT_STATE.md section 6c: 'do not require whole-model byte identity across CPU and GPU'. It is not achievable across CPUs either."
+    }
+  },
+  "canonicalPublishedValidation": {
+    "path": "input-data-versions/validation/v5o3.json",
+    "sha256": "12124c0cf29371a3732d02f7c5770e6a722dda07598e8ad05b6b7c59bb14be46",
+    "metrics": 20,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "window": {
+      "start": 500,
+      "end": 3500
+    },
+    "compositeLoss": 0.5864457551658543,
+    "role": "Published 20-metric provenance only; it is not the interim Philox comparator",
+    "willNotMatchFinalGateEither": "The recomputed 20-metric null at final gate will also differ from this 0.5864: it uses 8 seeds and window 200-2000, where this used 10 seeds and window 500-3500. The difference is seeds and window, not only metric count. Do not treat convergence toward 0.5864 as expected or its absence as a defect."
+  },
+  "nullControl20260814": {
+    "externalArtifactDirectory": "/Users/orestes/UROP/null-control",
+    "provenanceCaveat": "The retained summary and log do not embed a Git commit. Their attribution to b07fd6b is documented contemporaneously in GPU_RESULTS_LOG.md.",
+    "generator": "Legacy MersenneTwister",
+    "version": "v5o3",
+    "orderbook": "array",
+    "mavenOpts": "-Dhousing.orderbook=array",
+    "sets": 20,
+    "seedsPerSet": 8,
+    "firstSeed": 1,
+    "lastSeed": 160,
+    "workers": 10,
+    "targetPopulation": 10000,
+    "steps": 2000,
+    "window": {
+      "start": 200,
+      "end": 2000
+    },
+    "metricsScored": 17,
+    "excludedMetricIds": [
+      "income_distribution_jsd",
+      "housing_wealth_distribution_jsd",
+      "financial_wealth_distribution_jsd"
+    ],
+    "artifactIntegrity": {
+      "summarySha256": "75dc853b0f02d91e6f8bbe4326056b72fc23fcdb411beb89da63710ae0cd5baa",
+      "runFullLogSha256": "90323f52fbe916d6303378295cc0167c4de016ce0455e53b2876172003eeb837",
+      "wrapperSha256": "bf4dc8d9391d44fe5f74f172ddca0990c897a06aea389e39359e62ebde60674e",
+      "runnerSha256": "154c0fe6572b40ffed1d8c7843cbc2334a2d70763ae97c84159e8fa33fd9e283",
+      "seedDirectories": 160,
+      "outputRun1Files": 160,
+      "gate2InputFiles": {
+        "MonthlyGrossEmploymentIncome-run1.csv": 160,
+        "HousingWealth-run1.csv": 160,
+        "BankBalance-run1.csv": 160
+      },
+      "gate2InputsComplete": true
+    },
+    "result": {
+      "baselineSet1": 0.6383040266633371,
+      "mean": 0.6304850082491408,
+      "sampleSd": 0.012164083998087633,
+      "minimum": 0.6067670325192855,
+      "maximum": 0.6626314176268739
+    },
+    "interimGate": {
+      "rule": "baselineSet1 plus or minus two sample standard deviations",
+      "lowerExact": 0.6139758586671618,
+      "upperExact": 0.6626321946595124,
+      "lowerRounded": 0.614,
+      "upperRounded": 0.6626,
+      "status": "FROZEN",
+      "doNotSubstitute": "The separately printed empirical central-95-percent interval is not the plan-of-record gate"
+    },
+    "sentinelNullSd": {
+      "household_owning_share": 0.0012243921027674872,
+      "household_renting_share": 0.0011867016357625737,
+      "core_ooDebtToIncome": 0.002238209985677889,
+      "core_housingTransactions": 0.003270603893097154,
+      "core_mortgageApprovals": 0.003623826987398134,
+      "core_advancesToFTB": 0.0037184427040064527
+    },
+    "finalGate": {
+      "metrics": 20,
+      "method": "Rescore the same 160 retained outputs after WAS access, then recompute the Mersenne null under identical settings",
+      "status": "PENDING_WAS_ACCESS",
+      "blocksStep1": false,
+      "blocksFinalPhiloxAcceptance": true
+    }
+  },
+  "step1Gate": {
+    "status": "PASS",
+    "passedChecks": [
+      "Clean pinned current-tree build and Maven suite",
+      "Explicit multi-simulation isolation regression",
+      "Three separate current-tree Mersenne runs byte-identical",
+      "Required array order book byte-identical to same-platform tree control",
+      "Current tree byte-identical to original master on the same platform",
+      "Current canonical validation artifact identified and hashed",
+      "2026-08-14 null-control artifacts, settings, statistics, and final-gate substrate identified and hashed"
+    ],
+    "nextPlanStep": 2
+  }
+}

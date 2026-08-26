@@ -3,26 +3,17 @@ package housing;
 import java.util.Arrays;
 import java.util.Iterator;
 
-import org.apache.commons.math3.random.RandomGenerator;
-
 public class Demographics {
 
     //------------------//
     //----- Fields -----//
     //------------------//
 
-    private RandomGenerator     prng;
     private double              firstBinMin = data.Demographics.getMonthlyAgeDistributionMinimum();
     private double              binWidth = data.Demographics.getMonthlyAgeDistributionBinWidth();
     private int []              householdsPerAgeBand = new int[data.Demographics.getMonthlyAgeDistributionSize() + 1];
     private int []              birthsAndDeaths = new int[data.Demographics.getMonthlyAgeDistributionSize() + 1];
     private double []           deathProbabilities = new double[data.Demographics.getMonthlyAgeDistributionSize() + 1];
-
-    //------------------------//
-    //----- Constructors -----//
-    //------------------------//
-
-    public Demographics(RandomGenerator prng) { this.prng = prng; }
 
     //-------------------//
     //----- Methods -----//
@@ -33,17 +24,17 @@ public class Demographics {
      * age bins), the expected number of households per age band is used to compute how many new households are to be
      * added or removed from each age band.
      */
-    public void step() {
+    public void step(RngContext context) {
         // Increase age of households and create a histogram with the number of households in each age band
         updateHouseholdsPerAgeBand();
         // Update the list of births (positive) and deaths (negative) to be implemented
         updateBirthsAndDeaths();
         // Implement births in each age bin by adding new households with random ages between the corresponding edges
-        implementBirths();
+        implementBirths(context);
         // Update death probability for each age bin, with probability 1 for households beyond the maximum bin edge
         updateDeathProbabilities();
         // Implement deaths according to the probabilities calculated above
-        implementDeaths();
+        implementDeaths(context);
     }
 
 
@@ -79,14 +70,16 @@ public class Demographics {
      * Implement births in each age bin by adding new households with random ages drawn from a uniform distribution
      * between the corresponding bin edges
      */
-    private void implementBirths() {
+    private void implementBirths(RngContext context) {
         for (int i = 0; i < birthsAndDeaths.length; i++) {
             while (birthsAndDeaths[i] > 0) {
-                double r = (prng.nextDouble() + i) * binWidth + firstBinMin;
+                Household.IdReservation reservation = Household.reserveId();
+                double r = (context.uniform(reservation, RandomEvent.HH_AGE_AT_CREATION) + i)
+                        * binWidth + firstBinMin;
                 if (r >= firstBinMin + (i + 1) * binWidth) { // To correct for possible rounding errors
                     r = Math.nextDown(firstBinMin + (i + 1) * binWidth);
                 }
-                Model.households.add(new Household(prng, r));
+                Model.households.add(new Household(reservation, context, r));
                 birthsAndDeaths[i]--;
             }
         }
@@ -111,15 +104,17 @@ public class Demographics {
      * Run through households implementing deaths according to the probability corresponding to the age band they belong
      * to, organising also the inheritance of their belongings
      */
-    private void implementDeaths() {
+    private void implementDeaths(RngContext context) {
         Iterator<Household> iterator = Model.households.iterator();
         while (iterator.hasNext()) {
             Household h = iterator.next();
             int i = (int)((h.getAge() - firstBinMin)/binWidth);
-            if (prng.nextDouble() < deathProbabilities[i]) {
+            if (context.uniform(h, RandomEvent.HH_DEATH) < deathProbabilities[i]) {
                 iterator.remove();
                 // Implement inheritance with a randomly chosen heir
-                h.transferAllWealthTo(Model.households.get(prng.nextInt(Model.households.size())), prng);
+                int inheritorIndex = context.boundedInt(
+                        h, RandomEvent.HH_INHERITOR, Model.households.size());
+                h.transferAllWealthTo(Model.households.get(inheritorIndex), context);
                 // Update the death probability for the corresponding age band. This prevents killing more than strictly
                 // necessary. Note that this will tend to underestimate the number of deaths and this, in its turn, lead
                 // to a slight overpopulation

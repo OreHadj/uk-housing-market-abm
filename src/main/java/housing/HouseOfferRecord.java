@@ -28,12 +28,17 @@ public class HouseOfferRecord extends HousingMarketRecord {
     //----- Constructors -----//
     //------------------------//
 
-    public HouseOfferRecord(House house, double price, boolean BTLOffer) {
+    public HouseOfferRecord(House house, double price, boolean BTLOffer,
+            int initialListingTime) {
         super(price);
+        if (initialListingTime < 0) {
+            throw new IllegalArgumentException(
+                    "initial listing timeStep must be non-negative: " + initialListingTime);
+        }
         this.house = house;
         this.BTLOffer = BTLOffer;
         initialListedPrice = price;
-        tInitialListing = Model.getTime();
+        tInitialListing = initialListingTime;
         matchedBids = new ArrayList<>(8); // TODO: Check if this initial size of 8 is good enough or can be improved
         recalculateHouseSpecificYield(price);
     }
@@ -96,7 +101,10 @@ public class HouseOfferRecord extends HousingMarketRecord {
 
     public double getInitialListedPrice() { return initialListedPrice; }
 
-    public int gettInitialListing() { return tInitialListing; }
+    public int getInitialListingTime() { return tInitialListing; }
+
+    /** Compatibility accessor for existing collectors. */
+    public int gettInitialListing() { return getInitialListingTime(); }
 
     public boolean isBTLOffer() { return BTLOffer; }
 }

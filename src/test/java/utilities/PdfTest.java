@@ -1,10 +1,12 @@
 package utilities;
 
+import org.apache.commons.math3.random.MersenneTwister;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PdfTest {
 
@@ -58,6 +60,70 @@ class PdfTest {
                 () -> assertEquals(0.5, pdf.inverseCumulativeProbability(0.25), 5.0e-4),
                 () -> assertEquals(0.9, pdf.inverseCumulativeProbability(0.81), 5.0e-4)
         );
+    }
+
+    @Test
+    void pureSampleMatchesInverseCdfByRawBitsAndIsIdempotent() {
+        Pdf pdf = new Pdf(-2.0, 3.0, x -> 0.2, 257);
+        double[] uniforms = {
+                0.0, -0.0, 0x1.0p-53, 0.125, 0.5, 0.875, Math.nextDown(1.0)
+        };
+
+        for(double uniform : uniforms) {
+            long expected = Double.doubleToRawLongBits(pdf.inverseCumulativeProbability(uniform));
+
+            assertEquals(expected, Double.doubleToRawLongBits(pdf.sample(uniform)),
+                    "uniform " + uniform);
+            assertEquals(expected, Double.doubleToRawLongBits(pdf.sample(uniform)),
+                    "repeated uniform " + uniform);
+        }
+    }
+
+    @Test
+    void pureSampleRetainsInverseCdfDomainSemantics() {
+        Pdf pdf = new Pdf(0.0, 1.0, x -> 1.0, 64);
+
+        assertAll(
+                () -> assertEquals(
+                        Double.doubleToRawLongBits(pdf.inverseCumulativeProbability(0.0)),
+                        Double.doubleToRawLongBits(pdf.sample(0.0))),
+                () -> assertEquals(
+                        Double.doubleToRawLongBits(pdf.inverseCumulativeProbability(Math.nextDown(1.0))),
+                        Double.doubleToRawLongBits(pdf.sample(Math.nextDown(1.0)))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> pdf.sample(-Double.MIN_VALUE)),
+                () -> assertThrows(IllegalArgumentException.class, () -> pdf.sample(1.0)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> pdf.sample(Math.nextUp(1.0))),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> pdf.sample(Double.NEGATIVE_INFINITY)),
+                () -> assertThrows(IllegalArgumentException.class,
+                        () -> pdf.sample(Double.POSITIVE_INFINITY)),
+                () -> assertTrue(Double.isNaN(pdf.sample(Double.NaN))));
+    }
+
+    @Test
+    void pureSampleConsumesNoRngAndLegacyHelperConsumesExactlyOneUniform() {
+        Pdf pdf = new Pdf(0.0, 1.0, x -> 1.0, 64);
+        MersenneTwister untouchedExpected = new MersenneTwister(9087);
+        MersenneTwister untouchedActual = new MersenneTwister(9087);
+
+        pdf.sample(0.37);
+
+        assertEquals(untouchedExpected.nextInt(), untouchedActual.nextInt(),
+                "pure sampling must not advance an RNG");
+
+        MersenneTwister manual = new MersenneTwister(112358);
+        MersenneTwister legacy = new MersenneTwister(112358);
+        double uniform = manual.nextDouble();
+        double expectedSample = pdf.inverseCumulativeProbability(uniform);
+        double actualSample = pdf.nextDouble(legacy);
+
+        assertAll(
+                () -> assertEquals(Double.doubleToRawLongBits(expectedSample),
+                        Double.doubleToRawLongBits(actualSample)),
+                () -> assertEquals(manual.nextInt(), legacy.nextInt(),
+                        "legacy helper must consume exactly one nextDouble"));
     }
 
     private static BinnedDataDouble binnedData(double firstBinMin, double binWidth, double... bins) {

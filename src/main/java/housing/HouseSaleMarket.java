@@ -2,8 +2,6 @@ package housing;
 
 import java.util.Iterator;
 
-import org.apache.commons.math3.random.RandomGenerator;
-
 import utilities.ArrayOrderBook;
 import utilities.OrderBook2D;
 import utilities.OrderBookFactory;
@@ -26,8 +24,8 @@ public class HouseSaleMarket extends HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    HouseSaleMarket(RandomGenerator prng) {
-        super(prng);
+    HouseSaleMarket() {
+        super(RandomEvent.SALE_MARKET_BID_UP, RandomEvent.SALE_MARKET_TIE_BREAK);
         offersPY = OrderBookFactory.create(new HousingMarketRecord.PYComparator(),
                 ArrayOrderBook.BOOK_PRICE_YIELD, Model.config.TARGET_POPULATION/10);
     }
@@ -52,14 +50,16 @@ public class HouseSaleMarket extends HousingMarket {
      * @param purchase HouseBidderRecord with information on the bidder
      * @param sale HouseOfferRecord with information on the seller and the offered property
      */
-    public void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale) {
+    public void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale,
+            RngContext context) {
         sale.getHouse().saleRecord = null;
         // This affects: seller's bank balance, seller's housePayments, HouseRentalMarket offers, seller's home, house's
         // renter, seller's rental income
         sale.getHouse().owner.completeHouseSale(sale);
         // This affects: buyer's home resident, buyer's home owner rental income, buyer's bank balance, mortgage,
         // buyer's housePayments, buyer's home, house's resident, HouseRentalMarket offers, and buyer's isFirstTimeBuyer
-        purchase.getBidder().completeHousePurchase(sale, purchase.getDesiredDownPayment(), prng);
+        purchase.getBidder().completeHousePurchase(
+                sale, purchase.getDesiredDownPayment(), context);
         // This uses: house's id and quality; mortgage's type, downpayment and principal; sale's initial listing price,
         // initial listing time and final price; buyer's id, age, BTL gene, income, rental income, bank balance, and
         // capital gains coefficient; and seller's id, age, BTL gene, income, rental income, bank balance and capital
@@ -69,8 +69,9 @@ public class HouseSaleMarket extends HousingMarket {
     }
 
     @Override
-    public HouseOfferRecord offer(House house, double price, boolean BTLOffer) {
-        HouseOfferRecord hsr = super.offer(house, price, BTLOffer);
+    public HouseOfferRecord offer(House house, double price, boolean BTLOffer,
+            int initialListingTime) {
+        HouseOfferRecord hsr = super.offer(house, price, BTLOffer, initialListingTime);
         offersPY.add(hsr);
         house.putForSale(hsr);
         return(hsr);
@@ -94,12 +95,12 @@ public class HouseSaleMarket extends HousingMarket {
      * This method overrides the main simulation step in order to sort the price-yield priorities.
      */
     @Override
-    void clearMarket() {
+    void clearMarket(RngContext context) {
         // Before any use, priorities must be sorted by filling in the uncoveredElements TreeSet at the corresponding
         // PriorityQueue2D. In particular, we sort here the price-yield priorities
         offersPY.sortPriorities();
         // Then continue with the normal HousingMarket clearMarket mechanism
-        super.clearMarket();
+        super.clearMarket(context);
     }
 
     /**

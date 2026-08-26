@@ -1,22 +1,29 @@
 package housing;
 
-import java.util.Locale;
-
-import org.apache.commons.math3.random.RandomGenerator;
-
-/** Creates a random facade for one model run configuration. */
+/** Creates an immutable random service for one model run configuration. */
 final class RngFactory {
 
     static final String PROPERTY = "housing.rng";
 
     private RngFactory() { }
 
-    static RandomGenerator create(int seed) {
-        String requested = System.getProperty(PROPERTY, "mersenne").trim().toLowerCase(Locale.ROOT);
-        if (requested.equals("mersenne")) {
-            return new MersenneRandom(seed);
-        }
-        throw new IllegalArgumentException("Unsupported " + PROPERTY + " value '" + requested
-                + "' (only 'mersenne' is available)");
+    /** Resolves the property for this run; no class-load-time mode is cached. */
+    static RngMode resolveMode() {
+        return RngMode.parse(System.getProperty(PROPERTY, RngMode.MERSENNE.propertyValue()));
+    }
+
+    static RandomService create(int configuredSeed) {
+        return create(configuredSeed, resolveMode());
+    }
+
+    static RandomService create(int configuredSeed, RngMode mode) {
+        return new RandomService(mode, configuredSeed);
+    }
+
+    /**
+     * Bridges the signed configuration field to the 64-bit Philox key without sign extension.
+     */
+    static long masterSeed(int configuredSeed) {
+        return Integer.toUnsignedLong(configuredSeed);
     }
 }

@@ -105,6 +105,7 @@ class ModelObservabilityRegressionTest {
         Files.createDirectories(outputDir);
         ProcessBuilder processBuilder = new ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-Dhousing.orderbook=array",
                 "-cp",
                 System.getProperty("java.class.path"),
                 "housing.Model",

@@ -4,7 +4,6 @@ import collectors.HouseholdStats;
 import collectors.HousingMarketStats;
 import collectors.MicroDataRecorder;
 import collectors.RentalMarketStats;
-import org.apache.commons.math3.random.RandomGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -29,12 +28,14 @@ class HouseholdAccountingTest {
     @TempDir
     Path tempDir;
 
-    private RandomGenerator prng;
+    private RandomService randomService;
+    private RngContext context;
 
     @BeforeEach
     void setUp() throws Exception {
         Model.config = new Config(CONFIG_PATH);
-        prng = RngFactory.create(123);
+        randomService = RngFactory.create(123);
+        context = randomService.demographicsContext(0, 0);
         Model.government = new Government();
         Model.householdStats = new HouseholdStats();
         Model.householdStats.init();
@@ -43,7 +44,7 @@ class HouseholdAccountingTest {
         Model.bank = new Bank(Model.centralBank);
         Model.bank.init();
         Model.housingMarketStats = new FixedHousingMarketStats(250000.0);
-        Model.houseRentalMarket = new HouseRentalMarket(prng);
+        Model.houseRentalMarket = new HouseRentalMarket();
         Model.houseRentalMarket.init();
         Model.rentalMarketStats = new FixedRentalMarketStats(Model.housingMarketStats, 0.05, 1.0);
         resetHouseholdBehaviourStatics();
@@ -54,7 +55,7 @@ class HouseholdAccountingTest {
         Model.config.ESSENTIAL_CONSUMPTION_FRACTION = 0.5;
         Model.config.GOVERNMENT_MONTHLY_INCOME_SUPPORT = 800.0;
 
-        Household household = new Household(prng, 35.0);
+        Household household = new Household(context, 35.0);
         setField(household, "desiredConsumption", 250.0);
 
         assertEquals(650.0, household.getRecordedNonHousingConsumption(), 1.0e-9);
@@ -62,7 +63,7 @@ class HouseholdAccountingTest {
 
     @Test
     void recordHousingCashFlowsSplitsRentalInterestAndPrincipal() throws Exception {
-        Household household = new Household(prng, 35.0);
+        Household household = new Household(context, 35.0);
 
         House rentalHome = new House(0);
         RentalAgreement rentalAgreement = new RentalAgreement();
@@ -92,9 +93,9 @@ class HouseholdAccountingTest {
 
     @Test
     void completeHouseLetCachesActiveRentalIncome() {
-        Household landlord = new Household(prng, 45.0);
+        Household landlord = new Household(context, 45.0);
         House rentedHouse = addOwnedInvestmentHouse(landlord);
-        HouseOfferRecord offer = new HouseOfferRecord(rentedHouse, 950.0, false);
+        HouseOfferRecord offer = new HouseOfferRecord(rentedHouse, 950.0, false, 0);
         RentalAgreement rentalAgreement = rentalAgreement(950.0, 6);
 
         landlord.completeHouseLet(offer, rentalAgreement);
@@ -104,12 +105,13 @@ class HouseholdAccountingTest {
 
     @Test
     void finalRentalPaymentUpdatesLandlordCachedRentalIncome() throws Exception {
-        Household landlord = new Household(prng, 45.0);
-        Household tenant = new Household(prng, 35.0);
+        Household landlord = new Household(context, 45.0);
+        Household tenant = new Household(context, 35.0);
         House rentedHouse = addOwnedInvestmentHouse(landlord);
         RentalAgreement rentalAgreement = rentalAgreement(875.0, 1);
         setRentedHome(tenant, rentedHouse, rentalAgreement);
-        landlord.completeHouseLet(new HouseOfferRecord(rentedHouse, 875.0, false), rentalAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(rentedHouse, 875.0, false, 0), rentalAgreement);
 
         invokeMonthlyDisposableIncome(tenant);
 
@@ -121,17 +123,19 @@ class HouseholdAccountingTest {
 
     @Test
     void finalRentalPaymentOnlyRemovesExpiredContractFromMultipleRentals() throws Exception {
-        Household landlord = new Household(prng, 45.0);
-        Household expiringTenant = new Household(prng, 35.0);
-        Household ongoingTenant = new Household(prng, 36.0);
+        Household landlord = new Household(context, 45.0);
+        Household expiringTenant = new Household(context, 35.0);
+        Household ongoingTenant = new Household(context, 36.0);
         House expiringHouse = addOwnedInvestmentHouse(landlord);
         House ongoingHouse = addOwnedInvestmentHouse(landlord);
         RentalAgreement expiringAgreement = rentalAgreement(875.0, 1);
         RentalAgreement ongoingAgreement = rentalAgreement(1025.0, 6);
         setRentedHome(expiringTenant, expiringHouse, expiringAgreement);
         setRentedHome(ongoingTenant, ongoingHouse, ongoingAgreement);
-        landlord.completeHouseLet(new HouseOfferRecord(expiringHouse, 875.0, false), expiringAgreement);
-        landlord.completeHouseLet(new HouseOfferRecord(ongoingHouse, 1025.0, false), ongoingAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(expiringHouse, 875.0, false, 0), expiringAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(ongoingHouse, 1025.0, false, 0), ongoingAgreement);
 
         invokeMonthlyDisposableIncome(expiringTenant);
 
@@ -140,27 +144,43 @@ class HouseholdAccountingTest {
 
     @Test
     void endOfLettingAgreementRemovesActiveRentalIncome() {
-        Household landlord = new Household(prng, 45.0);
+        Household landlord = new Household(context, 45.0);
         House rentedHouse = addOwnedInvestmentHouse(landlord);
         RentalAgreement rentalAgreement = rentalAgreement(725.0, 6);
-        landlord.completeHouseLet(new HouseOfferRecord(rentedHouse, 725.0, false), rentalAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(rentedHouse, 725.0, false, 0), rentalAgreement);
 
-        landlord.endOfLettingAgreement(rentedHouse, rentalAgreement, prng);
+        landlord.endOfLettingAgreement(rentedHouse, rentalAgreement, context);
 
         assertEquals(0.0, landlord.getMonthlyGrossRentalIncome(), 1.0e-9);
     }
 
     @Test
+    void saleClearingCallbackRetainsItsOriginAndExplicitTimeStep() {
+        Household landlord = new Household(context, 45.0);
+        House rentedHouse = addOwnedInvestmentHouse(landlord);
+        RentalAgreement rentalAgreement = rentalAgreement(725.0, 6);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(rentedHouse, 725.0, false, 3), rentalAgreement);
+        RngContext saleClearing = randomService.saleClearingContext(0, 17);
+
+        landlord.endOfLettingAgreement(rentedHouse, rentalAgreement, saleClearing);
+
+        assertEquals(17, rentedHouse.getRentalRecord().getInitialListingTime());
+    }
+
+    @Test
     void tenantDeathEndsLettingAgreementAndRemovesLandlordRentalIncome() throws Exception {
-        Household landlord = new Household(prng, 45.0);
-        Household tenant = new Household(prng, 35.0);
-        Household beneficiary = new Household(prng, 40.0);
+        Household landlord = new Household(context, 45.0);
+        Household tenant = new Household(context, 35.0);
+        Household beneficiary = new Household(context, 40.0);
         House rentedHouse = addOwnedInvestmentHouse(landlord);
         RentalAgreement rentalAgreement = rentalAgreement(725.0, 6);
         setRentedHome(tenant, rentedHouse, rentalAgreement);
-        landlord.completeHouseLet(new HouseOfferRecord(rentedHouse, 725.0, false), rentalAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(rentedHouse, 725.0, false, 0), rentalAgreement);
 
-        tenant.transferAllWealthTo(beneficiary, prng);
+        tenant.transferAllWealthTo(beneficiary, context);
 
         assertAll(
                 () -> assertEquals(0.0, landlord.getMonthlyGrossRentalIncome(), 1.0e-9),
@@ -171,14 +191,15 @@ class HouseholdAccountingTest {
 
     @Test
     void completeHouseSaleEvictsTenantAndRemovesRentalIncome() throws Exception {
-        Household landlord = new Household(prng, 45.0);
-        Household tenant = new Household(prng, 35.0);
+        Household landlord = new Household(context, 45.0);
+        Household tenant = new Household(context, 35.0);
         House rentedHouse = addOwnedInvestmentHouse(landlord);
         RentalAgreement rentalAgreement = rentalAgreement(1030.0, 6);
         setRentedHome(tenant, rentedHouse, rentalAgreement);
-        landlord.completeHouseLet(new HouseOfferRecord(rentedHouse, 1030.0, false), rentalAgreement);
+        landlord.completeHouseLet(
+                new HouseOfferRecord(rentedHouse, 1030.0, false, 0), rentalAgreement);
 
-        landlord.completeHouseSale(new HouseOfferRecord(rentedHouse, 250000.0, true));
+        landlord.completeHouseSale(new HouseOfferRecord(rentedHouse, 250000.0, true, 0));
 
         assertAll(
                 () -> assertEquals(0.0, landlord.getMonthlyGrossRentalIncome(), 1.0e-9),
@@ -210,7 +231,7 @@ class HouseholdAccountingTest {
         Model.microDataRecorder.openSingleRunSingleVariableFiles(1, false, false, false, false, true, true,
                 false, true, false, true, false);
 
-        Household household = new Household(prng, 35.0);
+        Household household = new Household(context, 35.0);
         setField(household, "bankBalance", 5000.0);
         setField(household, "desiredConsumption", 250.0);
         setBehaviourPropertyInvestor(household, false);

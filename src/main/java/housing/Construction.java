@@ -2,9 +2,6 @@ package housing;
 
 import java.util.HashSet;
 
-import org.apache.commons.math3.random.RandomGenerator;
-
-
 public class Construction implements IHouseOwner{
 
     //------------------//
@@ -15,17 +12,15 @@ public class Construction implements IHouseOwner{
     private int                         nNewBuild; // Number of houses built this month
 
     private Config                      config = Model.config; // Passes the Model's configuration parameters object to a private field
-    private RandomGenerator             prng;
     private HashSet<House>              onMarket;
 
     //------------------------//
     //----- Constructors -----//
     //------------------------//
 
-    public Construction(RandomGenerator prng) {
+    public Construction() {
         housingStock = 0;
         onMarket = new HashSet<>();
-        this.prng = prng;
     }
 
     //-------------------//
@@ -37,7 +32,7 @@ public class Construction implements IHouseOwner{
         onMarket.clear();
     }
 
-    public void step() {
+    public void step(RngContext context) {
         // Initialise to zero the number of houses built this month
         nNewBuild = 0;
         // First update prices of properties put on the market on previous time steps and still unsold
@@ -63,9 +58,15 @@ public class Construction implements IHouseOwner{
         while(shortFall > 0) {
             // ...create a new house with a random quality and give it to a randomly chosen household using the
             // inheritance mechanism and assuming the reference price for houses of that quality as previous price
-            newHouse = new House((int)(prng.nextDouble() * config.derivedParams.N_QUALITIES));
-            Model.households.get(prng.nextInt(Model.households.size())).inheritHouse(
-                    newHouse, Model.housingMarketStats.getReferencePriceForQuality(newHouse.getQuality()), prng);
+            House.IdReservation reservation = House.reserveId();
+            int quality = context.boundedInt(
+                    reservation, RandomEvent.NEW_BUILD_QUALITY,
+                    config.derivedParams.N_QUALITIES);
+            newHouse = new House(reservation, quality);
+            int recipientIndex = context.boundedInt(
+                    newHouse, RandomEvent.NEW_BUILD_RECIPIENT, Model.households.size());
+            Model.households.get(recipientIndex).inheritHouse(
+                    newHouse, Model.housingMarketStats.getReferencePriceForQuality(quality), context);
             // ...and finally increase housing stocks, and decrease shortfall
             ++housingStock;
             --shortFall;
@@ -76,7 +77,7 @@ public class Construction implements IHouseOwner{
     public void completeHouseSale(HouseOfferRecord sale) { onMarket.remove(sale.getHouse()); }
 
     @Override
-    public void endOfLettingAgreement(House h, PaymentAgreement p, RandomGenerator prng) {
+    public void endOfLettingAgreement(House h, PaymentAgreement p, RngContext context) {
         System.out.println("Strange: a tenant is moving out of a house owned by the construction sector!");
     }
 

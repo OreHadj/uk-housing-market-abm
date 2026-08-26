@@ -161,6 +161,11 @@ public class Pdf {
 //      return((1.0-remainder)*inverseCDF[i] + remainder*inverseCDF[i+1]);
     }
 
+    /** Pure inverse-CDF transform; the caller owns and supplies the uniform value. */
+    public double sample(double u) {
+        return inverseCumulativeProbability(u);
+    }
+
     DoubleUnaryOperator     pdf;        // function that gives the pdf
     public double           start;      // lowest value of x that has a non-zero probability
     public double           end;        // highest value of x that has a non-zero probability

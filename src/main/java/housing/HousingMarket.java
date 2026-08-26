@@ -3,9 +3,6 @@ package housing;
 import java.util.ArrayList;
 import java.util.Iterator;
 
-import org.apache.commons.math3.distribution.GeometricDistribution;
-import org.apache.commons.math3.random.RandomGenerator;
-
 import utilities.ArrayOrderBook;
 import utilities.OrderBook2D;
 import utilities.OrderBookFactory;
@@ -23,7 +20,8 @@ public abstract class HousingMarket {
     //------------------//
 
     private Config                                  config = Model.config; // Passes the Model's configuration parameters object to a private field
-    protected final RandomGenerator                 prng;
+    private final RandomEvent                       bidUpEvent;
+    private final RandomEvent                       tieBreakEvent;
     private OrderBook2D<HousingMarketRecord>        offersPQ;
     private ArrayList<HouseBidderRecord>            bids;
     private int []                                  nBidUpFrequency; // Counts the frequency of the number of bid-ups. TODO: Move to a collector class
@@ -32,13 +30,20 @@ public abstract class HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    HousingMarket(RandomGenerator prng) {
+    HousingMarket(RandomEvent bidUpEvent, RandomEvent tieBreakEvent) {
+        if (bidUpEvent.entityKind() != EntityKind.HOUSE
+                || tieBreakEvent.entityKind() != EntityKind.HOUSE) {
+            throw new IllegalArgumentException("market events must use the house entity namespace");
+        }
+        bidUpEvent.requireOperation(RngOperation.GEOMETRIC);
+        tieBreakEvent.requireOperation(RngOperation.BOUNDED_INT);
+        this.bidUpEvent = bidUpEvent;
+        this.tieBreakEvent = tieBreakEvent;
         offersPQ = OrderBookFactory.create(new HousingMarketRecord.PQComparator(), //Order book of (Price, Quality)
                 ArrayOrderBook.BOOK_PRICE_QUALITY, config.TARGET_POPULATION/10);
         // The integer passed to the ArrayList constructor is an initially declared capacity (for initial memory
         // allocation purposes), it will actually have size zero and only grow by adding elements
         bids = new ArrayList<>(config.TARGET_POPULATION/10);
-        this.prng = prng;
     }
 
     //-------------------//
@@ -58,8 +63,10 @@ public abstract class HousingMarket {
      * @param price List price for the house
      * @return HouseOfferRecord for the house
      */
-    public HouseOfferRecord offer(House house, double price, boolean BTLOffer) {
-        HouseOfferRecord hsr = new HouseOfferRecord(house, price, BTLOffer);
+    public HouseOfferRecord offer(House house, double price, boolean BTLOffer,
+            int initialListingTime) {
+        HouseOfferRecord hsr = new HouseOfferRecord(
+                house, price, BTLOffer, initialListingTime);
         offersPQ.add(hsr);
         return hsr;
     }
@@ -98,19 +105,19 @@ public abstract class HousingMarket {
     /**
      * Main simulation step. For a number of rounds, matches bids with offers and clears the matches.
      */
-    void clearMarket() {
+    void clearMarket(RngContext context) {
         nBidUpFrequency = new int[21]; // Re-start bid-up counter (while this array size is arbitrary, anything above 10 should be enough)
         // Before any use, priorities must be sorted by filling in the uncoveredElements TreeSet at the corresponding
         // PriorityQueue2D, in this case, the offersPQ object contains a Price-Quality 2D-priority queue of offers
         offersPQ.sortPriorities();
         while (bids.size() > 0 && offersPQ.size() > 0) {
             matchBidsWithOffers(); // Step 1: iterate through bids
-            clearMatches(); // Step 2: iterate through offers
+            clearMatches(context); // Step 2: iterate through offers
         }
         bids.clear();
         // Record the frequency of bid-ups
         if (config.recordNBidUpFrequency) {
-            Model.transactionRecorder.recordNBidUpFrequency(Model.getTime(), nBidUpFrequency);
+            Model.transactionRecorder.recordNBidUpFrequency(context.timeStep(), nBidUpFrequency);
         }
     }
 
@@ -140,10 +147,9 @@ public abstract class HousingMarket {
      * If BIDUP is activated, the offer price is bid up according to a geometric distribution with mean dependent on the
      * number of matched bids.
      */
-    private void clearMatches() {
+    private void clearMatches(RngContext context) {
         // Clear and resolve oversubscribed offers
         HouseOfferRecord offer;
-        GeometricDistribution geomDist;
         int nBids;
         double pSuccessfulBid;
         double salePrice;
@@ -168,8 +174,8 @@ public abstract class HousingMarket {
                     // number of attempts before a success (number of consecutive bids less than a week apart before two
                     // consecutive bids more than a week apart), which corresponds to a draw from a geometric
                     // distribution
-                    geomDist = new GeometricDistribution(prng, pSuccessfulBid);
-                    int nBidUps = geomDist.sample();
+                    int nBidUps = context.geometric(
+                            offer.getHouse(), bidUpEvent, pSuccessfulBid);
                     addNBidUps(nBidUps);
                     // Finally compute the new price
                     salePrice = offer.getPrice()*Math.pow(config.BIDUP, nBidUps);
@@ -182,7 +188,8 @@ public abstract class HousingMarket {
                     --nBids; // This counts the number of bids above the new price
                 }
                 if (offer.getMatchedBids().size() - nBids > 1) {
-                    winningBid = nBids + prng.nextInt(offer.getMatchedBids().size()- nBids); // This chooses a random one if they are multiple
+                    winningBid = nBids + context.boundedInt(offer.getHouse(), tieBreakEvent,
+                            offer.getMatchedBids().size() - nBids); // This chooses a random one if they are multiple
                 } else if (offer.getMatchedBids().size() - nBids == 1) {
                     winningBid = nBids; // This chooses the only one if there is only one
                 } else {
@@ -195,7 +202,7 @@ public abstract class HousingMarket {
                 // ...update price for the offer
                 offer.setPrice(salePrice);
                 // ...complete successful transaction and record it into the corresponding housingMarketStats
-                completeTransaction(offer.getMatchedBids().get(winningBid), offer);
+                completeTransaction(offer.getMatchedBids().get(winningBid), offer, context);
                 // Put the rest of the bids for this property (failed bids) back on bids array
                 bids.addAll(offer.getMatchedBids().subList(0, winningBid));
                 bids.addAll(offer.getMatchedBids().subList(winningBid + 1, offer.getMatchedBids().size()));
@@ -203,7 +210,7 @@ public abstract class HousingMarket {
             } else if (nBids == 1) {
                 addNBidUps(0);
                 // ...complete successful transaction and record it into the corresponding housingMarketStats
-                completeTransaction(offer.getMatchedBids().get(0), offer);
+                completeTransaction(offer.getMatchedBids().get(0), offer, context);
                 // ...remove this offer from the offers priority queue, offersPQ, underlying the record iterator (and, for HouseSaleMarket, also from the PY queue)
                 removeOfferFromQueues(record, offer);
             }
@@ -229,7 +236,8 @@ public abstract class HousingMarket {
      * @param purchase HouseBidderRecord with information on the offer
      * @param sale HouseOfferRecord with information on the bid
      */
-    public abstract void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale);
+    public abstract void completeTransaction(
+            HouseBidderRecord purchase, HouseOfferRecord sale, RngContext context);
 
     // Add a transaction with a number nBidUps of bid-up attempts
     private void addNBidUps(int nBidUps) {

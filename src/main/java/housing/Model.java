@@ -10,7 +10,6 @@ import collectors.*;
 
 import org.apache.commons.cli.*;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.math3.random.RandomGenerator;
 
 /**************************************************************************************************
  * This is the root object of the simulation. Upon creation it creates and initialises all the
@@ -41,7 +40,7 @@ public class Model {
     //------------------//
 
     public static Config                config;
-    private static RandomGenerator      prng;
+    private static RandomService        randomService;
     public static Construction          construction;
     public static CentralBank           centralBank;
     public static Bank                  bank;
@@ -74,17 +73,22 @@ public class Model {
      * @param outputFolder String with the address of the folder for storing results
      */
     public Model(String configFileName, String outputFolder) {
+        this(configFileName, outputFolder, RngFactory.resolveMode());
+    }
+
+    private Model(String configFileName, String outputFolder, RngMode rngMode) {
         config = new Config(configFileName);
-        prng = RngFactory.create(config.SEED);
+        randomService = RngFactory.create(config.SEED, rngMode);
+        randomService.requireModelSupport();
 
         government = new Government();
-        demographics = new Demographics(prng);
-        construction = new Construction(prng);
+        demographics = new Demographics();
+        construction = new Construction();
         centralBank = new CentralBank();
         bank = new Bank(centralBank);
         households = new ArrayList<>((int)(config.TARGET_POPULATION * 1.2)); // This accounts for fluctuations 20% over the target
-        houseSaleMarket = new HouseSaleMarket(prng);
-        houseRentalMarket = new HouseRentalMarket(prng);
+        houseSaleMarket = new HouseSaleMarket();
+        houseRentalMarket = new HouseRentalMarket();
 
         recorder = new collectors.Recorder(outputFolder);
         transactionRecorder = new TransactionRecorder(outputFolder);
@@ -109,11 +113,18 @@ public class Model {
 
         long start = System.nanoTime();
 
+        // Resolve and validate RNG activation before output handling can create or clean anything.
+        RngMode rngMode = RngFactory.resolveMode();
+        rngMode.requireModelSupport();
+
         // Handle input arguments from command line
         handleInputArguments(args);
 
         // Create an instance of Model in order to initialise it (reading config file)
-        new Model(configFileName, outputFolder);
+        new Model(configFileName, outputFolder, rngMode);
+
+        // Keep run metadata deterministic and outside the frozen model-output file manifest.
+        System.out.println(randomService.metadata().formatLine());
 
         // Open files for writing multiple runs results
         recorder.openMultiRunFiles(config.recordCoreIndicators);
@@ -121,7 +132,7 @@ public class Model {
         // Perform config.N_SIMS simulations
         for (nSimulation = 1; nSimulation <= config.N_SIMS; nSimulation += 1) {
 
-            prng.setSeed(simulationSeed(config.SEED, nSimulation));
+            randomService.reseedLegacy(simulationSeed(config.SEED, nSimulation));
 
             // For each simulation, open files for writing single-run results
             recorder.openSingleRunFiles(nSimulation, config.recordQualityBandPrice, config.derivedParams.N_QUALITIES);
@@ -193,24 +204,30 @@ public class Model {
     }
 
     private static void modelStep() {
+        int simulation = RandomAddressV1.fromReportingSimulation(nSimulation);
+        RngContext demographicsContext = randomService.demographicsContext(simulation, t);
+        RngContext constructionContext = randomService.constructionContext(simulation, t);
+        RngContext householdLoopContext = randomService.householdLoopContext(simulation, t);
+        RngContext saleClearingContext = randomService.saleClearingContext(simulation, t);
+        RngContext rentClearingContext = randomService.rentClearingContext(simulation, t);
         // Update population with births and deaths
-        demographics.step();
+        demographics.step(demographicsContext);
         // Update number of houses
-        construction.step();
+        construction.step(constructionContext);
         // Updates regional households consumption, housing decisions, and corresponding regional bids and offers
-        for(Household h : households) h.step(prng);
+        for(Household h : households) h.step(householdLoopContext);
         // Reset counters to store credit supply statistics
         creditSupply.preClearingResetCounters(t);
         // Store sale market bid and offer prices and averages before bids are matched by clearing the market
         housingMarketStats.preClearingRecord(t);
         // Clear sale market and updates the HPI
-        houseSaleMarket.clearMarket();
+        houseSaleMarket.clearMarket(saleClearingContext);
         // Compute and store several housing market statistics after bids are matched by clearing the market (such as HPI, HPA)
         housingMarketStats.postClearingRecord();
         // Store rental market bid and offer prices and averages before bids are matched by clearing the market
         rentalMarketStats.preClearingRecord(t);
         // Clears rental market
-        houseRentalMarket.clearMarket();
+        houseRentalMarket.clearMarket(rentClearingContext);
         // Compute and store several rental market statistics after bids are matched by clearing the market (such as HPI, HPA)
         rentalMarketStats.postClearingRecord();
         // Store household statistics after both regional markets have been cleared

@@ -1,7 +1,5 @@
 package housing;
 
-import org.apache.commons.math3.random.RandomGenerator;
-
 /**************************************************************************************************
  * Class to represent the rental market
  *
@@ -14,7 +12,9 @@ public class HouseRentalMarket extends HousingMarket {
     //----- Constructors -----//
     //------------------------//
 
-    public HouseRentalMarket(RandomGenerator prng) { super(prng); }
+    public HouseRentalMarket() {
+        super(RandomEvent.RENT_MARKET_BID_UP, RandomEvent.RENT_MARKET_TIE_BREAK);
+    }
 
     //-------------------//
     //----- Methods -----//
@@ -30,10 +30,12 @@ public class HouseRentalMarket extends HousingMarket {
      * @param sale HouseOfferRecord with information on the landlord and the offered property
      */
     @Override
-    public void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale) {
+    public void completeTransaction(HouseBidderRecord purchase, HouseOfferRecord sale,
+            RngContext context) {
         sale.getHouse().rentalRecord = null;
         // This affects: house's resident, renter's home, renter's housePayments, renter, seller's rental income
-        sale.getHouse().owner.completeHouseLet(sale, purchase.getBidder().completeHouseRental(sale, prng));
+        sale.getHouse().owner.completeHouseLet(
+                sale, purchase.getBidder().completeHouseRental(sale, context));
         // This uses: house's id and quality; mortgage's type, downpayment and principal; sale's initial listing price,
         // initial listing time and final price; buyer's id, age, BTL gene, income, rental income, bank balance, and
         // capital gains coefficient; and seller's id, age, BTL gene, income, rental income, bank balance and capital
@@ -42,8 +44,9 @@ public class HouseRentalMarket extends HousingMarket {
     }
 
     @Override
-    public HouseOfferRecord offer(House house, double price, boolean BTLOffer) {
-        HouseOfferRecord hsr = super.offer(house, price, false);
+    public HouseOfferRecord offer(House house, double price, boolean BTLOffer,
+            int initialListingTime) {
+        HouseOfferRecord hsr = super.offer(house, price, false, initialListingTime);
         house.putForRent(hsr);
         return(hsr);
     }

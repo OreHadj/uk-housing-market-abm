@@ -4,7 +4,6 @@ import collectors.HousingMarketStats;
 import collectors.HouseholdStats;
 import collectors.RentalMarketStats;
 import org.apache.commons.math3.distribution.LogNormalDistribution;
-import org.apache.commons.math3.random.RandomGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,7 +21,8 @@ class BTLFeatureToggleTest {
     private static final String CONFIG_PATH = Paths.get("src/main/resources/config.properties")
             .toAbsolutePath().toString();
 
-    private RandomGenerator prng;
+    private RngContext creationContext;
+    private RngContext context;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -33,7 +33,9 @@ class BTLFeatureToggleTest {
         Model.config.CENTRAL_BANK_LTV_HARD_MAX_BTL = 0.85;
         Model.config.BANK_ICR_HARD_MIN = 1.25;
         Model.config.CENTRAL_BANK_ICR_HARD_MIN = 1.25;
-        prng = RngFactory.create(123);
+        RandomService randomService = RngFactory.create(123);
+        creationContext = randomService.demographicsContext(0, 0);
+        context = randomService.householdLoopContext(0, 0);
         Model.government = new Government();
         Model.householdStats = new HouseholdStats();
         Model.householdStats.init();
@@ -52,12 +54,12 @@ class BTLFeatureToggleTest {
         Model.config.DOWNPAYMENT_BTL_MEAN = 0.40;
         Model.config.DOWNPAYMENT_BTL_EPSILON = 0.0;
 
-        Household household = new Household(prng, 35.0);
+        Household household = new Household(creationContext, 35.0);
         setField(household, "isFirstTimeBuyer", false);
         setField(household, "bankBalance", 100000.0);
 
         assertEquals(40000.0,
-                household.behaviour.decideDownPayment(prng, household, 100000.0, false), 1.0e-9);
+                household.behaviour.decideDownPayment(context, household, 100000.0, false), 1.0e-9);
     }
 
     @Test
@@ -66,13 +68,13 @@ class BTLFeatureToggleTest {
         Model.config.DOWNPAYMENT_BTL_SCALE = Math.log(0.25);
         Model.config.DOWNPAYMENT_BTL_SHAPE = 1.0e-12;
 
-        Household household = new Household(prng, 35.0);
+        Household household = new Household(creationContext, 35.0);
         setField(household, "isFirstTimeBuyer", false);
         setField(household, "bankBalance", 100000.0);
         setField(household, "incomePercentile", 0.5);
 
         assertEquals(50000.0,
-                household.behaviour.decideDownPayment(prng, household, 100000.0, false), 1.0e-3);
+                household.behaviour.decideDownPayment(context, household, 100000.0, false), 1.0e-3);
     }
 
     @Test
@@ -81,9 +83,11 @@ class BTLFeatureToggleTest {
         Model.housingMarketStats = new FixedHousingMarketStats(200000.0, 1.0);
         resetHouseholdBehaviourStatics();
 
-        RandomGenerator control = RngFactory.create(123);
-        Household household = new Household(prng, 35.0);
-        Household controlHousehold = new Household(control, 35.0);
+        RandomService controlService = RngFactory.create(123);
+        RngContext controlCreationContext = controlService.demographicsContext(0, 0);
+        RngContext controlContext = controlService.householdLoopContext(0, 0);
+        Household household = new Household(creationContext, 35.0);
+        Household controlHousehold = new Household(controlCreationContext, 35.0);
         setField(household, "isFirstTimeBuyer", false);
         setField(household, "bankBalance", Double.MAX_VALUE / 4.0);
 
@@ -96,9 +100,9 @@ class BTLFeatureToggleTest {
                 Model.config.DOWNPAYMENT_BTL_SCALE, Model.config.DOWNPAYMENT_BTL_SHAPE)
                 .inverseCumulativeProbability(percentile);
         double actualOwnerOccupier = household.behaviour.decideDownPayment(
-                prng, household, housePrice, true);
+                context, household, housePrice, true);
         double actualBuyToLet = household.behaviour.decideDownPayment(
-                prng, household, housePrice, false);
+                context, household, housePrice, false);
 
         assertAll(
                 () -> assertEquals(Double.doubleToRawLongBits(controlHousehold.incomePercentile),
@@ -107,8 +111,11 @@ class BTLFeatureToggleTest {
                         Double.doubleToRawLongBits(actualOwnerOccupier)),
                 () -> assertEquals(Double.doubleToRawLongBits(expectedBuyToLet),
                         Double.doubleToRawLongBits(actualBuyToLet)),
-                () -> assertEquals(Double.doubleToRawLongBits(control.nextDouble()),
-                        Double.doubleToRawLongBits(prng.nextDouble()))
+                () -> assertEquals(Double.doubleToRawLongBits(
+                                controlContext.uniform(
+                                        controlHousehold, RandomEvent.RENT_OR_BUY)),
+                        Double.doubleToRawLongBits(
+                                context.uniform(household, RandomEvent.RENT_OR_BUY)))
         );
     }
 
@@ -117,7 +124,7 @@ class BTLFeatureToggleTest {
         Model.config.enableBTLAlternativeReturn = false;
         Model.config.BTL_ALTERNATIVE_RETURN = 0.03;
 
-        HouseholdBehaviour behaviour = new Household(prng, 35.0).behaviour;
+        HouseholdBehaviour behaviour = new Household(creationContext, 35.0).behaviour;
 
         assertEquals(0.0, invokeDouble(behaviour, "getBTLAlternativeReturn"), 1.0e-12);
     }
@@ -127,7 +134,7 @@ class BTLFeatureToggleTest {
         Model.config.enableBTLAlternativeReturn = true;
         Model.config.BTL_ALTERNATIVE_RETURN = 0.03;
 
-        HouseholdBehaviour behaviour = new Household(prng, 35.0).behaviour;
+        HouseholdBehaviour behaviour = new Household(creationContext, 35.0).behaviour;
 
         assertEquals(0.03, invokeDouble(behaviour, "getBTLAlternativeReturn"), 1.0e-12);
     }
@@ -142,7 +149,7 @@ class BTLFeatureToggleTest {
         Household legacyInvestor = createInvestor(1_000_000.0, 2);
         setBehaviourField(legacyInvestor.behaviour, "BTLCapGainCoefficient", 0.0);
 
-        assertTrue(legacyInvestor.behaviour.decideToBuyInvestmentProperty(prng, legacyInvestor));
+        assertTrue(legacyInvestor.behaviour.decideToBuyInvestmentProperty(context, legacyInvestor));
 
         setUp();
         Model.config.BTL_CHOICE_INTENSITY = 1000.0;
@@ -155,7 +162,7 @@ class BTLFeatureToggleTest {
         setBehaviourField(alternativeReturnInvestor.behaviour, "BTLCapGainCoefficient", 0.0);
 
         assertFalse(alternativeReturnInvestor.behaviour.decideToBuyInvestmentProperty(
-                prng, alternativeReturnInvestor));
+                context, alternativeReturnInvestor));
     }
 
     @Test
@@ -168,9 +175,9 @@ class BTLFeatureToggleTest {
         Household legacyInvestor = createInvestor(1_000_000.0, 3);
         setBehaviourField(legacyInvestor.behaviour, "BTLCapGainCoefficient", 0.0);
         House legacyTarget = addOwnedProperty(legacyInvestor, false, 120_000.0, 0.06, 120);
-        legacyTarget.putForRent(new HouseOfferRecord(legacyTarget, 750.0, false));
+        legacyTarget.putForRent(new HouseOfferRecord(legacyTarget, 750.0, false, 0));
 
-        assertFalse(legacyInvestor.behaviour.decideToSellInvestmentProperty(prng, legacyTarget, legacyInvestor));
+        assertFalse(legacyInvestor.behaviour.decideToSellInvestmentProperty(context, legacyTarget, legacyInvestor));
 
         setUp();
         Model.config.BTL_CHOICE_INTENSITY = 1000.0;
@@ -182,18 +189,19 @@ class BTLFeatureToggleTest {
         Household alternativeReturnInvestor = createInvestor(1_000_000.0, 3);
         setBehaviourField(alternativeReturnInvestor.behaviour, "BTLCapGainCoefficient", 0.0);
         House alternativeReturnTarget = addOwnedProperty(alternativeReturnInvestor, false, 120_000.0, 0.06, 120);
-        alternativeReturnTarget.putForRent(new HouseOfferRecord(alternativeReturnTarget, 750.0, false));
+        alternativeReturnTarget.putForRent(
+                new HouseOfferRecord(alternativeReturnTarget, 750.0, false, 0));
 
         assertTrue(alternativeReturnInvestor.behaviour.decideToSellInvestmentProperty(
-                prng, alternativeReturnTarget, alternativeReturnInvestor));
+                context, alternativeReturnTarget, alternativeReturnInvestor));
     }
 
     @Test
     void buyAndSellYieldInputsUseLegacyPaymentFlowFinancingWhenToggleIsFalse() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = false;
 
-        HouseholdBehaviour behaviour = new Household(prng, 35.0).behaviour;
-        MortgageAgreement mortgage = new MortgageAgreement(new Household(prng, 35.0), true);
+        HouseholdBehaviour behaviour = new Household(creationContext, 35.0).behaviour;
+        MortgageAgreement mortgage = new MortgageAgreement(new Household(creationContext, 35.0), true);
         mortgage.monthlyPayment = 700.0;
         mortgage.principal = 100000.0;
         mortgage.monthlyInterestRate = 0.005;
@@ -208,8 +216,8 @@ class BTLFeatureToggleTest {
     void buyAndSellYieldInputsUseAmortizingInterestExpenseWhenToggleIsTrue() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = true;
 
-        HouseholdBehaviour behaviour = new Household(prng, 35.0).behaviour;
-        MortgageAgreement mortgage = new MortgageAgreement(new Household(prng, 35.0), true);
+        HouseholdBehaviour behaviour = new Household(creationContext, 35.0).behaviour;
+        MortgageAgreement mortgage = new MortgageAgreement(new Household(creationContext, 35.0), true);
         mortgage.monthlyPayment = 700.0;
         mortgage.principal = 100000.0;
         mortgage.monthlyInterestRate = 0.005;
@@ -224,7 +232,7 @@ class BTLFeatureToggleTest {
     void legacyBTLApprovalUsesInterestOnlyIcrSizing() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = false;
 
-        Household borrower = new Household(prng, 35.0);
+        Household borrower = new Household(creationContext, 35.0);
         setField(borrower, "isFirstTimeBuyer", false);
         setField(borrower, "bankBalance", 40000.0);
 
@@ -242,7 +250,7 @@ class BTLFeatureToggleTest {
     void amortizingBTLApprovalUsesAmortizingIcrSizing() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = true;
 
-        Household borrower = new Household(prng, 35.0);
+        Household borrower = new Household(creationContext, 35.0);
         setField(borrower, "isFirstTimeBuyer", false);
         setField(borrower, "bankBalance", 40000.0);
 
@@ -262,7 +270,7 @@ class BTLFeatureToggleTest {
     void legacyBTLMaxMortgagePriceUsesInterestOnlyIcrSizing() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = false;
 
-        Household borrower = new Household(prng, 35.0);
+        Household borrower = new Household(creationContext, 35.0);
         setField(borrower, "isFirstTimeBuyer", false);
         setField(borrower, "bankBalance", 40000.0);
 
@@ -273,7 +281,7 @@ class BTLFeatureToggleTest {
     void amortizingBTLMaxMortgagePriceUsesAmortizingIcrSizing() throws Exception {
         Model.config.enableBTLAmortizingMortgageMode = true;
 
-        Household borrower = new Household(prng, 35.0);
+        Household borrower = new Household(creationContext, 35.0);
         setField(borrower, "isFirstTimeBuyer", false);
         setField(borrower, "bankBalance", 40000.0);
 
@@ -332,7 +340,7 @@ class BTLFeatureToggleTest {
     }
 
     private Household createInvestor(double bankBalance, int nExistingProperties) throws Exception {
-        Household investor = new Household(prng, 40.0);
+        Household investor = new Household(creationContext, 40.0);
         setField(investor, "bankBalance", bankBalance);
         setField(investor, "isFirstTimeBuyer", false);
         setBehaviourField(investor.behaviour, "BTLInvestor", true);

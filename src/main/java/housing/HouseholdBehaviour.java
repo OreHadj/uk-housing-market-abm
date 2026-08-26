@@ -1,7 +1,6 @@
 package housing;
 
 import org.apache.commons.math3.distribution.LogNormalDistribution;
-import org.apache.commons.math3.random.RandomGenerator;
 
 import collectors.HousingMarketStats;
 import collectors.RentalMarketStats;
@@ -48,16 +47,17 @@ public class HouseholdBehaviour {
      *
      * @param incomePercentile Fixed income percentile for the household (assumed constant over a lifetime)
      */
-    HouseholdBehaviour(RandomGenerator prng, double incomePercentile) {
+    HouseholdBehaviour(RngContext context, Household household, double incomePercentile) {
         // Compute propensity to save, so that it is constant for a given household
-        propensityToSave = prng.nextDouble();
+        propensityToSave = context.uniform(household, RandomEvent.HH_PROPENSITY_TO_SAVE);
         // Decide if household is a BTL investor and, if so, its tendency to seek capital gains or rental yields
         BTLCapGainCoefficient = 0.0;
         // Decide whether the household will have a BTL tendency...
-        if (prng.nextDouble() < config.BTL_PROBABILITY_MULTIPLIER*BTLProbability.getBinAt(incomePercentile)) {
+        if (context.uniform(household, RandomEvent.HH_BTL_GENE)
+                < config.BTL_PROBABILITY_MULTIPLIER*BTLProbability.getBinAt(incomePercentile)) {
             BTLInvestor = true;
             // ...and, if so, whether it will have a rental-income-driven, capital-gains-driven or mixed strategy
-            double rand = prng.nextDouble();
+            double rand = context.uniform(household, RandomEvent.HH_BTL_STRATEGY);
             if (rand < config.BTL_P_INCOME_DRIVEN) {
                 BTLCapGainCoefficient = config.BTL_INCOME_DRIVEN_CAP_GAIN_COEFF;
             } else if (rand < config.BTL_P_INCOME_DRIVEN + config.BTL_P_CAPITAL_DRIVEN) {
@@ -102,9 +102,11 @@ public class HouseholdBehaviour {
      *
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      */
-    double updateDesiredPurchasePrice(RandomGenerator prng, double annualGrossEmploymentIncome) {
+    double updateDesiredPurchasePrice(RngContext context, Household household,
+            double annualGrossEmploymentIncome) {
         return config.BUY_SCALE * Math.pow(annualGrossEmploymentIncome, config.BUY_EXPONENT)
-                * Math.exp(config.BUY_MU + config.BUY_SIGMA*prng.nextGaussian());
+                * Math.exp(config.BUY_MU + config.BUY_SIGMA
+                        * context.normal(household, RandomEvent.HH_DESIRED_PURCHASE));
     }
 
     /**
@@ -117,7 +119,8 @@ public class HouseholdBehaviour {
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      * @param LTV Loan to value ratio targeted by the household
      */
-    double getAltDesiredPurchasePrice(RandomGenerator prng, double annualGrossEmploymentIncome, double LTV) {
+    double getAltDesiredPurchasePrice(RngContext context, Household household,
+            double annualGrossEmploymentIncome, double LTV) {
         double r = Model.bank.getMortgageInterestRate();
         double denominator = 0.05
                 + LTV * r / (1 - Math.pow((1 + r / config.constants.MONTHS_IN_YEAR), -config.derivedParams.N_PAYMENTS))
@@ -127,7 +130,9 @@ public class HouseholdBehaviour {
         // negative values
         denominator = Math.max(denominator, 0.001);
         return config.BUY_SCALE * Math.pow(annualGrossEmploymentIncome, config.BUY_EXPONENT)
-                * Math.exp(config.BUY_MU + config.BUY_SIGMA*prng.nextGaussian()) / denominator;
+                * Math.exp(config.BUY_MU + config.BUY_SIGMA
+                        * context.normal(household, RandomEvent.HH_ALT_DESIRED_PURCHASE))
+                / denominator;
     }
 
     /**
@@ -135,11 +140,12 @@ public class HouseholdBehaviour {
      *
      * @param annualGrossEmploymentIncome Annual gross employment income of the household
      */
-    double getDesiredRentPrice(RandomGenerator prng, double annualGrossEmploymentIncome,
-            double monthlyNetTotalIncome) {
+    double getDesiredRentPrice(RngContext context, Household household,
+            double annualGrossEmploymentIncome, double monthlyNetTotalIncome) {
         double desiredRentalPrice = config.DESIRED_RENT_SCALE
                 * Math.pow(annualGrossEmploymentIncome, config.DESIRED_RENT_EXPONENT)
-                * Math.exp(config.DESIRED_RENT_MU + config.DESIRED_RENT_SIGMA * prng.nextGaussian());
+                * Math.exp(config.DESIRED_RENT_MU + config.DESIRED_RENT_SIGMA
+                        * context.normal(household, RandomEvent.HH_DESIRED_RENT));
         // Note the capping of rental bids to the available net income after essential consumption
         return Math.min(desiredRentalPrice, monthlyNetTotalIncome
                 - config.ESSENTIAL_CONSUMPTION_FRACTION * config.GOVERNMENT_MONTHLY_INCOME_SUPPORT);
@@ -153,8 +159,11 @@ public class HouseholdBehaviour {
      * @param quality Quality of the house to be sold
      * @param principal Amount of principal left on any mortgage on this house
      */
-    double getInitialSalePrice(RandomGenerator prng, int quality, double principal) {
-        return Math.max(saleMarkUpPdf.nextDouble(prng) * housingMarketStats.getExpAvSalePriceForQuality(quality),
+    double getInitialSalePrice(RngContext context, House house, double principal,
+            int listingEpisode) {
+        return Math.max(context.empiricalPdf(
+                        house, RandomEvent.SALE_LIST_MARKUP, listingEpisode, saleMarkUpPdf)
+                        * housingMarketStats.getExpAvSalePriceForQuality(house.getQuality()),
                 principal);
     }
 
@@ -165,8 +174,10 @@ public class HouseholdBehaviour {
      *
      * @param quality Quality of the house to be rented out
      */
-    double getInitialRentPrice(RandomGenerator prng, int quality) {
-        return rentMarkUpPdf.nextDouble(prng) * rentalMarketStats.getExpAvSalePriceForQuality(quality);
+    double getInitialRentPrice(RngContext context, House house, int listingEpisode) {
+        return context.empiricalPdf(
+                        house, RandomEvent.RENT_LIST_MARKUP, listingEpisode, rentMarkUpPdf)
+                * rentalMarketStats.getExpAvSalePriceForQuality(house.getQuality());
     }
 
     /**
@@ -175,9 +186,10 @@ public class HouseholdBehaviour {
      *
      * @return True if the owner-occupier decides to sell the house and false otherwise.
      */
-    boolean decideToSellHome(RandomGenerator prng) {
+    boolean decideToSellHome(RngContext context, House house) {
         // TODO: This if implies BTL agents never sell their homes, need to explain in paper!
-        return !isPropertyInvestor() && (prng.nextDouble() < config.derivedParams.MONTHLY_P_SELL);
+        return !isPropertyInvestor() && (context.uniform(house, RandomEvent.HOME_SELL)
+                < config.derivedParams.MONTHLY_P_SELL);
     }
 
     /**
@@ -186,7 +198,8 @@ public class HouseholdBehaviour {
      * @param me the household
      * @param housePrice the price of the house
      */
-    double decideDownPayment(RandomGenerator prng, Household me, double housePrice, boolean isHome) {
+    double decideDownPayment(RngContext context, Household me, double housePrice,
+            boolean isHome) {
         if (me.getBankBalance() > housePrice*config.DOWNPAYMENT_BANK_BALANCE_FOR_CASH_SALE) {
             return housePrice;
         }
@@ -204,7 +217,8 @@ public class HouseholdBehaviour {
                         * getBTLDownpaymentDist().inverseCumulativeProbability(me.incomePercentile);
             } else {
                 downpayment = housePrice*(Math.max(0.0,
-                        config.DOWNPAYMENT_BTL_MEAN + config.DOWNPAYMENT_BTL_EPSILON * prng.nextGaussian()));
+                        config.DOWNPAYMENT_BTL_MEAN + config.DOWNPAYMENT_BTL_EPSILON
+                                * context.normal(me, RandomEvent.BTL_DOWNPAYMENT)));
             }
         } else {
             downpayment = housingMarketStats.getHPI()
@@ -221,14 +235,16 @@ public class HouseholdBehaviour {
      *
      * @param me the household
      */
-    double decideLTV(RandomGenerator prng, Household me) {
+    double decideLTV(RngContext context, Household me) {
         if (me.isFirstTimeBuyer()) {
             return (0.0002826 * me.getAnnualGrossEmploymentIncome()
                     - 0.00000000128 * Math.pow(me.getAnnualGrossEmploymentIncome(), 2)
                     - 0.5791559 * me.getAge()
                     + 83.92332) / 100.0;
         } else if (isPropertyInvestor()) {
-            return Math.max(0.0, config.DOWNPAYMENT_BTL_MEAN + config.DOWNPAYMENT_BTL_EPSILON * prng.nextGaussian());
+            return Math.max(0.0, config.DOWNPAYMENT_BTL_MEAN
+                    + config.DOWNPAYMENT_BTL_EPSILON
+                            * context.normal(me, RandomEvent.BTL_TARGET_LTV));
         } else {
             return (0.0002175 * me.getAnnualGrossEmploymentIncome()
                     - 0.000000000834 * Math.pow(me.getAnnualGrossEmploymentIncome(), 2)
@@ -254,7 +270,7 @@ public class HouseholdBehaviour {
      *
      * @return True if the household decides to buy a house, False if the household decides to rent
      */
-    boolean decideRentOrPurchase(RandomGenerator prng, Household me, double purchasePrice,
+    boolean decideRentOrPurchase(RngContext context, Household me, double purchasePrice,
             double desiredDownPayment, double desiredPrice) {
         // By definition, BTL households never rent
         if(isPropertyInvestor()) return(true);
@@ -282,8 +298,9 @@ public class HouseholdBehaviour {
         double costOfRent = rentalMarketStats.getExpAvSalePriceForQuality(newHouseQuality)
                 *config.constants.MONTHS_IN_YEAR;
         // ...and, finally, compare these costs by building a sigma-shaped probability to buy
-        return prng.nextDouble() < sigma(config.SENSITIVITY_RENT_OR_PURCHASE*(costOfRent*(1.0
-                + config.PSYCHOLOGICAL_COST_OF_RENTING) - costOfHouse));
+        return context.uniform(me, RandomEvent.RENT_OR_BUY)
+                < sigma(config.SENSITIVITY_RENT_OR_PURCHASE*(costOfRent*(1.0
+                        + config.PSYCHOLOGICAL_COST_OF_RENTING) - costOfHouse));
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -300,7 +317,7 @@ public class HouseholdBehaviour {
      * @param me The investor household
      * @return True if investor me decides to sell investment property h
      */
-    boolean decideToSellInvestmentProperty(RandomGenerator prng, House h, Household me) {
+    boolean decideToSellInvestmentProperty(RngContext context, House h, Household me) {
         // First find the mortgage agreement for this property
         MortgageAgreement mortgage = me.mortgageFor(h);
 
@@ -337,7 +354,7 @@ public class HouseholdBehaviour {
         double pKeep = Math.pow(sigma(config.BTL_CHOICE_INTENSITY * expectedEquityYield),
                 1.0 / config.constants.MONTHS_IN_YEAR);
         // Return true or false as a random draw from the computed probability
-        return prng.nextDouble() < (1.0 - pKeep);
+        return context.uniform(h, RandomEvent.BTL_SELL) < (1.0 - pKeep);
     }
 
     /**
@@ -352,7 +369,7 @@ public class HouseholdBehaviour {
      * @param me The investor household
      * @return True if investor me decides to try to buy a new investment property, False otherwise
      */
-    boolean decideToBuyInvestmentProperty(RandomGenerator prng, Household me) {
+    boolean decideToBuyInvestmentProperty(RngContext context, Household me) {
         // Fast decisions...
         // ...do not buy if current bank balance below desired level
         // TODO: Review whether to keep this mechanism as well as its particular position (before or after next rule)
@@ -388,7 +405,7 @@ public class HouseholdBehaviour {
         double pBuy = 1.0 - Math.pow((1.0 - sigma(config.BTL_CHOICE_INTENSITY*expectedEquityYield)),
                 1.0/config.constants.MONTHS_IN_YEAR);
         // Return true or false as a random draw from the computed probability
-        return prng.nextDouble() < pBuy;
+        return context.uniform(me, RandomEvent.BTL_BUY) < pBuy;
     }
 
     /**
@@ -397,9 +414,12 @@ public class HouseholdBehaviour {
      *
      * @param sale The HouseOfferRecord of the house that is on the sale market
      */
-    double rethinkHouseSalePrice(RandomGenerator prng, HouseOfferRecord sale) {
-        if (prng.nextDouble() < config.P_SALE_PRICE_REDUCE) {
-            double logReduction = config.REDUCTION_MU + (prng.nextGaussian() * config.REDUCTION_SIGMA);
+    double rethinkHouseSalePrice(RngContext context, House house, HouseOfferRecord sale) {
+        if (context.uniform(house, RandomEvent.SALE_REPRICE, 0)
+                < config.P_SALE_PRICE_REDUCE) {
+            double logReduction = config.REDUCTION_MU
+                    + (context.normal(house, RandomEvent.SALE_REPRICE, 1)
+                            * config.REDUCTION_SIGMA);
             // This prevents negative and too small new prices. While the limit of 0.5 is ad-hoc, being the probability
             // of larger decreases smaller than 1%, it should not affect the results in any significant way
             return sale.getPrice() * Math.max(1.0 - Math.exp(logReduction) / 100.0, 0.5);
@@ -413,9 +433,12 @@ public class HouseholdBehaviour {
      *
      * @param sale The HouseOfferRecord of the house that is on the rental market
      */
-    double rethinkHouseRentPrice(RandomGenerator prng, HouseOfferRecord sale) {
-        if (prng.nextDouble() < config.P_RENT_PRICE_REDUCE) {
-            double logReduction = config.RENT_REDUCTION_MU + (prng.nextGaussian() * config.RENT_REDUCTION_SIGMA);
+    double rethinkHouseRentPrice(RngContext context, House house, HouseOfferRecord sale) {
+        if (context.uniform(house, RandomEvent.RENT_REPRICE, 0)
+                < config.P_RENT_PRICE_REDUCE) {
+            double logReduction = config.RENT_REDUCTION_MU
+                    + (context.normal(house, RandomEvent.RENT_REPRICE, 1)
+                            * config.RENT_REDUCTION_SIGMA);
             // This prevents negative and too small new prices. While the limit of 0.5 is ad-hoc, being the probability
             // of larger decreases smaller than 1%, it should not affect the results in any significant way
             return sale.getPrice() * Math.max(1.0 - Math.exp(logReduction) / 100.0, 0.5);

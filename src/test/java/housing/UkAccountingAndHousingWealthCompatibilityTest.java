@@ -1,6 +1,5 @@
 package housing;
 
-import org.apache.commons.math3.random.RandomGenerator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,12 +27,12 @@ class UkAccountingAndHousingWealthCompatibilityTest {
     @TempDir
     Path tempDir;
 
-    private RandomGenerator prng;
+    private RngContext context;
 
     @BeforeEach
     void setUpModel() {
         new Model(CONFIG_PATH, tempDir.toString() + "/");
-        prng = RngFactory.create(123);
+        context = RngFactory.create(123).demographicsContext(0, 0);
         Model.t = 996;
         Model.housingMarketStats.init();
         Model.rentalMarketStats.init();
@@ -67,7 +66,7 @@ class UkAccountingAndHousingWealthCompatibilityTest {
 
     @Test
     void housingWealthMicroOutputMatchesLegacyMarkToMarketFixture() throws Exception {
-        Household household = new Household(prng, 40.0);
+        Household household = new Household(context, 40.0);
         House home = new House(0);
         House investment = new House(1);
         MortgageAgreement homeMortgage = mortgageAgreement(household, 100_000.0);

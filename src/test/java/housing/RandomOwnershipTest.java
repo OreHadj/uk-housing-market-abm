@@ -5,6 +5,10 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.apache.commons.math3.distribution.AbstractRealDistribution;
 import org.apache.commons.math3.distribution.LogNormalDistribution;
@@ -17,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RandomOwnershipTest {
 
@@ -26,70 +31,92 @@ class RandomOwnershipTest {
     Path tempDir;
 
     @Test
-    void modelOwnsOnePrivateFacadeAndNoConsumerStoresTheRawGenerator() throws Exception {
-        Field modelRandom = Model.class.getDeclaredField("prng");
-        assertEquals(RandomGenerator.class, modelRandom.getType());
-        assertFalse(Modifier.isPublic(modelRandom.getModifiers()));
-        assertFalse(Modifier.isProtected(modelRandom.getModifiers()));
+    void modelOwnsOnePrivateServiceAndConsumersStoreNoBackend() throws Exception {
+        Field modelRandom = Model.class.getDeclaredField("randomService");
+        assertEquals(RandomService.class, modelRandom.getType());
+        assertTrue(Modifier.isPrivate(modelRandom.getModifiers()));
+        assertTrue(Modifier.isStatic(modelRandom.getModifiers()));
 
-        Class<?>[] consumers = {
-                Model.class,
-                Demographics.class,
-                Construction.class,
-                HousingMarket.class,
-                HouseSaleMarket.class,
-                HouseRentalMarket.class,
-                Household.class,
-                HouseholdBehaviour.class
-        };
+        Class<?>[] consumers = modelConsumers();
         for (Class<?> consumer : consumers) {
             for (Field field : consumer.getDeclaredFields()) {
-                assertFalse(MersenneTwister.class.isAssignableFrom(field.getType()),
-                        () -> consumer.getName() + "." + field.getName() + " stores raw Mersenne state");
+                if (consumer == Model.class && field.getName().equals("randomService")) {
+                    continue;
+                }
+                assertFalse(RandomService.class.isAssignableFrom(field.getType()),
+                        () -> consumer.getName() + "." + field.getName() + " stores RNG service");
+                assertFalse(RandomGenerator.class.isAssignableFrom(field.getType()),
+                        () -> consumer.getName() + "." + field.getName() + " stores raw RNG");
+                assertFalse(AddressedRandom.class.isAssignableFrom(field.getType()),
+                        () -> consumer.getName() + "." + field.getName()
+                                + " stores addressed RNG");
             }
         }
 
         Field[] facadeFields = MersenneRandom.class.getDeclaredFields();
         assertEquals(1, facadeFields.length);
         assertSame(MersenneTwister.class, facadeFields[0].getType());
+
+        assertEquals(1, Arrays.stream(RandomService.class.getDeclaredFields())
+                .filter(field -> RandomGenerator.class.isAssignableFrom(field.getType())).count());
+        assertEquals(1, Arrays.stream(RandomService.class.getDeclaredFields())
+                .filter(field -> AddressedRandom.class.isAssignableFrom(field.getType())).count());
     }
 
     @Test
-    void householdsAndBehavioursRetainNoRandomServiceReference() {
-        assertStoresNoRandomService(Household.class);
-        assertStoresNoRandomService(HouseholdBehaviour.class);
-    }
-
-    @Test
-    void modelConsumersDependOnTheRandomGeneratorInterface() throws Exception {
-        Class<?>[] consumers = {
-                Model.class,
-                Demographics.class,
-                Construction.class,
-                HousingMarket.class,
-                HouseSaleMarket.class,
-                HouseRentalMarket.class,
-                Household.class,
-                HouseholdBehaviour.class,
-                IHouseOwner.class
-        };
-        for (Class<?> consumer : consumers) {
-            for (Field field : consumer.getDeclaredFields()) {
-                assertFalse(field.getType() == MersenneRandom.class,
-                        () -> consumer.getName() + "." + field.getName() + " leaks the concrete facade");
-            }
+    void modelConsumersHoldAndAcceptNoRawGenerator() {
+        for (Class<?> consumer : modelConsumers()) {
             for (Method method : consumer.getDeclaredMethods()) {
-                assertFalse(method.getReturnType() == MersenneRandom.class,
-                        () -> consumer.getName() + "." + method.getName() + " returns the concrete facade");
-                assertNoConcreteFacadeParameter(consumer, method.getName(), method.getParameters());
+                assertNotBackendType(consumer, method.getName(), method.getReturnType());
+                assertNoBackendParameter(consumer, method.getName(), method.getParameters());
             }
             for (var constructor : consumer.getDeclaredConstructors()) {
-                assertNoConcreteFacadeParameter(consumer, "<init>", constructor.getParameters());
+                assertNoBackendParameter(consumer, "<init>", constructor.getParameters());
             }
         }
 
-        assertSame(RandomGenerator.class,
-                RngFactory.class.getDeclaredMethod("create", int.class).getReturnType());
+        assertFalse(RandomGenerator.class.isAssignableFrom(RngContext.class));
+        assertFalse(Arrays.stream(RandomService.class.getDeclaredMethods())
+                .anyMatch(method -> method.getName().equals("legacy")
+                        || method.getName().equals("addressed")));
+    }
+
+    @Test
+    void contextIsImmutableAndContainsOnlyOwnerOriginSimulationAndTimeStep() {
+        Class<?> implementation = RandomService.ServiceRngContext.class;
+        assertTrue(Modifier.isFinal(implementation.getModifiers()));
+        assertTrue(RngContext.class.isAssignableFrom(implementation));
+
+        Map<String, Class<?>> fields = Arrays.stream(implementation.getDeclaredFields())
+                .filter(field -> !field.isSynthetic())
+                .peek(field -> assertTrue(Modifier.isFinal(field.getModifiers()), field.getName()))
+                .collect(Collectors.toMap(Field::getName, Field::getType));
+        assertEquals(Map.of(
+                "owner", RandomService.class,
+                "origin", RngOrigin.class,
+                "simulation", int.class,
+                "timeStep", int.class), fields);
+        assertEquals(0, RngContext.class.getDeclaredFields().length);
+    }
+
+    @Test
+    void onlyFiveNamedPhaseFactoriesCanCreateProductionContexts() {
+        Set<String> factories = Arrays.stream(RandomService.class.getDeclaredMethods())
+                .filter(method -> method.getReturnType() == RngContext.class)
+                .filter(method -> !Modifier.isPrivate(method.getModifiers()))
+                .map(Method::getName)
+                .collect(Collectors.toSet());
+        assertEquals(Set.of(
+                "demographicsContext",
+                "constructionContext",
+                "householdLoopContext",
+                "saleClearingContext",
+                "rentClearingContext"), factories);
+
+        assertEquals(1, RandomService.ServiceRngContext.class.getDeclaredConstructors().length);
+        assertTrue(Modifier.isPrivate(RandomService.ServiceRngContext.class
+                .getDeclaredConstructors()[0].getModifiers()));
+        assertTrue(RngContext.class.isSealed());
     }
 
     @Test
@@ -101,25 +128,40 @@ class RandomOwnershipTest {
         assertDistributionHasNoGenerator(staticDistribution(HouseholdBehaviour.class,
                 "downpaymentDistOO"));
 
-        Household household = new Household(new MersenneRandom(17), 35.0);
+        RngContext context = RngFactory.create(17).demographicsContext(0, 0);
+        Household household = new Household(context, 35.0);
         Method btlDistribution = HouseholdBehaviour.class.getDeclaredMethod("getBTLDownpaymentDist");
         btlDistribution.setAccessible(true);
-        assertDistributionHasNoGenerator((LogNormalDistribution) btlDistribution.invoke(household.behaviour));
-
+        assertDistributionHasNoGenerator(
+                (LogNormalDistribution) btlDistribution.invoke(household.behaviour));
     }
 
-    private static void assertStoresNoRandomService(Class<?> type) {
-        for (Field field : type.getDeclaredFields()) {
-            assertFalse(RandomGenerator.class.isAssignableFrom(field.getType()),
-                    () -> type.getName() + "." + field.getName() + " retains an RNG facade");
-        }
+    private static Class<?>[] modelConsumers() {
+        return new Class<?>[] {
+                Model.class,
+                Demographics.class,
+                Construction.class,
+                HousingMarket.class,
+                HouseSaleMarket.class,
+                HouseRentalMarket.class,
+                Household.class,
+                HouseholdBehaviour.class,
+                IHouseOwner.class
+        };
     }
 
-    private static void assertNoConcreteFacadeParameter(Class<?> owner, String member,
+    private static void assertNotBackendType(Class<?> owner, String member, Class<?> type) {
+        assertFalse(type == MersenneRandom.class
+                        || RandomGenerator.class.isAssignableFrom(type)
+                        || AddressedRandom.class.isAssignableFrom(type)
+                        || type == RandomService.class,
+                () -> owner.getName() + "." + member + " exposes backend type " + type.getName());
+    }
+
+    private static void assertNoBackendParameter(Class<?> owner, String member,
             Parameter[] parameters) {
         for (Parameter parameter : parameters) {
-            assertFalse(parameter.getType() == MersenneRandom.class,
-                    () -> owner.getName() + "." + member + " accepts the concrete facade");
+            assertNotBackendType(owner, member, parameter.getType());
         }
     }
 
