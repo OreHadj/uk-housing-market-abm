@@ -9563,8 +9563,10 @@ const modelEvidencePageSource = fs.readFileSync(
 assert.ok(
   modelEvidencePageSource.includes("label: 'Calibration'") &&
     modelEvidencePageSource.includes("label: 'Validation'") &&
-    modelEvidencePageSource.includes("activeView === 'calibration' ? <ComparePage /> : <ValidationPage />"),
-  'Model evidence should switch between the existing calibration and validation pages'
+    modelEvidencePageSource.includes("activeView === 'calibration'") &&
+    modelEvidencePageSource.includes('<ComparePage modelEvidenceDemo={calibrationDemo} />') &&
+    modelEvidencePageSource.includes('<ValidationPage modelEvidenceDemo={validationDemo} />'),
+  'Model evidence should coordinate but keep the existing Calibration and Validation pages separate'
 );
 assert.ok(
   modelEvidencePageSource.includes('results-view-switcher') &&
@@ -9599,9 +9601,9 @@ assert.equal(
 );
 assert.ok(
   experimentsPageSource.includes("navigate('/experiments')") &&
-    experimentsPageSource.includes('onClick={returnToExperiments}') &&
+    experimentsPageSource.includes('onClick={isPolicyDemo ? exitPolicyDemo : returnToExperiments}') &&
     experimentsPageSource.includes('returnToExperiments();'),
-  'Closing, escaping, clicking outside, or discarding experiment creation should return to the Experiments hub'
+  'Closing or discarding experiment creation should return to the Experiments hub, with demo cleanup when needed'
 );
 assert.ok(
   experimentsPageSource.includes("initialView === 'create' && <ExperimentsLandingPage />") &&
@@ -9975,9 +9977,10 @@ assert.ok(
     validationPageSource.includes('description="Overall validation results, strongest areas, and the largest gaps."') &&
     validationPageSource.includes('summary={comparisonSummary') &&
     validationPageSource.includes('`${summary.version} compared with ${comparisonSummary.version}`') &&
-    validationPageSource.includes('defaultOpen={false}') &&
+    validationPageSource.includes('open={isValidationSummaryOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsValidationSummaryOpen}') &&
     manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-title'),
-  'The collapsed Summary card should show its model summary below the title and its description alongside'
+  'The controlled, initially collapsed Summary card should show its model summary below the title and its description alongside'
 );
 assert.ok(
   validationPageSource.includes('Models tested against 2024 UK evidence') &&
@@ -10083,8 +10086,9 @@ assert.ok(
     validationPageSource.includes('title="Validation methodology"') &&
     validationPageSource.includes('description="How the model is tested, which evidence is used, and how results are scored."') &&
     validationPageSource.includes('summary="Protocol, evidence, and loss calculation"') &&
-    validationPageSource.includes('defaultOpen={false}'),
-  'Collapsed Validation methodology should show its description below the title and its method summary at the row end'
+    validationPageSource.includes('open={isValidationMethodologyOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsValidationMethodologyOpen}'),
+  'Controlled, initially collapsed Validation methodology should show its description below the title and its method summary at the row end'
 );
 assert.ok(
   validationPageSource.includes('<h3>How validation loss is calculated</h3>') &&
@@ -10108,6 +10112,7 @@ assert.ok(
   validationPageSource.includes('findValidationThemeId(metricId)') &&
     validationPageSource.includes('setIsOutcomeComparisonsOpen(true)') &&
     validationPageSource.includes('setOpenValidationThemeIds') &&
+    validationPageSource.includes('setOpenValidationMetricIds') &&
     validationPageSource.includes('setPendingMetricDiagnosticId(metricId)') &&
     validationPageSource.includes("row.querySelector<HTMLButtonElement>('[data-validation-detail-trigger]')") &&
     validationPageSource.includes("trigger.getAttribute('aria-expanded') !== 'true'") &&
@@ -10161,10 +10166,10 @@ const sharedTypesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/shar
 assert.ok(
     comparePageSource.includes('className="results-card calibration-evidence-introduction"') &&
     comparePageSource.includes('className="validation-introduction-copy"') &&
-    comparePageSource.includes('<h2>Calibration</h2>') &&
+    comparePageSource.includes('<h2 id="calibration-page-heading">Calibration</h2>') &&
     !comparePageSource.includes('Calibration assumptions') &&
     !comparePageSource.includes('calibration-assumptions-copy') &&
-    !comparePageSource.includes('calibration-page-head') &&
+    !comparePageSource.includes('className="calibration-page-head"') &&
     !comparePageSource.includes('summary-panel calibration-introduction calibration-description') &&
     comparePageSource.includes('className="assumption-reference assumption-reference-full"') &&
     !comparePageSource.includes('className="results-card assumption-reference assumption-reference-full"') &&
@@ -10239,8 +10244,10 @@ assert.ok(
 );
 assert.ok(
   comparePageSource.includes('export function FittedParameterRow') &&
-    comparePageSource.includes('<details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>') &&
-    comparePageSource.includes('<summary className="calibration-parameter-summary">') &&
+    comparePageSource.includes('className={`calibration-parameter-row calibration-parameter-row-${mode}`}') &&
+    comparePageSource.includes('open={open}') &&
+    comparePageSource.includes('onToggle={(event) => {') &&
+    comparePageSource.includes('<summary className="calibration-parameter-summary"') &&
     comparePageSource.includes('className="calibration-parameter-indicator"') &&
     comparePageSource.includes('{parameter.name}') &&
     comparePageSource.includes('{parameter.key}') &&
@@ -10267,8 +10274,8 @@ assert.ok(
 );
 assert.ok(
   comparePageSource.includes('export function AssumptionGroupDisclosure') &&
-    comparePageSource.includes('<details className="assumption-group">') &&
-    comparePageSource.includes('<summary className="assumption-group-summary">') &&
+    comparePageSource.includes('className="assumption-group"') &&
+    comparePageSource.includes('<summary className="assumption-group-summary"') &&
     comparePageSource.includes('className="assumption-group-count"') &&
     comparePageSource.includes('assumptionCount={items.length}') &&
     comparePageSource.indexOf('className="assumption-table"') > comparePageSource.indexOf('</summary>') &&
@@ -10286,6 +10293,15 @@ assert.ok(
 );
 // Calibration visualizations moved from default-open cards to an inspection
 // modal in 1d51e71; the old default-open assertions were removed with it.
+assert.ok(
+  !comparePageSource.includes('DEFAULT_OPEN_COMPARE_CARD_IDS') &&
+    !comparePageSource.includes('DEFAULT_OPEN_COMPARE_GROUPS') &&
+    !comparePageSource.includes('defaultExpanded={DEFAULT_OPEN_COMPARE_CARD_IDS.has(item.id)}') &&
+    comparePageSource.includes('savedDemoProgress?.isFittedParametersOpen ?? true') &&
+    comparePageSource.includes('savedDemoProgress?.isOtherAssumptionsOpen ?? false') &&
+    comparePageSource.includes('open={openAssumptionGroupIds.has(groupId)}'),
+  'Calibration should preserve its fitted-section-open and assumption-disclosure-collapsed defaults while allowing real controlled tour state'
+);
 
 assert.ok(
   compareCardSource.includes('const [isMoreInfoOpen, setIsMoreInfoOpen] = useState<boolean>(false);'),
@@ -10328,6 +10344,7 @@ assert.ok(
 assert.ok(
   !homePageSource.includes('submitModelRun') &&
     !homePageSource.includes('buildDefaultRunSubmitRequest') &&
+    !homePageSource.includes('homeDefaultRun') &&
     !homePageSource.includes('Run a demo simulation'),
   'Home page onboarding should not submit or advertise an opaque default run'
 );
@@ -10338,10 +10355,31 @@ assert.ok(
   'Home page launcher should route to the experiments hub, the results page, and model evidence'
 );
 assert.ok(
-  homePageSource.includes('home-action-inactive') &&
-    homePageSource.includes('disabled') &&
-    homePageSource.includes('Coming soon'),
-  'Run demo should stay an inert placeholder until the demo run itself is designed'
+  [
+    'Run full demo',
+    'Run experiment demo',
+    'Run results demo',
+    'Run model evidence demo'
+  ].every((label) => homePageSource.includes(`label: '${label}'`)),
+  'Demo chooser should expose all four guided demo choices'
+);
+assert.ok(
+  homePageSource.includes('aria-haspopup="dialog"') &&
+    homePageSource.includes('aria-expanded={isDemoChooserOpen}') &&
+    homePageSource.includes('aria-controls={DEMO_CHOOSER_ID}'),
+  'Run demo trigger should expose the chooser as a controlled dialog'
+);
+assert.ok(
+  (homePageSource.match(/to: null/g) ?? []).length === 2 &&
+    homePageSource.includes('to: POLICY_EXPERIMENT_DEMO_LAUNCH_HREF') &&
+    homePageSource.includes('to: MODEL_EVIDENCE_DEMO_LAUNCH_HREF') &&
+    homePageSource.includes('disabled={!choice.to}') &&
+    homePageSource.includes('onClick={choice.to ? () => navigate(choice.to) : undefined}'),
+  'The Experiment and Model Evidence choices should launch their current walkthroughs'
+);
+assert.ok(
+  !homePageSource.includes('Coming soon') && !homePageSource.includes('home-action-inactive'),
+  'Run demo should no longer render the inactive placeholder treatment'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&

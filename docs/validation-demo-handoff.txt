@@ -1,0 +1,328 @@
+Implement a deliberately small prototype of the guided Validation demo for the UK Housing Market Model dashboard.
+
+IMPORTANT PHASE GATE
+
+This prompt is intentionally split into two phases.
+
+On this turn, you are authorised to implement Phase 1 only. Phase 1 is a thin vertical slice intended to let the user judge whether the dimmed-screen, spotlight, coach-mark, and required-interaction experience matches what they imagined.
+
+Do not implement Phase 2 during the same turn. After Phase 1 is implemented and verified, stop, show the user how to run it, summarise what they should inspect, and explicitly ask for confirmation. Continue with Phase 2 only after the user replies with clear approval in a later message.
+
+CONTEXT
+
+The dashboard is gaining video-game-style onboarding tours. Most of the screen should be greyed out, the current part of the real interface should remain visible through a spotlight, and a coach mark should explain what that part does. Some later steps will require the user to operate the highlighted control before continuing.
+
+The home-page demo chooser has already been implemented as user work in:
+
+- dashboard/src/pages/HomePage.tsx
+- dashboard/src/styles.css
+- dashboard/tests/smoke.test.ts
+
+Preserve those changes and all other unrelated work. The four demo choices are intentionally disabled at present. Do not enable or redesign them in Phase 1.
+
+Relevant existing files include:
+
+- dashboard/src/pages/ModelEvidencePage.tsx
+- dashboard/src/pages/ValidationPage.tsx
+- dashboard/src/styles.css
+- dashboard/tests/validation-picker.test.ts
+- dashboard/tests/smoke.test.ts
+
+Inspect the repository and current working-tree diff before editing. Do not reset, revert, or overwrite unrelated changes.
+
+PHASE 1 — IMPLEMENT THIS NOW
+
+Goal
+
+Create a tiny but polished, working Validation-tour prototype with only three instructional steps and one prototype-complete screen.
+
+It must be directly launchable at:
+
+/model-evidence?view=validation&demo=validation
+
+Model Evidence defaults to Calibration, so view=validation must be explicit.
+
+The prototype should run over the real Validation page. Do not create a duplicate demo page or copy the model selector into fake markup.
+
+Prototype step 1 — Purpose
+
+Presentation:
+
+- Grey out the page.
+- Use a centred coach mark without a specific spotlight target.
+- Show progress such as “Validation demo · 1 of 3”.
+- Provide Start demo and Exit demo.
+
+Title:
+
+What validation is for
+
+Body — preserve this wording and keep it at 50 words or fewer:
+
+“Validation checks whether a model reproduces independent UK housing evidence. Use this page to see which outcomes pass, warn, or fail, how consistent they are across random seeds, and whether one model version performs better than another.”
+
+Prototype step 2 — Single-model area
+
+Target:
+
+The real Primary model column on the Validation page.
+
+Presentation:
+
+- Automatically scroll the target into view.
+- Dim the rest of the viewport.
+- Leave an 8–12px padded spotlight around the Primary model column.
+- Place the coach mark where it does not cover the highlighted column.
+- Provide Back, Next, and Exit demo.
+
+Title:
+
+Inspect one model
+
+Body:
+
+“With Compare off, the Primary model controls every result below. Choose a model here when you want to assess that version on its own.”
+
+This step is informational. Do not force the user to change the already selected primary model.
+
+Prototype step 3 — Compare control
+
+Target:
+
+The real Compare checkbox/control in the Comparison model column.
+
+Presentation:
+
+- Scroll horizontally as well as vertically when necessary. The Validation model columns have a minimum width and Model 2 can begin offscreen on mobile.
+- Spotlight the Compare control itself.
+- Only the highlighted Compare control and coach controls should be interactive.
+- Focus the real Compare input when the step begins.
+- Provide Back and Exit demo.
+- A disabled Continue control may remain visible while the required action is incomplete.
+
+Title:
+
+Compare two models
+
+Body:
+
+“Turn on Compare to enable Model 2. Both versions are tested against the same evidence, so their results can be read side by side.”
+
+Required action:
+
+- The user must check the real Compare checkbox.
+- Use the existing control event; do not silently set comparison state from the tour.
+- Once the checked state has rendered, automatically advance exactly once on the new incomplete-to-complete transition.
+- Re-check that Compare remains checked and that this is still the active step before a scheduled advancement runs.
+- If the user goes Back and returns, recognise that Compare is already checked without bouncing forward; keep an enabled Continue control available for deliberate review.
+
+Prototype-complete screen
+
+In the three-step prototype, checking Compare automatically advances to the small non-targeted completion coach mark. In the completed walkthrough, required actions continue automatically and opening the final Validation methodology disclosure advances to this completion state.
+
+Title:
+
+Prototype complete
+
+Body:
+
+“This prototype demonstrates the tour’s dimmed screen, spotlight, coach marks, navigation, and a required interaction. Exit the demo and decide whether this is the experience you want before the remaining Validation steps are built.”
+
+Actions:
+
+- Finish and inspect page — remove only the demo query parameter and leave the user on Validation.
+- Exit to Home — end the prototype and navigate to Home.
+
+PHASE 1 IMPLEMENTATION BOUNDARIES
+
+Build only what these three steps require.
+
+The implementation should be clean enough to extend after approval, but do not prematurely implement the complete tour engine. A small data-driven step definition and one reusable overlay/coach component are appropriate. Avoid a large orchestration framework.
+
+Add stable hooks only for the Phase 1 targets, for example:
+
+- validation-primary-model
+- validation-compare-toggle
+
+Do not use nth-child selectors, visible-text queries, generated React useId values, or fixed page coordinates.
+
+The prototype may add a small readiness signal so it waits until the real Primary model options exist. It must not start a targeted step against an empty loading shell.
+
+Do not add disclosure hooks, metric hooks, theme hooks, session persistence, cross-demo orchestration, or comparison-response waiting yet. Those belong to Phase 2.
+
+Do not implement any of the following in Phase 1:
+
+- status-legend walkthrough;
+- Sort models by walkthrough;
+- Model 2 selection;
+- paired comparison-result waiting;
+- Summary card walkthrough;
+- Outcome comparisons walkthrough;
+- policy-theme walkthroughs;
+- metric or provenance walkthroughs;
+- Validation methodology walkthrough;
+- Calibration demo;
+- Experiments demo;
+- Results demo;
+- Full demo;
+- combined Model Evidence sequencing;
+- home-page demo-button integration;
+- localStorage or sessionStorage resume;
+- elaborate pause/resume orchestration.
+
+Do not add a third-party tour, positioning, focus-trap, or modal dependency.
+
+PHASE 1 VISUAL AND INTERACTION REQUIREMENTS
+
+- The overlay must look intentional and consistent with the dashboard’s existing colours, type, spacing, borders, and shadows.
+- The target opening should track its real DOM bounds after scrolling and resizing.
+- Block unrelated pointer interaction while the prototype is active.
+- Keep Back and Exit demo visible. Keep Next on informational steps, and Continue when reviewing an action step that was already complete on entry.
+- Avoid covering the active target with the coach mark.
+- Use a compact bottom-sheet-style coach mark on narrow screens if side placement does not fit.
+- Respect prefers-reduced-motion. Disable decorative movement and use instant tour-controlled scrolling when reduced motion is requested.
+- Recalculate the spotlight after window resize, scrolling, and the Compare column changing state.
+- If a target is missing, show a recoverable non-targeted message with Retry and Exit rather than leaving a broken spotlight.
+
+PHASE 1 ACCESSIBILITY REQUIREMENTS
+
+- Give the coach mark role=dialog and an accessible title.
+- Do not use aria-modal=true while the highlighted external control remains operable.
+- Announce the current step in a polite live region.
+- On informational steps, focus the primary coach action.
+- On the required-action step, focus the real Compare input; after it is checked, let the next step’s targeting and focus behavior take over.
+- Ensure keyboard users cannot tab into unrelated page controls while the overlay is active.
+- Tab and Shift+Tab should cycle predictably through the highlighted target and visible coach controls.
+- Escape may end this small prototype after a clear confirmation; it must not leave the page partially inert.
+- Restore every temporary tabindex, inert, scroll, and focus adjustment when the prototype finishes or exits.
+- Restore sensible focus to the Validation page after Finish, or to Home navigation after Exit.
+
+PHASE 1 TESTING
+
+Add focused tests without introducing a new browser-test dependency.
+
+At minimum verify:
+
+- the prototype contains exactly the three instructional steps above;
+- step ids and target hooks are unique;
+- the purpose body is at most 50 whitespace-delimited words;
+- the Primary-model and Compare hooks appear on the correct real elements;
+- direct view=validation&demo=validation entry arms the prototype;
+- the Compare step is incomplete while unchecked and complete while checked;
+- returning to the Compare step recognises an already checked control and waits for deliberate Continue rather than auto-advancing;
+- missing targets use a recovery state;
+- non-demo Validation rendering and behavior remain unchanged;
+- the existing home demo-choice buttons remain disabled.
+
+Run at least:
+
+- npm --prefix dashboard run test:validation-picker
+- npm --prefix dashboard run test:smoke
+- npm --prefix dashboard run typecheck
+- npm --prefix dashboard run lint
+- npm --prefix dashboard run build:client
+
+Run any new dedicated prototype test as well.
+
+If browser inspection is available, verify the full three-step prototype at a normal desktop width and around 375px wide. Confirm the horizontal scroll to Compare works on mobile, keyboard focus is sensible, the target remains clickable, unrelated controls remain blocked, resize updates the spotlight, and Finish/Exit fully remove the overlay.
+
+PHASE 1 SUCCESS CRITERIA
+
+Phase 1 is complete only when:
+
+- the direct URL launches the prototype after the Primary model controls are ready;
+- the user sees the purpose screen, Primary-model spotlight, and Compare spotlight in that order;
+- the screen is visibly dimmed around the active target;
+- the coach mark never obscures the required control;
+- operating the real Compare checkbox automatically advances exactly once, while an already-complete step reached with Back remains reviewable;
+- desktop, mobile, mouse, and keyboard behavior are credible enough for the user to evaluate the concept;
+- no later Validation walkthrough steps have been implemented;
+- existing demo chooser work and unrelated changes remain intact;
+- relevant tests and verification pass, or pre-existing failures are clearly evidenced.
+
+MANDATORY STOP AND CONFIRMATION
+
+After Phase 1 is implemented and verified, end your turn. Do not begin Phase 2, even if the remaining work appears straightforward.
+
+In your final response:
+
+1. Lead with the completed prototype behavior.
+2. Give the exact launch URL.
+3. List the files changed.
+4. Report automated and browser verification honestly.
+5. Tell the user exactly what to inspect: dimming strength, spotlight padding, coach placement, wording, navigation, required-action behavior, and mobile presentation.
+6. Ask this explicit question:
+
+“Does this prototype match the demo experience you imagined, and should I continue with the rest of the Validation walkthrough?”
+
+Wait for the user’s next message. Only a clear affirmative answer authorises Phase 2.
+
+PHASE 2 — PLANNED CONTINUATION AFTER APPROVAL ONLY
+
+This section is future context, not work authorised on the first turn.
+
+After the user confirms, first incorporate any visual or interaction feedback into the prototype foundation. Then extend the same tour with:
+
+1. Status legend
+   - Explain that pass, warn, and fail combine closeness to the target band with consistency across ten seeds.
+
+2. Sort models by
+   - Explain that choosing a metric reorders model choices by absolute distance from that metric’s empirical target.
+   - Require one non-empty metric selection.
+
+3. Model 2 selection
+   - Require a non-primary comparison model.
+   - Wait until the returned comparison summary matches the requested model before continuing.
+
+4. Comparison result explanation
+   - Explain that scorecards, bars, and metric tables now show Model 1 versus Model 2.
+   - Explain that Validation shows which fits the evidence, while Calibration explains why model versions differ.
+
+5. Summary card
+   - Require the real disclosure to open.
+   - Explain validation loss, status counts, seed consistency, error concentration, and largest gaps/differences.
+   - Mention that gap buttons jump to the relevant metric without requiring that disruptive action during the tour.
+
+6. Outcome comparisons
+   - Require the real disclosure to open.
+   - Explain the empirical target, target band, simulated mean, seeds in band, status, and loss.
+
+7. Five theme disclosures
+   - Market activity and lending.
+   - Credit and affordability.
+   - Prices and cycles.
+   - Tenure and rental market.
+   - Distributional realism, including its shape/loss interpretation where there is no scalar target.
+   - Explain all five, but require only one representative theme to open.
+
+8. Representative metric
+   - Prefer Mortgage Approvals when present, otherwise use the first metric in a non-empty theme.
+   - Require the real table Details control to open the matching metric detail panel.
+   - Explain that the table presents target, band, mean, IQR, seeds, status, and loss, while the detail panel adds loss-family and provenance information.
+
+9. Sources and provenance
+   - Require the nested real disclosure to open.
+   - Explain empirical sources, references, scales, and band notes.
+
+10. Validation methodology
+    - Require the real disclosure to open.
+    - Explain protocol, evidence, status rules, and loss calculation.
+    - State that comparative validation loss is not a probability, confidence interval, or hypothesis-test statistic.
+
+Required-action progression contract
+
+- Compare, Sort models by, Model 2 selection, Summary card, Outcome comparisons, the representative theme, the representative metric, Sources and provenance, and Validation methodology automatically advance after a new incomplete-to-complete transition from the real control.
+- Model 2 advances only after the successfully returned comparison summary exactly matches the requested non-primary model; radio selection, URL changes, loading, stale responses, and errors are not completion.
+- The transition runs once after the control state renders, re-checks the active step and completion state, and is cancelled if either changes.
+- Entering an already-complete required step through Back or session resume does not auto-advance. It exposes Continue so the explanation remains reviewable.
+- Purpose, Primary model, Status legend, and Comparison results remain informational and require Start demo or Next.
+- Opening Validation methodology on an incomplete visit advances directly to the walkthrough-complete coach.
+
+11. Production hardening
+    - Add stable hooks for disclosures, themes, metrics, and provenance.
+    - Add comparison readiness/error recovery.
+    - Add sessionStorage pause/resume with prerequisite-aware recovery.
+    - Complete responsive, reduced-motion, keyboard, focus-restoration, and failure-state coverage.
+    - Expose a completion contract for later Calibration/Model Evidence/Full-demo orchestration.
+
+Do not enable the home Model Evidence demo until the Validation and Calibration modules and their intended sequencing are complete, unless the user explicitly changes that product decision.

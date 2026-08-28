@@ -10,6 +10,8 @@ interface CollapsibleSectionProps {
   summary?: ReactNode;
   className?: string;
   bodyClassName?: string;
+  demoTarget?: string;
+  rootDemoTarget?: string;
   children: ReactNode;
 }
 
@@ -23,6 +25,8 @@ export function CollapsibleSection({
   summary,
   className,
   bodyClassName,
+  demoTarget,
+  rootDemoTarget,
   children
 }: CollapsibleSectionProps) {
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
@@ -35,10 +39,11 @@ export function CollapsibleSection({
   const contentClassName = ['collapsible-section-body', bodyClassName].filter(Boolean).join(' ');
 
   return (
-    <section id={id} className={rootClassName}>
+    <section id={id} className={rootClassName} data-validation-demo-target={rootDemoTarget}>
       <button
         type="button"
         className="collapsible-section-toggle"
+        data-validation-demo-target={demoTarget}
         onClick={() => {
           const nextOpen = !isOpen;
           if (open === undefined) setInternalOpen(nextOpen);

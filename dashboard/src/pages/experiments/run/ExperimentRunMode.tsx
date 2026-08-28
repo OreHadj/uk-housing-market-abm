@@ -8,6 +8,7 @@ import { experimentTypeRegistry } from '../registry';
 import { ExperimentLogCard } from '../../run-experiments/ExperimentLogCard';
 import { ExperimentQueueCard } from '../../run-experiments/ExperimentQueueCard';
 import { useExperimentRunController } from './useExperimentRunController';
+import type { PolicyExperimentDemoCoordinator } from '../../../components/PolicyExperimentDemoPrototype';
 
 interface ExperimentRunModeProps {
   activeType: ExperimentType;
@@ -27,6 +28,7 @@ interface ExperimentRunModeProps {
   initialSensitivityStep?: number;
   onManualRunAccepted?: (runId: string) => void;
   onSensitivityRunAccepted?: (experimentId: string) => void;
+  policyDemo?: PolicyExperimentDemoCoordinator;
 }
 
 export function ExperimentRunMode({
@@ -46,7 +48,8 @@ export function ExperimentRunMode({
   initialScenarioStep = 0,
   initialSensitivityStep = 0,
   onManualRunAccepted,
-  onSensitivityRunAccepted
+  onSensitivityRunAccepted,
+  policyDemo
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
     activeType,
@@ -56,6 +59,7 @@ export function ExperimentRunMode({
     onOpenSensitivityResults,
     followJobRef,
     draftId,
+    policyDemoActive: policyDemo?.active === true,
     onManualRunAccepted,
     onSensitivityRunAccepted
   });
@@ -64,7 +68,7 @@ export function ExperimentRunMode({
   const [downloadError, setDownloadError] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string>('');
 
-  const runActionsDisabled = controller.executionDisabled || !canWrite;
+  const runActionsDisabled = controller.executionDisabled || !canWrite || policyDemo?.active === true;
   const RunSetupComponent = experimentTypeRegistry[activeType].RunSetupComponent;
   const workspaceJobs = controller.jobs.filter((job) => job.type === activeType);
 
@@ -183,6 +187,7 @@ export function ExperimentRunMode({
           runActionsDisabled={runActionsDisabled}
           initialScenarioStep={initialScenarioStep}
           initialSensitivityStep={initialSensitivityStep}
+          policyDemo={policyDemo}
         />
 
         {showRunManagement && (

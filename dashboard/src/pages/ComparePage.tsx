@@ -1,12 +1,21 @@
 import { useEffect, useId, useMemo, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { CalibrationModelOverview, CalibrationOverviewResponse, CompareResponse, DatasetAttribution, ParameterCardMeta, ParameterGroup } from '../../shared/types';
+import {
+  CALIBRATION_DEMO_TARGETS,
+  CalibrationDemoPrototype,
+  calibrationDemoAssumptionGroupTargetId,
+  calibrationDemoAssumptionTargetId,
+  calibrationDemoParameterTargetId,
+  readCalibrationDemoProgress
+} from '../components/CalibrationDemoPrototype';
 import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
 import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
 import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
 import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
 import { createCalibrationComparisonFormatter, formatCalibrationNumber } from '../lib/calibrationNumberFormat';
+import { chronologicalCalibrationPair, normalizeCalibrationComparison } from '../lib/calibrationComparison';
 import { buildModelOptions, getDefaultModelVersion } from '../lib/modelAnchors';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
@@ -20,6 +29,31 @@ type CalibrationValidationReturnContext = {
   returnStep: string;
 };
 const FITTED_IDS = new Set(['rent_purchase_choice', 'btl_probability_multiplier', 'btl_choice_intensity', 'market_average_price_decay']);
+
+export interface CalibrationModelEvidenceDemoContext {
+  active: boolean;
+  journeyId: string;
+  showCompletion: boolean;
+  primaryVersion: string;
+  comparisonVersion: string;
+  onContextChange: (primaryVersion: string, comparisonVersion: string) => void;
+  onPause: () => void;
+  onContinueToValidation: () => void;
+  onExitToHome: () => void;
+}
+
+const CALIBRATION_ASSUMPTION_GROUP_IDS: Record<ParameterGroup, string> = {
+  'Household Demographics & Wealth': 'household-demographics-wealth',
+  'Government & Tax': 'government-tax',
+  'Housing & Rental Market': 'housing-rental-market',
+  'Purchase & Mortgage': 'purchase-mortgage',
+  'Bank & Credit Policy': 'bank-credit-policy',
+  'BTL & Investor Behavior': 'btl-investor-behavior'
+};
+
+export function calibrationAssumptionGroupId(group: ParameterGroup): string {
+  return CALIBRATION_ASSUMPTION_GROUP_IDS[group];
+}
 
 function fmt(value: number | null): string {
   if (value === null) return 'Not recorded';
@@ -196,6 +230,9 @@ function CalibrationSection({
   description,
   summary,
   defaultOpen,
+  open,
+  onOpenChange,
+  demoTarget,
   className,
   children
 }: {
@@ -204,17 +241,31 @@ function CalibrationSection({
   /** Stays visible when collapsed, so the fold never hides what is inside. */
   summary: string;
   defaultOpen: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
   className?: string;
   children: ReactNode;
 }) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const isOpen = open ?? internalOpen;
   const contentId = useId();
 
   return <section className={['calibration-collapsible', isOpen ? 'is-open' : 'is-collapsed', className].filter(Boolean).join(' ')}>
     <div className="section-heading-row calibration-collapsible-head">
       <div>
         <h2>
-          <button type="button" aria-expanded={isOpen} aria-controls={contentId} onClick={() => setIsOpen((current) => !current)}>
+          <button
+            type="button"
+            aria-expanded={isOpen}
+            aria-controls={contentId}
+            data-calibration-demo-target={demoTarget}
+            onClick={() => {
+              const nextOpen = !isOpen;
+              if (open === undefined) setInternalOpen(nextOpen);
+              onOpenChange?.(nextOpen);
+            }}
+          >
             <span className="calibration-collapsible-indicator" aria-hidden="true">{isOpen ? '▾' : '▸'}</span>
             <span className="calibration-collapsible-heading-copy">
               <span className="calibration-collapsible-title">{title}</span>
@@ -259,10 +310,16 @@ function RefittedCampaignTechnicalDetails({ campaign }: { campaign: RefittedCamp
 
 export function BehaviouralParameterOriginSection({
   model,
-  differentEvidenceProfile = false
+  differentEvidenceProfile = false,
+  open,
+  onOpenChange,
+  demoTarget
 }: {
   model: CalibrationModelOverview;
   differentEvidenceProfile?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
 }) {
   const campaign = model.campaign;
 
@@ -272,6 +329,9 @@ export function BehaviouralParameterOriginSection({
     description="Where this model’s five fitted behavioural values came from."
     summary={campaignOriginSummary(campaign)}
     defaultOpen={false}
+    open={open}
+    onOpenChange={onOpenChange}
+    demoTarget={demoTarget}
   >
     <div className="calibration-campaign-content">
     {campaign.kind === 'refitted' && <>
@@ -340,16 +400,28 @@ export function BehaviouralParameterOriginSection({
 export function AssumptionGroupDisclosure({
   group,
   assumptionCount,
+  open,
+  onOpenChange,
+  demoTarget,
   children
 }: {
   group: string;
   assumptionCount: number;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
   children: ReactNode;
 }) {
   const countLabel = `${assumptionCount} assumption${assumptionCount === 1 ? '' : 's'}`;
 
-  return <details className="assumption-group">
-    <summary className="assumption-group-summary">
+  return <details
+    className="assumption-group"
+    open={open}
+    onToggle={(event) => {
+      if (event.target === event.currentTarget) onOpenChange?.(event.currentTarget.open);
+    }}
+  >
+    <summary className="assumption-group-summary" data-calibration-demo-target={demoTarget}>
       <h3>
         <span className="assumption-group-indicator" aria-hidden="true">▸</span>
         <span className="assumption-group-title">{group}</span>
@@ -375,13 +447,19 @@ export function FittedParameterRow({
   compared,
   primaryVersion,
   comparisonVersion,
-  mode
+  mode,
+  open,
+  onOpenChange,
+  demoTarget
 }: {
   parameter: CalibrationModelOverview['parameters'][number];
   compared: CalibrationModelOverview['parameters'][number] | undefined;
   primaryVersion: string;
   comparisonVersion: string | undefined;
   mode: ViewMode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
 }) {
   const changed = compared ? compared.value !== parameter.value : false;
   const comparableValues = [
@@ -394,8 +472,14 @@ export function FittedParameterRow({
     ? 'Not recorded'
     : `${formatParameterValue(parameter.lower)}–${formatParameterValue(parameter.upper)}`;
 
-  return <details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>
-    <summary className="calibration-parameter-summary">
+  return <details
+    className={`calibration-parameter-row calibration-parameter-row-${mode}`}
+    open={open}
+    onToggle={(event) => {
+      if (event.target === event.currentTarget) onOpenChange?.(event.currentTarget.open);
+    }}
+  >
+    <summary className="calibration-parameter-summary" data-calibration-demo-target={demoTarget}>
       <span className="calibration-parameter-indicator" aria-hidden="true">▸</span>
       <span className="parameter-row-head">
         <strong>{parameter.name}</strong>
@@ -436,8 +520,13 @@ export function FittedParameterRow({
   </details>;
 }
 
-export function ComparePage() {
+export function ComparePage({
+  modelEvidenceDemo
+}: {
+  modelEvidenceDemo?: CalibrationModelEvidenceDemoContext;
+} = {}) {
   const [params, setParams] = useSearchParams();
+  const savedDemoProgress = modelEvidenceDemo?.active ? readCalibrationDemoProgress() : null;
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgress, setInProgress] = useState<string[]>([]);
   const [catalog, setCatalog] = useState<ParameterCardMeta[]>([]);
@@ -450,6 +539,28 @@ export function ComparePage() {
   const [loading, setLoading] = useState(true);
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState('');
+  const [completedPrimaryVersion, setCompletedPrimaryVersion] = useState('');
+  const [completedComparisonVersion, setCompletedComparisonVersion] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
+  const [isBehaviouralOriginOpen, setIsBehaviouralOriginOpen] = useState(
+    savedDemoProgress?.isBehaviouralOriginOpen ?? false
+  );
+  const [isFittedParametersOpen, setIsFittedParametersOpen] = useState(
+    savedDemoProgress?.isFittedParametersOpen ?? true
+  );
+  const [openFittedParameterKeys, setOpenFittedParameterKeys] = useState<Set<string>>(() => new Set(
+    savedDemoProgress?.isRepresentativeParameterOpen && savedDemoProgress.representativeParameterKey
+      ? [savedDemoProgress.representativeParameterKey]
+      : []
+  ));
+  const [isOtherAssumptionsOpen, setIsOtherAssumptionsOpen] = useState(
+    savedDemoProgress?.isOtherAssumptionsOpen ?? false
+  );
+  const [openAssumptionGroupIds, setOpenAssumptionGroupIds] = useState<Set<string>>(() => new Set(
+    savedDemoProgress?.isRepresentativeAssumptionGroupOpen && savedDemoProgress.representativeAssumptionGroupId
+      ? [savedDemoProgress.representativeAssumptionGroupId]
+      : []
+  ));
   const mode: ViewMode = comparisonEnabled && left && left !== selected ? 'compare' : 'single';
   const returnSource = params.get('from')?.trim() ?? '';
   const evidenceDraftId = params.get('draft')?.trim() ?? '';
@@ -469,25 +580,60 @@ export function ComparePage() {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([fetchVersions(), fetchCatalog()]).then(([versionPayload, catalogue]) => {
-      if (cancelled) return;
-      const available = versionPayload.versions;
-      const initialComparisonEnabled = params.get('mode') === 'compare';
-      const defaultVersion = getDefaultModelVersion(available, versionPayload.inProgressVersions);
-      const requested = initialComparisonEnabled ? params.get('right') ?? '' : params.get('version') ?? '';
-      const primaryVersion = available.includes(requested) ? requested : defaultVersion;
-      const requestedComparison = params.get('left') ?? '';
-      setVersions(available); setInProgress(versionPayload.inProgressVersions); setCatalog(catalogue);
-      setComparisonEnabledState(initialComparisonEnabled);
-      setSelected(primaryVersion);
-      setLeft(
-        initialComparisonEnabled && available.includes(requestedComparison) && requestedComparison !== primaryVersion
-          ? requestedComparison
-          : ''
-      );
-    }).catch((reason) => { setError((reason as Error).message); setLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
+    let retryTimer: number | undefined;
+    const loadInitialData = async () => {
+      setLoading(true);
+      setWaiting(false);
+      setError('');
+      try {
+        const [versionPayload, catalogue] = await Promise.all([fetchVersions(), fetchCatalog()]);
+        if (cancelled) return;
+        const available = versionPayload.versions;
+        if (available.length === 0) throw new Error('No Calibration model versions are available.');
+        if (catalogue.length === 0) throw new Error('The Calibration parameter catalog is empty.');
+        const resume = modelEvidenceDemo?.active ? readCalibrationDemoProgress() : null;
+        const parentPrimaryVersion = modelEvidenceDemo?.primaryVersion ?? '';
+        const parentComparisonVersion = modelEvidenceDemo?.comparisonVersion ?? '';
+        const initialComparisonEnabled =
+          params.get('mode') === 'compare' ||
+          resume?.isCompareChecked === true ||
+          Boolean(parentComparisonVersion);
+        const defaultVersion = getDefaultModelVersion(available, versionPayload.inProgressVersions);
+        const requested = initialComparisonEnabled
+          ? params.get('right') ?? resume?.primaryVersion ?? parentPrimaryVersion
+          : params.get('version') ?? resume?.primaryVersion ?? parentPrimaryVersion;
+        const primaryVersion = available.includes(requested) ? requested : defaultVersion;
+        const requestedComparison = params.get('left') ?? resume?.comparisonVersion ?? parentComparisonVersion;
+        setVersions(available);
+        setInProgress(versionPayload.inProgressVersions);
+        setCatalog(catalogue);
+        setComparisonEnabledState(initialComparisonEnabled);
+        setSelected(primaryVersion);
+        setLeft(
+          initialComparisonEnabled &&
+          available.includes(requestedComparison) &&
+          requestedComparison !== primaryVersion
+            ? requestedComparison
+            : ''
+        );
+      } catch (reason) {
+        if (cancelled) return;
+        if (isRetryableApiError(reason)) {
+          setWaiting(true);
+          retryTimer = window.setTimeout(() => void loadInitialData(), API_RETRY_DELAY_MS);
+          return;
+        }
+        setError((reason as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void loadInitialData();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [reloadToken]);
 
   useEffect(() => {
     if (!selected || catalog.length === 0) return;
@@ -508,23 +654,67 @@ export function ComparePage() {
     let cancelled = false;
     let timer: number | undefined;
     const load = async () => {
-      setLoading(true); setWaiting(false); setError('');
+      setLoading(true);
+      setWaiting(false);
+      setError('');
+      setCompletedPrimaryVersion('');
+      setCompletedComparisonVersion('');
       const other = mode === 'compare' ? left : undefined;
+      const requestPrimaryVersion = selected;
+      const requestComparisonVersion = other ?? '';
+      const [apiLeftVersion, apiRightVersion] = other
+        ? chronologicalCalibrationPair(requestPrimaryVersion, other)
+        : [requestPrimaryVersion, requestPrimaryVersion];
       try {
         const [overviewPayload, comparePayload] = await Promise.all([
-          fetchCalibrationOverview(selected, other),
-          fetchCompare(mode === 'single' ? selected : left, selected, catalog.map((item) => item.id), mode === 'single' ? 'through_right' : 'range')
+          fetchCalibrationOverview(requestPrimaryVersion, other),
+          fetchCompare(
+            apiLeftVersion,
+            apiRightVersion,
+            catalog.map((item) => item.id),
+            mode === 'single' ? 'through_right' : 'range'
+          )
         ]);
-        if (!cancelled) { setOverview(overviewPayload); setComparison(comparePayload); }
+        if (cancelled) return;
+        const presentationPayload = normalizeCalibrationComparison(
+          comparePayload,
+          requestPrimaryVersion,
+          requestComparisonVersion
+        );
+        const overviewMatches =
+          overviewPayload.primary.identity.version === requestPrimaryVersion &&
+          (other
+            ? overviewPayload.comparison?.identity.version === requestComparisonVersion
+            : overviewPayload.comparison === null);
+        const comparisonMatches =
+          presentationPayload.left === requestPrimaryVersion &&
+          presentationPayload.right === (other ? requestComparisonVersion : requestPrimaryVersion) &&
+          presentationPayload.items.every((item) =>
+            item.leftVersion === requestPrimaryVersion &&
+            item.rightVersion === (other ? requestComparisonVersion : requestPrimaryVersion)
+          );
+        if (!overviewMatches || !comparisonMatches) {
+          throw new Error('The returned calibration evidence did not match the selected model pair.');
+        }
+        setOverview(overviewPayload);
+        setComparison(presentationPayload);
+        setCompletedPrimaryVersion(requestPrimaryVersion);
+        setCompletedComparisonVersion(requestComparisonVersion);
       } catch (reason) {
         if (cancelled) return;
-        if (isRetryableApiError(reason)) { setWaiting(true); timer = window.setTimeout(() => void load(), API_RETRY_DELAY_MS); }
-        else setError((reason as Error).message);
-      } finally { if (!cancelled) setLoading(false); }
+        if (isRetryableApiError(reason)) {
+          setWaiting(true);
+          timer = window.setTimeout(() => void load(), API_RETRY_DELAY_MS);
+        } else {
+          setError((reason as Error).message);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
     void load();
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
-  }, [comparisonEnabled, mode, selected, left, catalog]);
+  }, [comparisonEnabled, mode, selected, left, catalog, reloadToken]);
 
   const referenceGroups = useMemo(() => {
     const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id));
@@ -534,6 +724,35 @@ export function ComparePage() {
   }, [comparison]);
   // Header counts for the collapsible sections report the whole selected model.
   const referenceItems = useMemo(() => (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id)), [comparison]);
+  const representativeParameter = useMemo(() => {
+    const parameters = overview?.primary.parameters ?? [];
+    const savedKey = savedDemoProgress?.representativeParameterKey ?? '';
+    return parameters.find((parameter) => parameter.key === savedKey)
+      ?? parameters.find((parameter) => parameter.key === 'PSYCHOLOGICAL_COST_OF_RENTING')
+      ?? parameters[0]
+      ?? null;
+  }, [overview, savedDemoProgress?.representativeParameterKey]);
+  const representativeAssumptionGroup = useMemo(() => {
+    const entries = [...referenceGroups.entries()].filter(([, items]) => items.length > 0);
+    const savedGroupId = savedDemoProgress?.representativeAssumptionGroupId ?? '';
+    return entries.find(([group]) => calibrationAssumptionGroupId(group) === savedGroupId)
+      ?? entries.find(([group]) => group === 'Household Demographics & Wealth')
+      ?? entries[0]
+      ?? null;
+  }, [referenceGroups, savedDemoProgress?.representativeAssumptionGroupId]);
+  const representativeAssumption = useMemo(() => {
+    const items = representativeAssumptionGroup?.[1] ?? [];
+    const savedItemId = savedDemoProgress?.representativeAssumptionId ?? '';
+    return items.find((item) => item.id === savedItemId)
+      ?? items.find((item) => item.id === 'age_distribution')
+      ?? items[0]
+      ?? null;
+  }, [representativeAssumptionGroup, savedDemoProgress?.representativeAssumptionId]);
+  const representativeParameterKey = representativeParameter?.key ?? '';
+  const representativeAssumptionGroupId = representativeAssumptionGroup
+    ? calibrationAssumptionGroupId(representativeAssumptionGroup[0])
+    : '';
+  const representativeAssumptionId = representativeAssumption?.id ?? '';
   const optionSet = useMemo(() => new Set(inProgress), [inProgress]);
   const pickerVersions = useMemo(() => {
     const offered = buildModelOptions(versions, selected, optionSet).map((option) => option.version);
@@ -566,6 +785,57 @@ export function ComparePage() {
     if (version === left) setLeft('');
   };
 
+  const setFittedParameterOpen = (parameterKey: string, open: boolean) => {
+    setOpenFittedParameterKeys((current) => {
+      if (current.has(parameterKey) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(parameterKey);
+      else next.delete(parameterKey);
+      return next;
+    });
+  };
+
+  const setAssumptionGroupOpen = (groupId: string, open: boolean) => {
+    setOpenAssumptionGroupIds((current) => {
+      if (current.has(groupId) === open) return current;
+      const next = new Set(current);
+      if (open) next.add(groupId);
+      else next.delete(groupId);
+      return next;
+    });
+  };
+
+  const requestedComparisonVersion = mode === 'compare' ? left : '';
+  const overviewPrimaryVersion = overview?.primary.identity.version ?? '';
+  const overviewComparisonVersion = overview?.comparison?.identity.version ?? '';
+  const compareResponsePrimaryVersion = comparison?.left ?? '';
+  const compareResponseComparisonVersion = mode === 'compare' ? comparison?.right ?? '' : '';
+  const isCalibrationDemoReady = Boolean(
+    versions.length > 0 &&
+    catalog.length > 0 &&
+    selected &&
+    overview &&
+    comparison &&
+    overviewPrimaryVersion === selected &&
+    compareResponsePrimaryVersion === selected
+  );
+  const calibrationComparisonError = requestedComparisonVersion && error
+    ? `Unable to load the calibration comparison: ${error}`
+    : requestedComparisonVersion && !loading && !waiting && !error &&
+        completedPrimaryVersion === selected &&
+        completedComparisonVersion === requestedComparisonVersion &&
+        (
+          overviewComparisonVersion !== requestedComparisonVersion ||
+          compareResponseComparisonVersion !== requestedComparisonVersion
+        )
+      ? 'The returned calibration evidence did not match the selected model pair.'
+      : '';
+
+  useEffect(() => {
+    if (!modelEvidenceDemo?.active || !selected) return;
+    modelEvidenceDemo.onContextChange(selected, requestedComparisonVersion);
+  }, [modelEvidenceDemo, requestedComparisonVersion, selected]);
+
   return <section className="calibration-layout calibration-workspace">
     {hasSetupContext && returnVersion && <EvidenceReturnPanel
       className="evidence-context-banner"
@@ -583,7 +853,7 @@ export function ComparePage() {
     />}
     <article className="results-card calibration-evidence-introduction">
       <div className="validation-introduction-copy">
-        <h2>Calibration</h2>
+        <h2 id="calibration-page-heading">Calibration</h2>
         <p>Understand why the model needs fitted behaviour, what was fitted, and which other assumptions it carries.</p>
         <p>
           The model combines inputs measured directly from UK data with behavioural parameters that cannot be
@@ -597,7 +867,11 @@ export function ComparePage() {
     <section className="calibration-model-picker" aria-label="Calibration model selection">
       <div className="validation-model-columns-scroll">
         <div className="validation-model-columns">
-          <section className="validation-model-column" aria-labelledby="calibration-primary-model-heading">
+          <section
+            className="validation-model-column"
+            aria-labelledby="calibration-primary-model-heading"
+            data-calibration-demo-target={CALIBRATION_DEMO_TARGETS.primaryModel}
+          >
             <div className="validation-model-column-heading">
               <div>
                 <span>Model 1</span>
@@ -624,7 +898,10 @@ export function ComparePage() {
                 <span>Model 2</span>
                 <h3 id="calibration-comparison-model-heading">Comparison model</h3>
               </div>
-              <label className="comparison-enable-toggle validation-comparison-enable-toggle">
+              <label
+                className="comparison-enable-toggle validation-comparison-enable-toggle"
+                data-calibration-demo-target={CALIBRATION_DEMO_TARGETS.compareToggle}
+              >
                 <input
                   type="checkbox"
                   checked={comparisonEnabled}
@@ -639,6 +916,7 @@ export function ComparePage() {
               selectedVersion={left}
               name="calibration-comparison-model"
               label="Comparison calibration model"
+              calibrationDemoTarget={CALIBRATION_DEMO_TARGETS.comparisonModel}
               disabled={!comparisonEnabled}
               unavailableVersion={selected}
               inProgressVersions={optionSet}
@@ -668,6 +946,9 @@ export function ComparePage() {
             ? `${overview.primary.parameters.length} parameters`
             : `${countChangedParameters(overview)} of ${overview.primary.parameters.length} changed`}
           defaultOpen
+          open={isFittedParametersOpen}
+          onOpenChange={setIsFittedParametersOpen}
+          demoTarget={CALIBRATION_DEMO_TARGETS.fittedParameters}
         >
           {overview.primary.parameters.map((parameter) =>
             <FittedParameterRow
@@ -677,6 +958,11 @@ export function ComparePage() {
               primaryVersion={overview.primary.identity.version}
               comparisonVersion={overview.comparison?.identity.version}
               mode={mode}
+              open={openFittedParameterKeys.has(parameter.key)}
+              onOpenChange={(open) => setFittedParameterOpen(parameter.key, open)}
+              demoTarget={parameter.key === representativeParameterKey
+                ? calibrationDemoParameterTargetId(parameter.key)
+                : undefined}
             />
           )}
         </CalibrationSection>
@@ -687,6 +973,9 @@ export function ComparePage() {
             ? `${referenceItems.length} assumptions · ${referenceItems.filter((item) => !item.unchanged).length} changed`
             : `${referenceItems.length} assumptions`}
           defaultOpen={false}
+          open={isOtherAssumptionsOpen}
+          onOpenChange={setIsOtherAssumptionsOpen}
+          demoTarget={CALIBRATION_DEMO_TARGETS.otherAssumptions}
         >
           <p className="assumption-reference-intro">
             These are the model inputs outside the five fitted behavioural parameters. Each row represents one
@@ -696,8 +985,18 @@ export function ComparePage() {
             Source/evidence records the specific evidence it came from.
           </p>
           <div className="assumption-groups">
-            {[...referenceGroups.entries()].map(([group, items]) =>
-              <AssumptionGroupDisclosure key={group as ParameterGroup} group={group} assumptionCount={items.length}>
+            {[...referenceGroups.entries()].map(([group, items]) => {
+              const groupId = calibrationAssumptionGroupId(group);
+              return <AssumptionGroupDisclosure
+                key={group as ParameterGroup}
+                group={group}
+                assumptionCount={items.length}
+                open={openAssumptionGroupIds.has(groupId)}
+                onOpenChange={(open) => setAssumptionGroupOpen(groupId, open)}
+                demoTarget={groupId === representativeAssumptionGroupId
+                  ? calibrationDemoAssumptionGroupTargetId(groupId)
+                  : undefined}
+              >
                 <div className="assumption-table" role="table">
                   <div className="assumption-table-head" role="row">
                     <span>Assumption and config key</span>
@@ -709,7 +1008,14 @@ export function ComparePage() {
                     const meta = catalog.find((entry) => entry.id === item.id)!;
                     const complex = item.visualPayload.type !== 'scalar';
                     const derivation = meta.keyMetadata[0]?.derivation;
-                    return <div className="assumption-table-row" role="row" key={item.id}>
+                    return <div
+                      className="assumption-table-row"
+                      role="row"
+                      key={item.id}
+                      data-calibration-demo-target={item.id === representativeAssumptionId
+                        ? calibrationDemoAssumptionTargetId(item.id)
+                        : undefined}
+                    >
                       <div><strong>{item.title}</strong><code>{meta.configKeys.join(', ')}</code><small>{meta.keyMetadata[0]?.description}</small></div>
                       <div>{scalarSummary(item, mode, meta)}{item.visualPayload.type === 'joint_distribution' && <small>The heatmap shows the full distribution; each cell is the share of households in that combination of bands.</small>}{mode === 'compare' && <span className={item.unchanged ? 'unchanged' : 'changed'}>{item.unchanged ? 'Unchanged' : 'Changed'}</span>}{complex && <button type="button" className="secondary-button assumption-inspection-button" aria-haspopup="dialog" onClick={() => setInspectionItem(item)}>{inspectionLabel(item)}</button>}</div>
                       <div>{derivation && <><b>{derivation}</b><small>{derivationDescription(derivation)}</small></>}</div>
@@ -717,14 +1023,17 @@ export function ComparePage() {
                     </div>;
                   })}
                 </div>
-              </AssumptionGroupDisclosure>
-            )}
+              </AssumptionGroupDisclosure>;
+            })}
           </div>
           {referenceGroups.size === 0 && <p className="info-banner">No model assumptions are available.</p>}
         </CalibrationSection>
         <BehaviouralParameterOriginSection
           model={overview.primary}
           differentEvidenceProfile={mode === 'compare' && !overview.sameEvidenceProfile}
+          open={isBehaviouralOriginOpen}
+          onOpenChange={setIsBehaviouralOriginOpen}
+          demoTarget={CALIBRATION_DEMO_TARGETS.behaviouralOrigin}
         />
       </main>
     </>}
@@ -747,5 +1056,43 @@ export function ComparePage() {
         </div>
       </section>
     </div>}
+    {modelEvidenceDemo && <CalibrationDemoPrototype
+      active={modelEvidenceDemo.active}
+      ready={isCalibrationDemoReady}
+      startComplete={modelEvidenceDemo.showCompletion}
+      journeyId={modelEvidenceDemo.journeyId}
+      initialLoading={loading}
+      initialWaiting={waiting}
+      initialError={!isCalibrationDemoReady ? error : ''}
+      primaryVersion={selected}
+      comparisonVersion={requestedComparisonVersion}
+      isCompareChecked={comparisonEnabled}
+      requestedPrimaryVersion={selected}
+      requestedComparisonVersion={requestedComparisonVersion}
+      completedPrimaryVersion={completedPrimaryVersion}
+      completedComparisonVersion={completedComparisonVersion}
+      overviewPrimaryVersion={overviewPrimaryVersion}
+      overviewComparisonVersion={overviewComparisonVersion}
+      compareResponsePrimaryVersion={compareResponsePrimaryVersion}
+      compareResponseComparisonVersion={compareResponseComparisonVersion}
+      isComparisonLoading={Boolean(requestedComparisonVersion && loading)}
+      isComparisonWaiting={Boolean(requestedComparisonVersion && waiting)}
+      comparisonError={calibrationComparisonError}
+      hasAtLeastTwoModels={pickerVersions.filter((version) => version !== selected).length > 0}
+      isBehaviouralOriginOpen={isBehaviouralOriginOpen}
+      isFittedParametersOpen={isFittedParametersOpen}
+      representativeParameterKey={representativeParameterKey}
+      isRepresentativeParameterOpen={openFittedParameterKeys.has(representativeParameterKey)}
+      hasOtherAssumptions={referenceItems.length > 0}
+      isOtherAssumptionsOpen={isOtherAssumptionsOpen}
+      representativeAssumptionGroupId={representativeAssumptionGroupId}
+      isRepresentativeAssumptionGroupOpen={openAssumptionGroupIds.has(representativeAssumptionGroupId)}
+      representativeAssumptionId={representativeAssumptionId}
+      onRetryLoad={() => setReloadToken((current) => current + 1)}
+      onRetryComparison={() => setReloadToken((current) => current + 1)}
+      onPause={modelEvidenceDemo.onPause}
+      onContinueToValidation={modelEvidenceDemo.onContinueToValidation}
+      onExitToHome={modelEvidenceDemo.onExitToHome}
+    />}
   </section>;
 }

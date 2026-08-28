@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
 import { ManualResultsView } from './experiments/view/ManualResultsView';
@@ -17,6 +17,14 @@ import {
   resumableSensitivityDraftId,
   setActiveSensitivityDraftId
 } from '../lib/sensitivityDraft';
+import {
+  clearPolicyExperimentDemoState,
+  createPolicyExperimentDemoDraftId,
+  isPolicyExperimentDemoDraftId,
+  isPolicyExperimentDemoRequested,
+  readPolicyExperimentDemoProgress
+} from '../lib/policyExperimentDemo';
+import type { PolicyExperimentDemoCoordinator } from '../components/PolicyExperimentDemoPrototype';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -46,6 +54,11 @@ export function ExperimentsPage({
   const queueInitiallyExpanded = searchParams.get('queue') === 'open';
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
   const draftId = searchParams.get('draft')?.trim() ?? '';
+  const isPolicyDemo = workspace === 'manual' && isPolicyExperimentDemoRequested(searchParams);
+  const effectiveDraftId = isPolicyDemo
+    ? isPolicyExperimentDemoDraftId(draftId) ? draftId : ''
+    : draftId;
+  const pendingPolicyDemoDraftIdRef = useRef('');
 
   const returnToExperiments = useCallback(() => {
     setIsSetupOpen(false);
@@ -54,6 +67,20 @@ export function ExperimentsPage({
 
   useEffect(() => {
     if (!isSetupOpen) return;
+    if (isPolicyDemo) {
+      if (isPolicyExperimentDemoDraftId(draftId)) {
+        pendingPolicyDemoDraftIdRef.current = '';
+        return;
+      }
+      clearPolicyExperimentDemoState();
+      const nextDraftId = pendingPolicyDemoDraftIdRef.current || createPolicyExperimentDemoDraftId();
+      pendingPolicyDemoDraftIdRef.current = nextDraftId;
+      const next = new URLSearchParams(searchParams);
+      next.set('draft', nextDraftId);
+      next.delete('step');
+      setSearchParams(next, { replace: true });
+      return;
+    }
     if (draftId) {
       if (workspace === 'manual') setActiveScenarioDraftId(draftId);
       else setActiveSensitivityDraftId(draftId);
@@ -69,7 +96,7 @@ export function ExperimentsPage({
     const next = new URLSearchParams(searchParams);
     next.set('draft', nextDraftId);
     setSearchParams(next, { replace: true });
-  }, [draftId, isSetupOpen, searchParams, setSearchParams, workspace]);
+  }, [draftId, isPolicyDemo, isSetupOpen, searchParams, setSearchParams, workspace]);
 
   const updateSearch = useCallback((updates: Record<string, string>) => {
     const next = new URLSearchParams(searchParams);
@@ -79,6 +106,31 @@ export function ExperimentsPage({
     }
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  const exitPolicyDemo = useCallback(() => {
+    clearPolicyExperimentDemoState(effectiveDraftId);
+    setIsSetupOpen(false);
+    navigate('/experiments');
+  }, [effectiveDraftId, navigate]);
+
+  const completePolicyDemoPrototype = useCallback(() => {
+    updateSearch({ step: 'model-version' });
+  }, [updateSearch]);
+
+  const policyDemo = useMemo<PolicyExperimentDemoCoordinator | undefined>(() => {
+    if (!isPolicyDemo) return undefined;
+    return {
+      active: true,
+      draftId: effectiveDraftId,
+      onPrototypeComplete: completePolicyDemoPrototype,
+      onExit: exitPolicyDemo
+    };
+  }, [completePolicyDemoPrototype, effectiveDraftId, exitPolicyDemo, isPolicyDemo]);
+
+  const policyDemoProgress = isPolicyDemo ? readPolicyExperimentDemoProgress() : null;
+  const initialScenarioStep = isPolicyDemo
+    ? policyDemoProgress?.draftId === effectiveDraftId && policyDemoProgress.stageId === 'complete' ? 1 : 0
+    : searchParams.get('step') === 'model-version' ? 1 : 0;
 
   useEffect(() => {
     if (!isSetupOpen) {
@@ -150,23 +202,30 @@ export function ExperimentsPage({
               <p>{copy.modalDescription}</p>
             </div>
             <div className="scenario-modal-head-actions">
-              {draftId && (
+              {effectiveDraftId && (
                 <button type="button" className="danger-button scenario-discard-draft-button" onClick={() => {
-                  if (workspace === 'manual') clearScenarioDraft(draftId);
+                  if (isPolicyDemo) {
+                    exitPolicyDemo();
+                    return;
+                  }
+                  if (workspace === 'manual') clearScenarioDraft(effectiveDraftId);
                   else clearSensitivityDraft(draftId);
                   returnToExperiments();
-                }}>Discard draft</button>
+                }}>{isPolicyDemo ? 'Exit demo' : 'Discard draft'}</button>
               )}
               <button
                 type="button"
                 className="trend-modal-close"
-                aria-label={`Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
-                onClick={returnToExperiments}
+                aria-label={isPolicyDemo
+                  ? 'Exit Policy creation preview'
+                  : `Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
+                onClick={isPolicyDemo ? exitPolicyDemo : returnToExperiments}
               >×</button>
             </div>
           </div>
           <div className="scenario-create-modal-body">
             <ExperimentRunMode
+              key={isPolicyDemo ? effectiveDraftId || 'policy-demo-loading' : undefined}
               activeType={workspace}
               canWrite={canWrite}
               canDownloadResults={canDownloadResults}
@@ -176,9 +235,10 @@ export function ExperimentsPage({
               selectedJobRef={selectedJobRef}
               followJobRef={searchParams.get('follow') === '1' ? selectedJobRef : ''}
               showRunManagement={false}
-              draftId={draftId}
-              initialScenarioStep={searchParams.get('step') === 'model-version' ? 1 : 0}
+              draftId={effectiveDraftId}
+              initialScenarioStep={initialScenarioStep}
               initialSensitivityStep={searchParams.get('step') === 'model-baseline' ? 2 : 0}
+              policyDemo={policyDemo}
               onManualRunAccepted={(runId) => navigate(
                 `/results?type=manual&queue=open${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`
               )}

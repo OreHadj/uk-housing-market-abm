@@ -94,6 +94,7 @@ export interface ExperimentRunController {
   sensitivityPolicyPackages: SensitivityPolicyPackageDefinition[];
   selectedSensitivityPackage: SensitivityPolicyPackageDefinition | null;
   isLoadingOptions: boolean;
+  isDraftHydrated: boolean;
   isLoadingJobs: boolean;
   isSubmitting: boolean;
   isSubmittingSensitivity: boolean;
@@ -116,6 +117,7 @@ export interface ExperimentRunController {
   onCancelActiveSensitivity: () => Promise<void>;
   onCancelJob: (jobRef: string) => Promise<void>;
   refreshJobs: () => Promise<void>;
+  retryOptions: () => Promise<ModelRunOptionsPayload | null>;
 }
 
 interface UseExperimentRunControllerOptions {
@@ -129,6 +131,14 @@ interface UseExperimentRunControllerOptions {
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
   draftId?: string;
+  policyDemoActive?: boolean;
+}
+
+export function isPolicyExperimentDemoSubmissionBlocked(
+  activeType: ExperimentType,
+  policyDemoActive: boolean
+): boolean {
+  return activeType === 'manual' && policyDemoActive;
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -230,7 +240,8 @@ export function useExperimentRunController({
   onManualRunAccepted,
   onSensitivityRunAccepted,
   followJobRef,
-  draftId = ''
+  draftId = '',
+  policyDemoActive = false
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -801,6 +812,10 @@ export function useExperimentRunController({
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {
+    if (isPolicyExperimentDemoSubmissionBlocked(activeType, policyDemoActive)) {
+      setPageError('Policy scenario submission is disabled during the guided preview.');
+      return;
+    }
     setPageError('');
     setIsSubmitting(true);
 
@@ -995,6 +1010,7 @@ export function useExperimentRunController({
     sensitivityPolicyPackages,
     selectedSensitivityPackage,
     isLoadingOptions,
+    isDraftHydrated: draftHydrated,
     isLoadingJobs,
     isSubmitting,
     isSubmittingSensitivity,
@@ -1016,6 +1032,7 @@ export function useExperimentRunController({
     onSubmitSensitivity,
     onCancelActiveSensitivity,
     onCancelJob,
-    refreshJobs
+    refreshJobs,
+    retryOptions: () => refreshOptions(selectedBaseline || undefined, true)
   };
 }

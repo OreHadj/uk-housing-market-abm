@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   BasePolicyId,
@@ -22,6 +22,12 @@ import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { GeneralModelControl, isRecordSetting } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
+import {
+  POLICY_EXPERIMENT_DEMO_TARGETS,
+  PolicyExperimentDemoPrototype,
+  committedPolicyExperimentDemoName,
+  type PolicyExperimentDemoContext
+} from '../../components/PolicyExperimentDemoPrototype';
 
 type FormValue = string | boolean;
 
@@ -54,6 +60,7 @@ interface ManualRunSetupCardProps {
   manualSubmissionLockedBySensitivity: boolean;
   lockMessage: string | null;
   onSubmit: (confirmWarnings: boolean) => void;
+  policyDemo?: PolicyExperimentDemoContext;
 }
 
 function numericValue(value: FormValue | undefined): number | null {
@@ -119,10 +126,15 @@ export function ManualRunSetupCard({
   isSubmitting,
   manualSubmissionLockedBySensitivity,
   lockMessage,
-  onSubmit
+  onSubmit,
+  policyDemo
 }: ManualRunSetupCardProps) {
   const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4, initialStep)));
   const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [committedDemoName, setCommittedDemoName] = useState('');
+  const [nameCommitRevision, setNameCommitRevision] = useState(0);
+  const demoNameEditedRef = useRef(false);
+  const isPolicyDemoActive = policyDemo?.active === true;
   const steps = [
     { id: 'scenario-details', label: 'Scenario name' },
     { id: 'model-evidence', label: 'Model version' },
@@ -173,6 +185,15 @@ export function ManualRunSetupCard({
     onBasePolicyChange(nextBasePolicy);
   };
 
+  const commitDemoName = (value: string) => {
+    if (!isPolicyDemoActive) return;
+    const committedName = committedPolicyExperimentDemoName(value, demoNameEditedRef.current);
+    demoNameEditedRef.current = false;
+    if (!committedName) return;
+    setCommittedDemoName(committedName);
+    setNameCommitRevision((current) => current + 1);
+  };
+
   return (
     <article className="scenario-builder-surface">
       {manualSubmissionLockedBySensitivity && lockMessage && <p className="info-banner">{lockMessage}</p>}
@@ -188,7 +209,13 @@ export function ManualRunSetupCard({
           {draftNotice && <p className="info-banner">{draftNotice}</p>}
           <nav className="scenario-stepper policy-stepper" aria-label="Scenario sections">
             {steps.map((step, index) => (
-              <button key={step.id} type="button" onClick={() => setActiveStep(index)} aria-current={activeStep === index ? 'step' : undefined}>
+              <button
+                key={step.id}
+                type="button"
+                disabled={isPolicyDemoActive}
+                onClick={() => setActiveStep(index)}
+                aria-current={activeStep === index ? 'step' : undefined}
+              >
                 <span>{index + 1}</span>{step.label}
               </button>
             ))}
@@ -203,7 +230,22 @@ export function ManualRunSetupCard({
                     type="text"
                     value={title}
                     disabled={formDisabled}
-                    onChange={(event) => onTitleChange(event.target.value)}
+                    data-policy-experiment-demo-target={
+                      isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.scenarioName : undefined
+                    }
+                    onChange={(event) => {
+                      if (isPolicyDemoActive) {
+                        demoNameEditedRef.current = true;
+                        setCommittedDemoName('');
+                      }
+                      onTitleChange(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      commitDemoName(event.currentTarget.value);
+                    }}
+                    onBlur={(event) => commitDemoName(event.currentTarget.value)}
                     maxLength={120}
                     placeholder="For example, Lower LTV limits for first-time buyers"
                   />
@@ -452,7 +494,7 @@ export function ManualRunSetupCard({
                   <button
                     type="button"
                     className="secondary-button scenario-wizard-arrow-button"
-                    disabled={activeStep === 0}
+                    disabled={activeStep === 0 || isPolicyDemoActive}
                     aria-label="Back to previous step"
                     title="Back to previous step"
                     onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
@@ -463,9 +505,15 @@ export function ManualRunSetupCard({
                     <button
                       type="button"
                       className="secondary-button scenario-wizard-arrow-button"
+                      disabled={isPolicyDemoActive && activeStep !== 0}
+                      data-policy-experiment-demo-target={
+                        isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.continueButton : undefined
+                      }
                       aria-label="Continue to next step"
                       title="Continue to next step"
-                      onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}
+                      onClick={() => setActiveStep((step) => isPolicyDemoActive
+                        ? step === 0 ? 1 : step
+                        : Math.min(steps.length - 1, step + 1))}
                     >
                       <span aria-hidden="true">&rarr;</span>
                     </button>
@@ -533,6 +581,15 @@ export function ManualRunSetupCard({
             </aside>
           </div>
         </>
+      )}
+      {policyDemo && (
+        <PolicyExperimentDemoPrototype
+          {...policyDemo}
+          currentWizardStep={activeStep}
+          currentName={title}
+          committedName={committedDemoName}
+          nameCommitRevision={nameCommitRevision}
+        />
       )}
     </article>
   );

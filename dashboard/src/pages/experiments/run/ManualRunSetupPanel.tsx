@@ -1,19 +1,28 @@
 import { ManualRunSetupCard } from '../../run-experiments/ManualRunSetupCard';
+import type { PolicyExperimentDemoCoordinator } from '../../../components/PolicyExperimentDemoPrototype';
 import type { ExperimentRunController } from './useExperimentRunController';
 
 interface ManualRunSetupPanelProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
   initialScenarioStep?: number;
+  policyDemo?: PolicyExperimentDemoCoordinator;
 }
 
-export function ManualRunSetupPanel({ controller, runActionsDisabled, initialScenarioStep = 0 }: ManualRunSetupPanelProps) {
+export function ManualRunSetupPanel({
+  controller,
+  runActionsDisabled,
+  initialScenarioStep = 0,
+  policyDemo
+}: ManualRunSetupPanelProps) {
   return (
     <ManualRunSetupCard
       formDisabled={controller.isSubmitting}
       submissionDisabled={runActionsDisabled}
       submissionDisabledReason={
-        controller.executionDisabled
+        policyDemo?.active
+          ? 'This guided preview never submits a model run.'
+          : controller.executionDisabled
           ? controller.executionDisabledReason || 'Simulation execution is unavailable in this runtime.'
           : 'Run submission requires write access in this runtime.'
       }
@@ -48,6 +57,15 @@ export function ManualRunSetupPanel({ controller, runActionsDisabled, initialSce
       onSubmit={(confirmWarnings) => {
         void controller.onSubmitRun(confirmWarnings);
       }}
+      policyDemo={policyDemo ? {
+        ...policyDemo,
+        ready: controller.isDraftHydrated && Boolean(controller.options),
+        loading: controller.isLoadingOptions,
+        error: controller.isDraftHydrated ? '' : controller.pageError,
+        onRetryLoad: () => {
+          void controller.retryOptions();
+        }
+      } : undefined}
     />
   );
 }

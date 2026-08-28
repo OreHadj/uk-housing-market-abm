@@ -5,12 +5,14 @@ import { SensitivityRunSetupPanel } from './run/SensitivityRunSetupPanel';
 import type { ExperimentRunController } from './run/useExperimentRunController';
 import { ManualResultsView } from './view/ManualResultsView';
 import { SensitivityResultsView } from './view/SensitivityResultsView';
+import type { PolicyExperimentDemoCoordinator } from '../../components/PolicyExperimentDemoPrototype';
 
 export interface ExperimentRunRendererProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
   initialScenarioStep?: number;
   initialSensitivityStep?: number;
+  policyDemo?: PolicyExperimentDemoCoordinator;
 }
 
 export interface ExperimentViewRendererProps {
