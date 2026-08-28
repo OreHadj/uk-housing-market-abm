@@ -17,7 +17,7 @@ public class House implements Comparable<House> {
 
     public IHouseOwner  owner;
     public Household    resident;
-    public int          id;
+    public final int    id;
 
     HouseOfferRecord    saleRecord;
     HouseOfferRecord    rentalRecord;

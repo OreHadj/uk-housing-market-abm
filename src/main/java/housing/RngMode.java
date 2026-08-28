@@ -50,8 +50,7 @@ enum RngMode {
             case MERSENNE:
                 return;
             case PHILOX_HOUSEHOLD:
-                throw new IllegalStateException("RNG mode 'philox-household' is not active until "
-                        + "the household event origins are migrated in Step 9");
+                return;
             case PHILOX:
                 throw new IllegalStateException("RNG mode 'philox' is not active until all event "
                         + "origins are migrated in Step 12");

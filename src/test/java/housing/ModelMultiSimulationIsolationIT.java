@@ -11,10 +11,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -26,30 +28,75 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ModelMultiSimulationIsolationIT {
 
     private static final Path REPO_ROOT = Paths.get("").toAbsolutePath();
+    private static final int LEGACY_COLLISION_BASE_SEED = 42;
+    private static final int COLLIDING_STANDALONE_SEED = 43;
 
     @TempDir
     Path tempDir;
 
     @Test
     void multiSimulationRunMatchesSeparateSeededRuns() throws Exception {
-        Path combinedConfig = writeTinyConfig(tempDir.resolve("combined.properties"), 1, 2);
-        Path isolatedSeedOneConfig = writeTinyConfig(tempDir.resolve("isolated-seed-1.properties"), 1, 1);
-        Path isolatedSeedTwoConfig = writeTinyConfig(tempDir.resolve("isolated-seed-2.properties"), 2, 1);
+        assertEquals(Model.simulationSeed(LEGACY_COLLISION_BASE_SEED, 2),
+                Model.simulationSeed(COLLIDING_STANDALONE_SEED, 1));
+        Path combinedConfig = writeTinyConfig(
+                tempDir.resolve("combined.properties"), LEGACY_COLLISION_BASE_SEED, 2);
+        Path isolatedFirstConfig = writeTinyConfig(
+                tempDir.resolve("isolated-first.properties"), LEGACY_COLLISION_BASE_SEED, 1);
+        Path isolatedSecondConfig = writeTinyConfig(
+                tempDir.resolve("isolated-second.properties"), COLLIDING_STANDALONE_SEED, 1);
 
         Path combinedOutput = tempDir.resolve("combined");
-        Path isolatedSeedOneOutput = tempDir.resolve("isolated-seed-1");
-        Path isolatedSeedTwoOutput = tempDir.resolve("isolated-seed-2");
+        Path isolatedFirstOutput = tempDir.resolve("isolated-first");
+        Path isolatedSecondOutput = tempDir.resolve("isolated-second");
 
         assertSuccessful(runModel(combinedConfig, combinedOutput));
-        assertSuccessful(runModel(isolatedSeedOneConfig, isolatedSeedOneOutput));
-        assertSuccessful(runModel(isolatedSeedTwoConfig, isolatedSeedTwoOutput));
+        assertSuccessful(runModel(isolatedFirstConfig, isolatedFirstOutput));
+        assertSuccessful(runModel(isolatedSecondConfig, isolatedSecondOutput));
 
-        assertSameFile(isolatedSeedOneOutput.resolve("Output-run1.csv"), combinedOutput.resolve("Output-run1.csv"));
-        assertSameFile(isolatedSeedOneOutput.resolve("HouseholdID-run1.csv"),
+        assertSameFile(isolatedFirstOutput.resolve("Output-run1.csv"),
+                combinedOutput.resolve("Output-run1.csv"));
+        assertSameFile(isolatedFirstOutput.resolve("HouseholdID-run1.csv"),
                 combinedOutput.resolve("HouseholdID-run1.csv"));
-        assertSameFile(isolatedSeedTwoOutput.resolve("Output-run1.csv"), combinedOutput.resolve("Output-run2.csv"));
-        assertSameFile(isolatedSeedTwoOutput.resolve("HouseholdID-run1.csv"),
+        assertSameFile(isolatedSecondOutput.resolve("Output-run1.csv"),
+                combinedOutput.resolve("Output-run2.csv"));
+        assertSameFile(isolatedSecondOutput.resolve("HouseholdID-run1.csv"),
                 combinedOutput.resolve("HouseholdID-run2.csv"));
+    }
+
+    @Test
+    void hybridMultiSimulationRunIsReproducibleAndEscapesLegacySeedCollision()
+            throws Exception {
+        assertEquals(Model.simulationSeed(LEGACY_COLLISION_BASE_SEED, 2),
+                Model.simulationSeed(COLLIDING_STANDALONE_SEED, 1));
+
+        Path combinedConfig = writeTinyConfig(
+                tempDir.resolve("hybrid-combined.properties"), LEGACY_COLLISION_BASE_SEED, 2);
+        Path collidingConfig = writeTinyConfig(
+                tempDir.resolve("hybrid-colliding.properties"), COLLIDING_STANDALONE_SEED, 1);
+        Path combinedOutputA = tempDir.resolve("hybrid-combined-a");
+        Path combinedOutputB = tempDir.resolve("hybrid-combined-b");
+        Path collidingOutput = tempDir.resolve("hybrid-colliding");
+
+        assertSuccessful(runModel(
+                combinedConfig, combinedOutputA, RngMode.PHILOX_HOUSEHOLD));
+        assertSuccessful(runModel(
+                combinedConfig, combinedOutputB, RngMode.PHILOX_HOUSEHOLD));
+        assertSuccessful(runModel(
+                collidingConfig, collidingOutput, RngMode.PHILOX_HOUSEHOLD));
+
+        assertSameFile(combinedOutputA.resolve("Output-run1.csv"),
+                combinedOutputB.resolve("Output-run1.csv"));
+        assertSameFile(combinedOutputA.resolve("Output-run2.csv"),
+                combinedOutputB.resolve("Output-run2.csv"));
+        assertSameFile(combinedOutputA.resolve("HouseholdID-run1.csv"),
+                combinedOutputB.resolve("HouseholdID-run1.csv"));
+        assertSameFile(combinedOutputA.resolve("HouseholdID-run2.csv"),
+                combinedOutputB.resolve("HouseholdID-run2.csv"));
+
+        assertDifferentFile(collidingOutput.resolve("Output-run1.csv"),
+                combinedOutputA.resolve("Output-run2.csv"));
+        assertDifferentFile(collidingOutput.resolve("HouseholdID-run1.csv"),
+                combinedOutputA.resolve("HouseholdID-run2.csv"));
     }
 
     private static Path writeTinyConfig(Path outputPath, int seed, int nSims) throws IOException {
@@ -99,20 +146,35 @@ class ModelMultiSimulationIsolationIT {
                 () -> "File differs from isolated run: " + actual.getFileName());
     }
 
+    private static void assertDifferentFile(Path first, Path second) throws IOException {
+        assertNotEquals(Files.readString(first, StandardCharsets.UTF_8),
+                Files.readString(second, StandardCharsets.UTF_8),
+                () -> "Files unexpectedly match across addressed identities: "
+                        + second.getFileName());
+    }
+
     private static ProcessResult runModel(Path configPath, Path outputDir) throws Exception {
+        return runModel(configPath, outputDir, null);
+    }
+
+    private static ProcessResult runModel(
+            Path configPath, Path outputDir, RngMode mode) throws Exception {
         Files.createDirectories(outputDir);
-        ProcessBuilder processBuilder = new ProcessBuilder(
-                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
-                "-Dhousing.orderbook=array",
-                "-cp",
-                System.getProperty("java.class.path"),
-                "housing.Model",
-                "-configFile",
-                configPath.toAbsolutePath().toString(),
-                "-outputFolder",
-                outputDir.toAbsolutePath().toString() + "/",
-                "-dev"
-        );
+        ArrayList<String> command = new ArrayList<>();
+        command.add(Path.of(System.getProperty("java.home"), "bin", "java").toString());
+        command.add("-Dhousing.orderbook=array");
+        if (mode != null) {
+            command.add("-D" + RngFactory.PROPERTY + "=" + mode.propertyValue());
+        }
+        command.add("-cp");
+        command.add(System.getProperty("java.class.path"));
+        command.add("housing.Model");
+        command.add("-configFile");
+        command.add(configPath.toAbsolutePath().toString());
+        command.add("-outputFolder");
+        command.add(outputDir.toAbsolutePath().toString() + "/");
+        command.add("-dev");
+        ProcessBuilder processBuilder = new ProcessBuilder(command);
         processBuilder.directory(REPO_ROOT.toFile());
         Process process = processBuilder.start();
         String stdout = readStream(process.getInputStream());

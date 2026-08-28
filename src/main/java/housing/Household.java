@@ -17,7 +17,7 @@ public class Household implements IHouseOwner {
     private static int          id_pool;
     private static boolean      idReservationOutstanding;
 
-    public int                  id; // Only used for identifying households within the class TransactionRecorder
+    public final int            id; // Durable identity, including for addressed randomness
     private double              annualGrossEmploymentIncome;
     private double              monthlyGrossEmploymentIncome;
     private double              desiredPurchasePrice;
@@ -679,7 +679,9 @@ public class Household implements IHouseOwner {
             isFirstTimeBuyer = false; // Households inheriting a home cannot be considered fist-time buyers anymore
         // If owning a home and having the BTL gene...
         } else if(behaviour.isPropertyInvestor()) {
-            // ...decide whether to sell the inherited house
+            // Keep this decision before the rental listing. BTL_SELL is a HOUSEHOLD_LOOP-only
+            // route; inheritance runs under DEMOGRAPHICS or CONSTRUCTION and relies on the
+            // inherited house still being off the rental market so the decision returns before drawing.
             if(decideToSellHouse(h, context)) {
                 putHouseForSale(h, context);
             }

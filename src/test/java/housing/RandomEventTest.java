@@ -183,7 +183,21 @@ class RandomEventTest {
             for (RngOrigin origin : event.validOrigins()) {
                 assertEquals(RngBackend.MERSENNE,
                         event.backend(RngMode.MERSENNE, origin), event.name());
-                assertEquals(RngBackend.MERSENNE,
+                RngBackend expectedHybrid = Set.of(
+                                RandomEvent.HH_DESIRED_PURCHASE,
+                                RandomEvent.HH_DESIRED_RENT,
+                                RandomEvent.BTL_DOWNPAYMENT,
+                                RandomEvent.HOME_SELL,
+                                RandomEvent.BTL_SELL,
+                                RandomEvent.SALE_REPRICE,
+                                RandomEvent.RENT_REPRICE,
+                                RandomEvent.SALE_LIST_MARKUP,
+                                RandomEvent.RENT_LIST_MARKUP,
+                                RandomEvent.RENT_OR_BUY,
+                                RandomEvent.BTL_BUY).contains(event)
+                        && origin == RngOrigin.HOUSEHOLD_LOOP
+                                ? RngBackend.PHILOX : RngBackend.MERSENNE;
+                assertEquals(expectedHybrid,
                         event.philoxHouseholdBackend(origin), event.name());
                 assertEquals(event.philoxHouseholdBackend(origin),
                         event.backend(RngMode.PHILOX_HOUSEHOLD, origin), event.name());
@@ -194,20 +208,20 @@ class RandomEventTest {
     }
 
     /**
-     * Step 9 migrates one {@code (origin, event)} row at a time, so an event reachable from several
-     * top-level phases must carry an independent decision for each of them. Without this, flipping
-     * the household-loop listing markup would silently flip the inheritance and new-build markups
-     * that share its event ID.
+     * The hybrid policy is defined per {@code (origin, event)} row, so an event reachable from
+     * several top-level phases must carry an independent decision for each of them. Without this,
+     * routing the household-loop listing markup would silently flip the inheritance and new-build
+     * markups that share its event ID.
      */
     @Test
     void philoxHouseholdRoutingIsPinnedPerOriginNotPerEvent() {
         assertEquals(
-                Map.of(RngOrigin.HOUSEHOLD_LOOP, RngBackend.MERSENNE,
+                Map.of(RngOrigin.HOUSEHOLD_LOOP, RngBackend.PHILOX,
                         RngOrigin.DEMOGRAPHICS, RngBackend.MERSENNE,
                         RngOrigin.CONSTRUCTION, RngBackend.MERSENNE),
                 RandomEvent.SALE_LIST_MARKUP.philoxHouseholdBackends());
         assertEquals(
-                Map.of(RngOrigin.HOUSEHOLD_LOOP, RngBackend.MERSENNE,
+                Map.of(RngOrigin.HOUSEHOLD_LOOP, RngBackend.PHILOX,
                         RngOrigin.SALE_CLEARING, RngBackend.MERSENNE,
                         RngOrigin.DEMOGRAPHICS, RngBackend.MERSENNE,
                         RngOrigin.CONSTRUCTION, RngBackend.MERSENNE),

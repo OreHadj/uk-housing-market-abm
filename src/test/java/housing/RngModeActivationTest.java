@@ -28,24 +28,41 @@ class RngModeActivationTest {
     private static final String EXPECTED_MERSENNE_METADATA =
             "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
                     + "masterSeed=123 rngMode=mersenne";
+    private static final String EXPECTED_HYBRID_METADATA =
+            "RNG_METADATA rngAlgorithm=MersenneTwister+Philox4x32-10 rngAddressVersion=1 "
+                    + "masterSeed=123 rngMode=philox-household";
 
     @TempDir
     Path tempDir;
 
     @Test
-    void invalidAndRecognizedInactiveModesFailBeforeOutputSideEffects() throws Exception {
+    void invalidAndFullPhiloxModesFailBeforeOutputSideEffects() throws Exception {
         Path config = writeTinyConfig(tempDir.resolve("tiny.properties"));
 
         assertRejectedWithoutTouchingExistingOutput(config, "not-a-mode", "invalid");
         assertRejectedWithoutTouchingExistingOutput(
-                config, RngMode.PHILOX_HOUSEHOLD.propertyValue(), "inactive");
-        assertRejectedWithoutTouchingExistingOutput(
                 config, RngMode.PHILOX.propertyValue(), "inactive-full");
         assertRejectedWithoutCreatingOutput(config, "not-a-mode", "invalid-absent");
         assertRejectedWithoutCreatingOutput(
-                config, RngMode.PHILOX_HOUSEHOLD.propertyValue(), "inactive-absent");
-        assertRejectedWithoutCreatingOutput(
                 config, RngMode.PHILOX.propertyValue(), "inactive-full-absent");
+    }
+
+    @Test
+    void tinyHybridRunIsActivatedAndReportsItsResolvedMetadata() throws Exception {
+        Path config = writeTinyConfig(tempDir.resolve("hybrid.properties"));
+        Path output = tempDir.resolve("hybrid-output");
+        ProcessResult result = runModel(
+                config, output, RngMode.PHILOX_HOUSEHOLD.propertyValue());
+
+        assertEquals(0, result.exitCode, () -> "Child output:\n" + result.output);
+        assertEquals(List.of(EXPECTED_HYBRID_METADATA), result.output.lines()
+                .filter(line -> line.startsWith("RNG_METADATA "))
+                .collect(Collectors.toList()));
+        try (Stream<Path> files = Files.list(output)) {
+            assertEquals(Set.of("hybrid.properties", "Output-run1.csv"), files
+                    .map(path -> path.getFileName().toString())
+                    .collect(Collectors.toSet()));
+        }
     }
 
     @Test

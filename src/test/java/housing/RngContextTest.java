@@ -114,6 +114,58 @@ class RngContextTest {
                 () -> service.householdLoopContext(0, -1));
     }
 
+    @Test
+    void addressedModesEnforceTheVersionOneSimulationLimitBeforeContextUse() {
+        int lastValid = RandomAddressV1.MAX_UNSIGNED_16;
+        int firstInvalid = lastValid + 1;
+
+        for (RngMode mode : new RngMode[] {
+                RngMode.PHILOX_HOUSEHOLD, RngMode.PHILOX }) {
+            RandomService service = RngFactory.create(1, mode);
+            RngContext context = service.householdLoopContext(lastValid, 0);
+
+            assertEquals(lastValid, context.simulation(), mode.name());
+            assertThrows(IllegalArgumentException.class,
+                    () -> service.householdLoopContext(firstInvalid, 0), mode.name());
+        }
+    }
+
+    @Test
+    void mersenneRetainsLegacySimulationRangeWhileRejectingNegativeIdentities() {
+        RandomService service = RngFactory.create(1, RngMode.MERSENNE);
+        int beyondAddressV1 = RandomAddressV1.MAX_UNSIGNED_16 + 1;
+
+        assertEquals(beyondAddressV1,
+                service.householdLoopContext(beyondAddressV1, 0).simulation());
+        assertEquals(RandomAddressV1.MAX_REPORTING_SIMULATION,
+                service.simulationIndex(RandomAddressV1.MAX_REPORTING_SIMULATION + 1));
+        assertThrows(IllegalArgumentException.class,
+                () -> service.householdLoopContext(-1, 0));
+        assertThrows(IllegalArgumentException.class, () -> service.simulationIndex(0));
+    }
+
+    @Test
+    void reportingSimulationBoundaryIsModeDependent() {
+        int lastValidReporting = RandomAddressV1.MAX_REPORTING_SIMULATION;
+        int firstInvalidReporting = lastValidReporting + 1;
+
+        assertEquals(RandomAddressV1.MAX_UNSIGNED_16,
+                RngFactory.create(1, RngMode.PHILOX_HOUSEHOLD)
+                        .simulationIndex(lastValidReporting));
+        assertEquals(RandomAddressV1.MAX_UNSIGNED_16,
+                RngFactory.create(1, RngMode.PHILOX)
+                        .simulationIndex(lastValidReporting));
+        assertThrows(IllegalArgumentException.class,
+                () -> RngFactory.create(1, RngMode.PHILOX_HOUSEHOLD)
+                        .simulationIndex(firstInvalidReporting));
+        assertThrows(IllegalArgumentException.class,
+                () -> RngFactory.create(1, RngMode.PHILOX)
+                        .simulationIndex(firstInvalidReporting));
+        assertEquals(RandomAddressV1.MAX_REPORTING_SIMULATION,
+                RngFactory.create(1, RngMode.MERSENNE)
+                        .simulationIndex(firstInvalidReporting));
+    }
+
     private static void assertRawEquals(double expected, double actual) {
         assertEquals(Double.doubleToRawLongBits(expected), Double.doubleToRawLongBits(actual));
     }

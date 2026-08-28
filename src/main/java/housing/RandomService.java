@@ -55,6 +55,18 @@ final class RandomService {
         return context(RngOrigin.RENT_CLEARING, simulation, timeStep);
     }
 
+    /** Converts the model's one-based reporting number under this mode's address policy. */
+    int simulationIndex(int reportingSimulation) {
+        if (mode == RngMode.MERSENNE) {
+            if (reportingSimulation < 1) {
+                throw new IllegalArgumentException(
+                        "reporting simulation must be positive: " + reportingSimulation);
+            }
+            return reportingSimulation - 1;
+        }
+        return RandomAddressV1.fromReportingSimulation(reportingSimulation);
+    }
+
     void reseedLegacy(int seed) {
         requireLegacy().setSeed(seed);
     }
@@ -178,7 +190,13 @@ final class RandomService {
                 int timeStep) {
             this.owner = Objects.requireNonNull(owner, "owner");
             this.origin = Objects.requireNonNull(origin, "origin");
-            RandomAddressV1.counter0(simulation);
+            if (simulation < 0) {
+                throw new IllegalArgumentException(
+                        "simulation must be non-negative: " + simulation);
+            }
+            if (owner.mode != RngMode.MERSENNE) {
+                RandomAddressV1.counter0(simulation);
+            }
             RandomAddressV1.counter1(timeStep);
             this.simulation = simulation;
             this.timeStep = timeStep;

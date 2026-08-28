@@ -44,23 +44,23 @@ enum RandomEvent {
 
     HH_DESIRED_PURCHASE(0x1001, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.NORMAL)),
     HH_DESIRED_RENT(0x1002, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.NORMAL)),
     RENT_OR_BUY(0x1003, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM)),
     BTL_BUY(0x1004, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM)),
     BTL_DOWNPAYMENT(0x1005, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.NORMAL)),
     HH_ALT_DESIRED_PURCHASE(0x1006, EntityKind.HOUSEHOLD,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
@@ -73,30 +73,30 @@ enum RandomEvent {
 
     HOME_SELL(0x2001, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM)),
     BTL_SELL(0x2002, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.SINGLE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM)),
     SALE_REPRICE(0x2003, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.FIXED_TWO,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM, RngOperation.NORMAL)),
     RENT_REPRICE(0x2004, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP), SubcounterPolicy.FIXED_TWO,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.UNIFORM, RngOperation.NORMAL)),
     SALE_LIST_MARKUP(0x2005, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP, RngOrigin.DEMOGRAPHICS,
                     RngOrigin.CONSTRUCTION), SubcounterPolicy.LISTING_EPISODE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.EMPIRICAL_PDF)),
     RENT_LIST_MARKUP(0x2006, EntityKind.HOUSE,
             origins(RngOrigin.HOUSEHOLD_LOOP, RngOrigin.SALE_CLEARING,
                     RngOrigin.DEMOGRAPHICS, RngOrigin.CONSTRUCTION),
             SubcounterPolicy.LISTING_EPISODE,
-            philoxHousehold(),
+            philoxHousehold(RngOrigin.HOUSEHOLD_LOOP),
             operations(RngOperation.EMPIRICAL_PDF)),
 
     SALE_MARKET_BID_UP(0x3001, EntityKind.HOUSE,
@@ -277,9 +277,9 @@ enum RandomEvent {
     /**
      * Names the origins of this event already routed to Philox under {@code philox-household}.
      *
-     * <p>An empty list means every valid origin of the event still routes Mersenne. Step 9 migrates
-     * a single {@code (origin, event)} row by naming that origin here, which leaves the same event
-     * reached from any other phase untouched.</p>
+     * <p>An empty list means every valid origin of the event routes Mersenne in the hybrid. Naming
+     * an approved {@code (origin, event)} row here routes only that row to Philox, leaving the same
+     * event reached from any other phase untouched.</p>
      */
     private static Set<RngOrigin> philoxHousehold(RngOrigin... origins) {
         return origins(origins);

@@ -140,20 +140,25 @@ class RngFactoryTest {
 
     @Test
     void reseedingPreservesCommonsMersenneAndGaussianCacheSemantics() {
-        for (RngMode mode : new RngMode[] { RngMode.MERSENNE, RngMode.PHILOX_HOUSEHOLD }) {
-            RandomService service = RngFactory.create(41, mode);
-            RngContext context = service.householdLoopContext(0, 0);
-            House house = new House(0);
-            context.normal(house, RandomEvent.SALE_REPRICE, 1);
+        RandomService service = RngFactory.create(41, RngMode.MERSENNE);
+        RngContext context = service.householdLoopContext(0, 0);
+        House house = new House(0);
+        context.normal(house, RandomEvent.SALE_REPRICE, 1);
 
-            service.reseedLegacy(73);
+        service.reseedLegacy(73);
 
-            MersenneTwister expected = new MersenneTwister(73);
-            assertRawEquals(expected.nextGaussian(),
-                    context.normal(house, RandomEvent.SALE_REPRICE, 1));
-            assertRawEquals(expected.nextDouble(),
-                    context.uniform(house, RandomEvent.SALE_REPRICE, 0));
-        }
+        MersenneTwister expected = new MersenneTwister(73);
+        assertRawEquals(expected.nextGaussian(),
+                context.normal(house, RandomEvent.SALE_REPRICE, 1));
+        assertRawEquals(expected.nextDouble(),
+                context.uniform(house, RandomEvent.SALE_REPRICE, 0));
+
+        RandomService hybrid = RngFactory.create(41, RngMode.PHILOX_HOUSEHOLD);
+        RngContext saleClearing = hybrid.saleClearingContext(0, 0);
+        hybrid.reseedLegacy(73);
+        expected = new MersenneTwister(73);
+        assertEquals(expected.nextInt(37), saleClearing.boundedInt(
+                house, RandomEvent.SALE_MARKET_TIE_BREAK, 37));
     }
 
     @Test
@@ -175,13 +180,10 @@ class RngFactoryTest {
     }
 
     @Test
-    void onlyMersenneIsActivatedForTheModelBeforeMigrationStepsLand() {
+    void hybridModelModeIsActiveWhileFullPhiloxRetainsTheStepTwelveBarrier() {
         assertDoesNotThrow(() -> RngFactory.create(1, RngMode.MERSENNE).requireModelSupport());
-
-        IllegalStateException household = assertThrows(IllegalStateException.class,
-                () -> RngFactory.create(1, RngMode.PHILOX_HOUSEHOLD).requireModelSupport());
-        assertEquals("RNG mode 'philox-household' is not active until the household event origins "
-                + "are migrated in Step 9", household.getMessage());
+        assertDoesNotThrow(() -> RngFactory.create(
+                1, RngMode.PHILOX_HOUSEHOLD).requireModelSupport());
 
         IllegalStateException philox = assertThrows(IllegalStateException.class,
                 () -> RngFactory.create(1, RngMode.PHILOX).requireModelSupport());
@@ -233,8 +235,9 @@ class RngFactoryTest {
         assertEquals(configuredSeed, RandomAddressV1.key0(service.metadata().masterSeed()));
         assertEquals(0, RandomAddressV1.key1(service.metadata().masterSeed()));
 
-        assertRawEquals(new MersenneTwister(configuredSeed).nextDouble(),
-                service.householdLoopContext(0, 0).uniform(house, RandomEvent.HOME_SELL));
+        assertEquals(new MersenneTwister(configuredSeed).nextInt(37),
+                service.saleClearingContext(0, 0).boundedInt(
+                        house, RandomEvent.SALE_MARKET_TIE_BREAK, 37));
     }
 
     private static void assertRawEquals(double expected, double actual) {

@@ -204,7 +204,7 @@ public class Model {
     }
 
     private static void modelStep() {
-        int simulation = RandomAddressV1.fromReportingSimulation(nSimulation);
+        int simulation = randomService.simulationIndex(nSimulation);
         RngContext demographicsContext = randomService.demographicsContext(simulation, t);
         RngContext constructionContext = randomService.constructionContext(simulation, t);
         RngContext householdLoopContext = randomService.householdLoopContext(simulation, t);

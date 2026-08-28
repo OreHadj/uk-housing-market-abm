@@ -1,6 +1,8 @@
 package housing;
 
 import java.nio.file.Path;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -87,5 +89,24 @@ class EntityIdReservationTest {
         House.reserveId();
         assertThrows(IllegalStateException.class, House::reserveId);
         House.resetIdPoolForNewSimulation();
+    }
+
+    @Test
+    void rngIdentityFieldsArePublicFinalAndRetainTheirAllocatedValues() throws Exception {
+        Field householdId = Household.class.getField("id");
+        Field houseId = House.class.getField("id");
+        RngContext context = randomService.demographicsContext(0, 0);
+        Household household = new Household(context, 38.0);
+        House house = new House(4);
+
+        assertEquals(int.class, householdId.getType());
+        assertEquals(int.class, houseId.getType());
+        assertEquals(Modifier.PUBLIC | Modifier.FINAL,
+                householdId.getModifiers() & (Modifier.PUBLIC | Modifier.FINAL));
+        assertEquals(Modifier.PUBLIC | Modifier.FINAL,
+                houseId.getModifiers() & (Modifier.PUBLIC | Modifier.FINAL));
+        assertEquals(household.id, householdId.getInt(household));
+        assertEquals(house.id, houseId.getInt(house));
+        assertEquals(0, house.compareTo(house));
     }
 }

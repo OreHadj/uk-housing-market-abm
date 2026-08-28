@@ -63,6 +63,24 @@ class BTLFeatureToggleTest {
     }
 
     @Test
+    void hybridBTLDownPaymentUsesTheHouseholdAddressWhenToggleIsFalse() throws Exception {
+        Model.config.enableBTLDownpaymentLognormal = false;
+        Model.config.DOWNPAYMENT_BTL_MEAN = 0.40;
+        Model.config.DOWNPAYMENT_BTL_EPSILON = 0.15;
+        Household household = new Household(creationContext, 35.0);
+        setField(household, "isFirstTimeBuyer", false);
+        setField(household, "bankBalance", 100000.0);
+        RandomService hybrid = RngFactory.create(123, RngMode.PHILOX_HOUSEHOLD);
+        RngContext hybridContext = hybrid.householdLoopContext(0, 0);
+        double normal = new PhiloxAddressedRandom().normal(
+                123L, 0, 0, household.id, RandomEvent.BTL_DOWNPAYMENT.id(), 0);
+        double expected = 100000.0 * Math.max(0.0, 0.40 + 0.15 * normal);
+
+        assertEquals(expected, household.behaviour.decideDownPayment(
+                hybridContext, household, 100000.0, false), 0.0);
+    }
+
+    @Test
     void lognormalBTLDownPaymentUsesHpiScaledDistributionWhenToggleIsTrue() throws Exception {
         Model.config.enableBTLDownpaymentLognormal = true;
         Model.config.DOWNPAYMENT_BTL_SCALE = Math.log(0.25);
