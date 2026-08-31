@@ -239,12 +239,22 @@ def resolve_maven_bin(repo_root: Path, maven_bin: str | None = None) -> str:
     return maven_bin if maven_bin else default_maven_bin(repo_root)
 
 
-def ensure_project_compiled(repo_root: Path, maven_bin: str | None = None) -> None:
-    """Compile the Java project once before launching sweeps."""
+def ensure_project_compiled(
+    repo_root: Path,
+    maven_bin: str | None = None,
+    *,
+    clean: bool = False,
+) -> None:
+    """Compile the Java project once before launching sweeps.
+
+    Provenance-sensitive callers can request a clean build so deleted or renamed classes cannot
+    survive in ``target/classes`` and execute without a corresponding source input.
+    """
 
     resolved_maven_bin = resolve_maven_bin(repo_root, maven_bin)
+    goals = ["clean", "compile"] if clean else ["compile"]
     subprocess.run(
-        [resolved_maven_bin, "-q", "compile"],
+        [resolved_maven_bin, "-q", *goals],
         cwd=repo_root,
         check=True,
         stdout=subprocess.PIPE,

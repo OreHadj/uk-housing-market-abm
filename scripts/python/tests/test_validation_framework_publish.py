@@ -12,13 +12,15 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from scripts.python.validation.model.runner import (
     build_validation_summary,
+    load_reused_validation_results,
     publish_reference_validation_only,
     resolve_was_data_root,
     run_reference_validation_for_version,
+    run_snapshot_local_validation,
     run_validation_for_version,
     run_validation_seed,
 )
@@ -301,6 +303,33 @@ class TestValidationFrameworkPublish(unittest.TestCase):
             self.assertEqual(extract_mock.call_count, 8)
             self.assertNotIn("core_mortgageApprovals", extract_mock.call_args_list[0].kwargs["metric_ids"])
 
+    def test_provenance_sensitive_reuse_can_ignore_the_derived_seed_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            seed_dir = output_dir / "seed-1"
+            seed_dir.mkdir()
+            (output_dir / "validation_seed_results.csv").write_text(
+                f"seed,metricId,value,outputDir\n1,core_mortgageApprovals,999.0,{seed_dir}\n",
+                encoding="utf-8",
+            )
+            profile = resolve_validation_profile("v5o3")
+
+            with patch(
+                "scripts.python.validation.model.runner._extract_seed_metrics",
+                return_value={metric_id: 1.0 for metric_id in profile.targets_by_id},
+            ) as extract_mock:
+                results = load_reused_validation_results(
+                    output_dir=output_dir,
+                    seeds=[1],
+                    was_data_root=output_dir,
+                    validation_profile=profile,
+                    use_cached_seed_results=False,
+                )
+
+            self.assertEqual(extract_mock.call_count, 1)
+            self.assertIn("core_mortgageApprovals", extract_mock.call_args.kwargs["metric_ids"])
+            self.assertEqual(results[0]["metrics"]["core_mortgageApprovals"], 1.0)
+
     def test_run_validation_for_version_requires_all_eight_canonical_seeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             repo_root = Path(tmp_dir)
@@ -364,6 +393,189 @@ class TestValidationFrameworkPublish(unittest.TestCase):
             self.assertNotIn("maven=", log_output)
             self.assertNotIn("config=", log_output)
             self.assertNotIn("output_dir=", log_output)
+
+    def test_run_validation_seed_pins_and_verifies_runtime_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            version_dir = repo_root / "input-data-versions" / "v-test"
+            version_dir.mkdir(parents=True)
+            (version_dir / "config.properties").write_text("SEED = 1\n", encoding="utf-8")
+            output_dir = repo_root / "tmp" / "validation" / "v-test"
+            process_output = (
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=3 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            )
+
+            with (
+                patch(
+                    "scripts.python.validation.model.runner.build_snapshot_local_config_text",
+                    return_value="SEED = 3\n",
+                ),
+                patch(
+                    "scripts.python.validation.model.runner.subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        args=["mvn"], returncode=0, stdout=process_output
+                    ),
+                ) as run_mock,
+                patch(
+                    "scripts.python.validation.model.runner._extract_seed_metrics",
+                    return_value=self._synthetic_metrics(),
+                ) as extract_mock,
+            ):
+                result = run_validation_seed(
+                    repo_root=repo_root,
+                    version="v-test",
+                    seed=3,
+                    output_dir=output_dir,
+                    maven_bin="mvn",
+                    was_data_root=repo_root,
+                    validation_profile=resolve_validation_profile("v-test"),
+                    order_book="array",
+                    rng_mode="mersenne",
+                )
+
+            command = run_mock.call_args.args[0]
+            self.assertEqual(
+                command[:5],
+                [
+                    "mvn",
+                    "-q",
+                    "-Dhousing.orderbook=array",
+                    "-Dhousing.rng=mersenne",
+                    "exec:java",
+                ],
+            )
+            self.assertEqual(
+                result["runtimeMetadata"],
+                {
+                    "orderBook": "array",
+                    "rngMode": "mersenne",
+                    "rngAlgorithm": "MersenneTwister",
+                    "rngAddressVersion": "none",
+                },
+            )
+            extract_mock.assert_called_once()
+
+    def test_run_validation_seed_rejects_unverified_runtime_before_metric_extraction(self) -> None:
+        cases = {
+            "missing": "ordinary model output\n",
+            "duplicate": (
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=3 rngMode=mersenne\n"
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=3 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            ),
+            "mismatch": (
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=3 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=tree\n"
+            ),
+            "inconsistent-rng-tuple": (
+                "RNG_METADATA rngAlgorithm=Philox4x32-10 rngAddressVersion=1 "
+                "masterSeed=3 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            ),
+            "wrong-rng-mode": (
+                "RNG_METADATA rngAlgorithm=MersenneTwister+Philox4x32-10 "
+                "rngAddressVersion=1 masterSeed=3 rngMode=philox-household\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            ),
+            "wrong-master-seed": (
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=4 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            ),
+            "duplicate-model-metadata": (
+                "RNG_METADATA rngAlgorithm=MersenneTwister rngAddressVersion=none "
+                "masterSeed=3 rngMode=mersenne\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+                "MODEL_RUNTIME_METADATA orderBook=array\n"
+            ),
+        }
+        for label, process_output in cases.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as tmp_dir:
+                repo_root = Path(tmp_dir)
+                version_dir = repo_root / "input-data-versions" / "v-test"
+                version_dir.mkdir(parents=True)
+                (version_dir / "config.properties").write_text("SEED = 1\n", encoding="utf-8")
+                extract_mock = Mock(return_value=self._synthetic_metrics())
+                with (
+                    patch(
+                        "scripts.python.validation.model.runner.build_snapshot_local_config_text",
+                        return_value="SEED = 3\n",
+                    ),
+                    patch(
+                        "scripts.python.validation.model.runner.subprocess.run",
+                        return_value=subprocess.CompletedProcess(
+                            args=["mvn"], returncode=0, stdout=process_output
+                        ),
+                    ),
+                    patch(
+                        "scripts.python.validation.model.runner._extract_seed_metrics",
+                        extract_mock,
+                    ),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "runtime metadata"):
+                        run_validation_seed(
+                            repo_root=repo_root,
+                            version="v-test",
+                            seed=3,
+                            output_dir=repo_root / "tmp" / "validation",
+                            maven_bin="mvn",
+                            was_data_root=repo_root,
+                            validation_profile=resolve_validation_profile("v-test"),
+                            order_book="array",
+                            rng_mode="mersenne",
+                        )
+                extract_mock.assert_not_called()
+
+    def test_snapshot_runner_propagates_runtime_settings_in_serial_and_parallel_modes(self) -> None:
+        for workers in (1, 2):
+            with self.subTest(workers=workers), tempfile.TemporaryDirectory() as tmp_dir:
+                repo_root = Path(tmp_dir)
+                version_dir = repo_root / "input-data-versions" / "v-test"
+                version_dir.mkdir(parents=True)
+                (version_dir / "config.properties").write_text("SEED = 1\n", encoding="utf-8")
+                expected_generation_git = {"commit": "a" * 40, "tree": "b" * 40}
+
+                def fake_seed(
+                    *,
+                    seed: int,
+                    order_book: str,
+                    rng_mode: str,
+                    generation_git: dict[str, object],
+                    **_: object,
+                ) -> dict:
+                    self.assertEqual(order_book, "array")
+                    self.assertEqual(rng_mode, "mersenne")
+                    self.assertEqual(generation_git, expected_generation_git)
+                    return {"seed": seed, "metrics": {}}
+
+                with (
+                    patch("scripts.python.validation.model.runner.ensure_project_compiled"),
+                    patch(
+                        "scripts.python.validation.model.runner.run_validation_seed",
+                        side_effect=fake_seed,
+                    ) as seed_mock,
+                ):
+                    results = run_snapshot_local_validation(
+                        repo_root=repo_root,
+                        version="v-test",
+                        seeds=[2, 1],
+                        output_dir=repo_root / "output",
+                        maven_bin="mvn",
+                        was_data_root=repo_root,
+                        validation_profile=resolve_validation_profile("v-test"),
+                        workers=workers,
+                        order_book="array",
+                        rng_mode="mersenne",
+                        generation_git=expected_generation_git,
+                    )
+
+                self.assertEqual(seed_mock.call_count, 2)
+                self.assertEqual([result["seed"] for result in results], [2, 1])
 
     def test_run_validation_seed_supports_explicit_long_run_window_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

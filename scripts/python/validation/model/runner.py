@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import json
 import shutil
 import subprocess
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -22,6 +24,7 @@ from scripts.python.helpers.common.abm_policy_sweep import (
     resolve_maven_bin,
 )
 from scripts.python.validation.model.extractors import (
+    HOUSEHOLD_DISTRIBUTION_SPECS,
     extract_core_indicator_mean,
     extract_household_metric_from_results,
     extract_household_share_from_results,
@@ -67,6 +70,602 @@ VALIDATION_RECORDING_OVERRIDES = {
     "recordAge": "false",
     "recordSavingRate": "false",
 }
+
+SUPPORTED_VALIDATION_ORDER_BOOKS = frozenset({"array", "tree"})
+SUPPORTED_VALIDATION_RNG_MODES = frozenset({"mersenne", "philox-household"})
+EXPECTED_VALIDATION_RNG_METADATA = {
+    "mersenne": {
+        "rngAlgorithm": "MersenneTwister",
+        "rngAddressVersion": "none",
+    },
+    "philox-household": {
+        "rngAlgorithm": "MersenneTwister+Philox4x32-10",
+        "rngAddressVersion": "1",
+    },
+}
+
+VALIDATION_GENERATION_PROVENANCE_FILENAME = "generation-provenance.json"
+VALIDATION_GENERATION_PROVENANCE_SCHEMA_VERSION = 1
+VALIDATION_GENERATION_PROVENANCE_ARTIFACT_TYPE = (
+    "validation-seed-generation-provenance"
+)
+LEGACY_REUSED_OUTPUT_GENERATION_NOTE = "unknown - reused pre-provenance output"
+
+
+def _validated_runtime_request(
+    *,
+    order_book: str | None,
+    rng_mode: str | None,
+) -> tuple[str, str] | None:
+    """Validate an optional pair of model runtime settings.
+
+    Supplying the settings as a pair keeps existing validation callers unchanged while allowing
+    provenance-sensitive experiments to pin both settings and verify the values reported by the
+    model process.
+    """
+
+    if order_book is None and rng_mode is None:
+        return None
+    if order_book is None or rng_mode is None:
+        raise ValueError("order_book and rng_mode must be supplied together")
+    if order_book not in SUPPORTED_VALIDATION_ORDER_BOOKS:
+        expected = ", ".join(sorted(SUPPORTED_VALIDATION_ORDER_BOOKS))
+        raise ValueError(f"Unsupported order_book '{order_book}' (expected one of: {expected})")
+    if rng_mode not in SUPPORTED_VALIDATION_RNG_MODES:
+        expected = ", ".join(sorted(SUPPORTED_VALIDATION_RNG_MODES))
+        raise ValueError(f"Unsupported rng_mode '{rng_mode}' (expected one of: {expected})")
+    return order_book, rng_mode
+
+
+def _parse_single_metadata_line(
+    output: str,
+    *,
+    prefix: str,
+    version: str,
+    seed: int,
+) -> dict[str, str]:
+    lines = [
+        line.strip()
+        for line in output.splitlines()
+        if line.strip().startswith(f"{prefix} ")
+    ]
+    if len(lines) != 1:
+        raise RuntimeError(
+            "Model validation runtime metadata check failed.\n"
+            f"version={version} seed={seed}\n"
+            f"Expected exactly one {prefix} line, found {len(lines)}.\n"
+            f"Output tail:\n{output[-3000:]}"
+        )
+
+    fields: dict[str, str] = {}
+    for token in lines[0][len(prefix) + 1 :].split():
+        if "=" not in token:
+            raise RuntimeError(
+                f"Malformed {prefix} token for version={version} seed={seed}: {token!r}"
+            )
+        key, value = token.split("=", 1)
+        if not key or not value or key in fields:
+            raise RuntimeError(
+                f"Malformed {prefix} metadata for version={version} seed={seed}: {lines[0]}"
+            )
+        fields[key] = value
+    return fields
+
+
+def _verify_runtime_metadata(
+    output: str,
+    *,
+    version: str,
+    seed: int,
+    expected_order_book: str,
+    expected_rng_mode: str,
+) -> dict[str, str]:
+    rng_fields = _parse_single_metadata_line(
+        output,
+        prefix="RNG_METADATA",
+        version=version,
+        seed=seed,
+    )
+    model_fields = _parse_single_metadata_line(
+        output,
+        prefix="MODEL_RUNTIME_METADATA",
+        version=version,
+        seed=seed,
+    )
+
+    required_rng_fields = {"rngAlgorithm", "rngAddressVersion", "masterSeed", "rngMode"}
+    missing_rng_fields = sorted(required_rng_fields - rng_fields.keys())
+    if missing_rng_fields:
+        raise RuntimeError(
+            f"RNG_METADATA missing {', '.join(missing_rng_fields)} for "
+            f"version={version} seed={seed}"
+        )
+    if "orderBook" not in model_fields:
+        raise RuntimeError(
+            f"MODEL_RUNTIME_METADATA missing orderBook for version={version} seed={seed}"
+        )
+
+    mismatches: list[str] = []
+    if model_fields["orderBook"] != expected_order_book:
+        mismatches.append(
+            f"orderBook requested={expected_order_book} observed={model_fields['orderBook']}"
+        )
+    if rng_fields["rngMode"] != expected_rng_mode:
+        mismatches.append(
+            f"rngMode requested={expected_rng_mode} observed={rng_fields['rngMode']}"
+        )
+    expected_rng_metadata = EXPECTED_VALIDATION_RNG_METADATA[expected_rng_mode]
+    for field_name, expected_value in expected_rng_metadata.items():
+        if rng_fields[field_name] != expected_value:
+            mismatches.append(
+                f"{field_name} requested={expected_value} observed={rng_fields[field_name]}"
+            )
+    if rng_fields["masterSeed"] != str(seed):
+        mismatches.append(f"masterSeed requested={seed} observed={rng_fields['masterSeed']}")
+    if mismatches:
+        raise RuntimeError(
+            "Model validation runtime metadata mismatch.\n"
+            f"version={version} seed={seed}\n"
+            + "\n".join(mismatches)
+        )
+
+    return {
+        "orderBook": model_fields["orderBook"],
+        "rngMode": rng_fields["rngMode"],
+        "rngAlgorithm": rng_fields["rngAlgorithm"],
+        "rngAddressVersion": rng_fields["rngAddressVersion"],
+    }
+
+
+def _json_object_copy(value: Mapping[str, object], *, label: str) -> dict[str, object]:
+    try:
+        encoded = json.dumps(value, sort_keys=True, allow_nan=False)
+        copied = json.loads(encoded)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} must be JSON-serializable: {error}") from error
+    if not isinstance(copied, dict):
+        raise ValueError(f"{label} must be a mapping")
+    return copied
+
+
+def _normalized_generation_git(
+    generation_git: Mapping[str, object],
+) -> dict[str, object]:
+    normalized = _json_object_copy(generation_git, label="generation_git")
+    for field_name in ("commit", "tree"):
+        value = normalized.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"generation_git.{field_name} must be a non-empty string")
+    return normalized
+
+
+def _sha256_regular_file(path: Path, *, label: str) -> tuple[int, str]:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"{label} is missing or is not a regular file: {path}")
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    after = path.stat()
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    if before_identity != after_identity:
+        raise RuntimeError(f"{label} changed while its SHA-256 was being computed: {path}")
+    return after.st_size, digest.hexdigest()
+
+
+def _scored_output_file_names(validation_profile: ValidationProfile) -> tuple[str, ...]:
+    file_names: set[str] = set()
+    for metric in validation_profile.targets_by_id.values():
+        file_name = metric.file_name
+        if file_name is None and metric.kind == "household_jsd":
+            spec = HOUSEHOLD_DISTRIBUTION_SPECS.get(metric.metric_id)
+            if spec is not None:
+                file_name = spec.results_file_name
+        if not file_name:
+            raise RuntimeError(
+                f"Missing scored output file mapping for validation metric {metric.metric_id}"
+            )
+        pure_path = PurePosixPath(file_name)
+        if pure_path.as_posix() != file_name or len(pure_path.parts) != 1:
+            raise RuntimeError(
+                f"Scored output file mapping must be one canonical file name: {file_name!r}"
+            )
+        file_names.add(file_name)
+    return tuple(sorted(file_names))
+
+
+def _write_seed_generation_provenance(
+    *,
+    repo_root: Path,
+    version: str,
+    seed: int,
+    output_dir: Path,
+    seed_output_dir: Path,
+    version_config_path: Path,
+    materialized_config_path: Path,
+    validation_profile: ValidationProfile,
+    runtime_metadata: Mapping[str, object],
+    generation_git: Mapping[str, object],
+) -> dict[str, object]:
+    normalized_git = _normalized_generation_git(generation_git)
+    normalized_runtime = _json_object_copy(
+        runtime_metadata,
+        label="observed runtime metadata",
+    )
+    version_config_size, version_config_sha256 = _sha256_regular_file(
+        version_config_path,
+        label="Version config",
+    )
+    materialized_size, materialized_sha256 = _sha256_regular_file(
+        materialized_config_path,
+        label="Materialized validation config",
+    )
+    try:
+        version_config_identifier = version_config_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        version_config_identifier = str(version_config_path.resolve())
+    materialized_identifier = materialized_config_path.relative_to(output_dir).as_posix()
+
+    output_rows: list[dict[str, object]] = []
+    for file_name in _scored_output_file_names(validation_profile):
+        size_bytes, digest = _sha256_regular_file(
+            seed_output_dir / file_name,
+            label=f"Scored output for seed {seed}",
+        )
+        output_rows.append(
+            {
+                "path": file_name,
+                "size_bytes": size_bytes,
+                "sha256": digest,
+            }
+        )
+
+    provenance: dict[str, object] = {
+        "schema_version": VALIDATION_GENERATION_PROVENANCE_SCHEMA_VERSION,
+        "artifact_type": VALIDATION_GENERATION_PROVENANCE_ARTIFACT_TYPE,
+        "seed": seed,
+        "version": version,
+        "generation_git": normalized_git,
+        "config": {
+            "version_config": version_config_identifier,
+            "version_config_size_bytes": version_config_size,
+            "version_config_sha256": version_config_sha256,
+            "materialized_config": materialized_identifier,
+            "materialized_config_size_bytes": materialized_size,
+            "materialized_config_sha256": materialized_sha256,
+            "validation_profile": validation_profile.profile_id,
+        },
+        # These values came from the model's MODEL_RUNTIME_METADATA and RNG_METADATA lines
+        # and were checked against the requested JVM settings before this file was written.
+        "runtime_metadata": normalized_runtime,
+        "scored_outputs": output_rows,
+    }
+
+    provenance_path = seed_output_dir / VALIDATION_GENERATION_PROVENANCE_FILENAME
+    temporary_path = seed_output_dir / f".{VALIDATION_GENERATION_PROVENANCE_FILENAME}.tmp"
+    try:
+        temporary_path.write_text(
+            json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary_path.replace(provenance_path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return provenance
+
+
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _read_seed_generation_provenance(path: Path, *, seed: int) -> dict[str, object]:
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError(f"Seed provenance is not a regular file for seed {seed}: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Could not read seed provenance for seed {seed}: {error}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Seed provenance must be a JSON object for seed {seed}: {path}")
+    return value
+
+
+def _checked_provenance_file(
+    *,
+    root: Path,
+    relative: object,
+    label: str,
+    direct_child: bool = False,
+) -> tuple[Path, str]:
+    if not isinstance(relative, str) or not relative:
+        raise RuntimeError(f"{label} has an invalid recorded path: {relative!r}")
+    pure_path = PurePosixPath(relative)
+    if (
+        pure_path.is_absolute()
+        or pure_path.as_posix() != relative
+        or any(part in {"", ".", ".."} for part in pure_path.parts)
+        or (direct_child and len(pure_path.parts) != 1)
+    ):
+        raise RuntimeError(f"{label} has a non-canonical recorded path: {relative!r}")
+    path = root.joinpath(*pure_path.parts)
+    return path, relative
+
+
+def validate_reused_validation_provenance(
+    *,
+    output_dir: Path,
+    seeds: Sequence[int],
+    expected_version: str,
+    expected_order_book: str,
+    expected_rng_mode: str,
+    validation_profile: ValidationProfile,
+) -> dict[str, object]:
+    """Validate opt-in per-seed generation evidence before reused outputs are scored.
+
+    Campaigns created before this sidecar existed are deliberately grandfathered only when every
+    requested seed lacks it. A partial set is ambiguous and therefore refused. Normal validation
+    callers are unaffected because this check is invoked explicitly by provenance-sensitive
+    experiments rather than by :func:`load_reused_validation_results` itself.
+    """
+
+    runtime_request = _validated_runtime_request(
+        order_book=expected_order_book,
+        rng_mode=expected_rng_mode,
+    )
+    assert runtime_request is not None
+    normalized_seeds = [int(seed) for seed in seeds]
+    if len(set(normalized_seeds)) != len(normalized_seeds):
+        raise ValueError("seeds must not contain duplicates")
+
+    provenance_paths: dict[int, Path] = {}
+    missing_seeds: list[int] = []
+    for seed in normalized_seeds:
+        seed_dir = output_dir / f"seed-{seed}"
+        if seed_dir.is_symlink() or not seed_dir.is_dir():
+            raise RuntimeError(f"Missing existing validation output directory: {seed_dir}")
+        provenance_path = seed_dir / VALIDATION_GENERATION_PROVENANCE_FILENAME
+        if provenance_path.exists() or provenance_path.is_symlink():
+            provenance_paths[seed] = provenance_path
+        else:
+            missing_seeds.append(seed)
+
+    if not provenance_paths:
+        return {
+            "status": "unverified-legacy",
+            "generation_git": None,
+            "note": LEGACY_REUSED_OUTPUT_GENERATION_NOTE,
+            "baseline_eligible": False,
+            "runtime_metadata": None,
+            "provenance_files": [],
+        }
+    if missing_seeds:
+        raise RuntimeError(
+            "Seed generation provenance is incomplete: "
+            f"present for seeds {sorted(provenance_paths)}, "
+            f"absent for seeds {sorted(missing_seeds)}"
+        )
+
+    expected_output_files = set(_scored_output_file_names(validation_profile))
+    common_identity: str | None = None
+    common_git: dict[str, object] | None = None
+    common_runtime: dict[str, object] | None = None
+    relative_provenance_paths: list[str] = []
+    for seed in normalized_seeds:
+        provenance_path = provenance_paths[seed]
+        record = _read_seed_generation_provenance(provenance_path, seed=seed)
+        if record.get("schema_version") != VALIDATION_GENERATION_PROVENANCE_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Unsupported seed provenance schema for seed {seed}: "
+                f"{record.get('schema_version')!r}"
+            )
+        if record.get("artifact_type") != VALIDATION_GENERATION_PROVENANCE_ARTIFACT_TYPE:
+            raise RuntimeError(f"Unexpected seed provenance artifact type for seed {seed}")
+        if record.get("seed") != seed:
+            raise RuntimeError(
+                f"Seed provenance identity mismatch for seed-{seed}: "
+                f"recorded seed={record.get('seed')!r}"
+            )
+        if record.get("version") != expected_version:
+            raise RuntimeError(
+                f"Seed provenance version mismatch for seed-{seed}: "
+                f"requested={expected_version!r} recorded={record.get('version')!r}"
+            )
+
+        raw_git = record.get("generation_git")
+        if not isinstance(raw_git, Mapping):
+            raise RuntimeError(f"Seed provenance is missing generation_git for seed {seed}")
+        try:
+            generation_git = _normalized_generation_git(raw_git)
+        except ValueError as error:
+            raise RuntimeError(f"Invalid generation_git for seed {seed}: {error}") from error
+
+        raw_runtime = record.get("runtime_metadata")
+        if not isinstance(raw_runtime, Mapping):
+            raise RuntimeError(f"Seed provenance is missing runtime metadata for seed {seed}")
+        try:
+            runtime_metadata = _json_object_copy(
+                raw_runtime,
+                label=f"runtime metadata for seed {seed}",
+            )
+        except ValueError as error:
+            raise RuntimeError(f"Invalid runtime metadata for seed {seed}: {error}") from error
+        recorded_order_book = runtime_metadata.get("orderBook")
+        recorded_rng_mode = runtime_metadata.get("rngMode")
+        if recorded_order_book != expected_order_book:
+            raise RuntimeError(
+                f"Seed provenance order book mismatch for seed-{seed}: "
+                f"requested={expected_order_book!r} recorded={recorded_order_book!r}"
+            )
+        if recorded_rng_mode != expected_rng_mode:
+            raise RuntimeError(
+                f"Seed provenance RNG mode mismatch for seed-{seed}: "
+                f"requested={expected_rng_mode!r} recorded={recorded_rng_mode!r}"
+            )
+        expected_rng_metadata = EXPECTED_VALIDATION_RNG_METADATA[expected_rng_mode]
+        for field_name, expected_value in expected_rng_metadata.items():
+            if runtime_metadata.get(field_name) != expected_value:
+                raise RuntimeError(
+                    f"Seed provenance {field_name} mismatch for seed-{seed}: "
+                    f"expected={expected_value!r} recorded={runtime_metadata.get(field_name)!r}"
+                )
+
+        raw_config = record.get("config")
+        if not isinstance(raw_config, Mapping):
+            raise RuntimeError(f"Seed provenance is missing config identifiers for seed {seed}")
+        try:
+            config = _json_object_copy(raw_config, label=f"config identifiers for seed {seed}")
+        except ValueError as error:
+            raise RuntimeError(f"Invalid config identifiers for seed {seed}: {error}") from error
+        if config.get("validation_profile") != validation_profile.profile_id:
+            raise RuntimeError(
+                f"Seed provenance validation profile mismatch for seed-{seed}: "
+                f"requested={validation_profile.profile_id!r} "
+                f"recorded={config.get('validation_profile')!r}"
+            )
+        expected_materialized = f"configs/seed-{seed}.properties"
+        if config.get("materialized_config") != expected_materialized:
+            raise RuntimeError(
+                f"Seed provenance materialized config mismatch for seed-{seed}: "
+                f"expected={expected_materialized!r} "
+                f"recorded={config.get('materialized_config')!r}"
+            )
+        materialized_path, _ = _checked_provenance_file(
+            root=output_dir,
+            relative=config.get("materialized_config"),
+            label=f"Materialized config for seed {seed}",
+        )
+        observed_config_size, observed_config_sha256 = _sha256_regular_file(
+            materialized_path,
+            label=f"Materialized config for seed {seed}",
+        )
+        if (
+            config.get("materialized_config_size_bytes") != observed_config_size
+            or config.get("materialized_config_sha256") != observed_config_sha256
+        ):
+            raise RuntimeError(
+                f"Materialized config SHA-256 mismatch for seed-{seed}: "
+                f"expected size={config.get('materialized_config_size_bytes')!r} "
+                f"sha256={config.get('materialized_config_sha256')!r}, "
+                f"observed size={observed_config_size} sha256={observed_config_sha256}"
+            )
+        if not _is_sha256(config.get("version_config_sha256")):
+            raise RuntimeError(f"Invalid version config SHA-256 in seed provenance for seed {seed}")
+        version_config_size = config.get("version_config_size_bytes")
+        if (
+            not isinstance(version_config_size, int)
+            or isinstance(version_config_size, bool)
+            or version_config_size < 0
+        ):
+            raise RuntimeError(f"Invalid version config size in seed provenance for seed {seed}")
+        version_config_identifier = config.get("version_config")
+        if not isinstance(version_config_identifier, str) or not version_config_identifier:
+            raise RuntimeError(
+                f"Invalid version config identifier in seed provenance for seed {seed}"
+            )
+        expected_version_config_identifier = (
+            f"input-data-versions/{expected_version}/config.properties"
+        )
+        if version_config_identifier != expected_version_config_identifier:
+            raise RuntimeError(
+                f"Seed provenance version config identifier mismatch for seed-{seed}: "
+                f"expected={expected_version_config_identifier!r} "
+                f"recorded={version_config_identifier!r}"
+            )
+
+        raw_outputs = record.get("scored_outputs")
+        if not isinstance(raw_outputs, list) or not raw_outputs:
+            raise RuntimeError(f"Seed provenance has no scored output hashes for seed {seed}")
+        recorded_output_files: set[str] = set()
+        seed_dir = output_dir / f"seed-{seed}"
+        for row in raw_outputs:
+            if not isinstance(row, Mapping):
+                raise RuntimeError(f"Malformed scored output hash row for seed {seed}")
+            output_path, relative_output = _checked_provenance_file(
+                root=seed_dir,
+                relative=row.get("path"),
+                label=f"Scored output for seed {seed}",
+                direct_child=True,
+            )
+            if relative_output in recorded_output_files:
+                raise RuntimeError(
+                    f"Duplicate scored output hash for seed {seed}: {relative_output}"
+                )
+            recorded_output_files.add(relative_output)
+            expected_digest = row.get("sha256")
+            expected_size = row.get("size_bytes")
+            if not _is_sha256(expected_digest):
+                raise RuntimeError(
+                    f"Invalid scored output SHA-256 for seed {seed}: {relative_output}"
+                )
+            if (
+                not isinstance(expected_size, int)
+                or isinstance(expected_size, bool)
+                or expected_size < 0
+            ):
+                raise RuntimeError(
+                    f"Invalid scored output size for seed {seed}: {relative_output}"
+                )
+            observed_size, observed_digest = _sha256_regular_file(
+                output_path,
+                label=f"Scored output for seed {seed}",
+            )
+            if expected_size != observed_size or expected_digest != observed_digest:
+                raise RuntimeError(
+                    f"Scored output SHA-256 mismatch for seed-{seed}/{relative_output}: "
+                    f"expected size={expected_size} sha256={expected_digest}, "
+                    f"observed size={observed_size} sha256={observed_digest}"
+                )
+        missing_output_hashes = sorted(expected_output_files - recorded_output_files)
+        if missing_output_hashes:
+            raise RuntimeError(
+                f"Seed provenance does not hash every currently scored output for seed {seed}: "
+                + ", ".join(missing_output_hashes)
+            )
+
+        shared_config = {
+            "version_config": version_config_identifier,
+            "version_config_size_bytes": version_config_size,
+            "version_config_sha256": config["version_config_sha256"],
+            "validation_profile": config["validation_profile"],
+        }
+        identity = json.dumps(
+            {
+                "version": record["version"],
+                "generation_git": generation_git,
+                "config": shared_config,
+                "runtime_metadata": runtime_metadata,
+            },
+            sort_keys=True,
+            allow_nan=False,
+        )
+        if common_identity is None:
+            common_identity = identity
+            common_git = generation_git
+            common_runtime = runtime_metadata
+        elif identity != common_identity:
+            raise RuntimeError(
+                "Seed generation provenance files are inconsistent with each other: "
+                f"seed-{seed} differs from seed-{normalized_seeds[0]}"
+            )
+        relative_provenance_paths.append(
+            f"seed-{seed}/{VALIDATION_GENERATION_PROVENANCE_FILENAME}"
+        )
+
+    assert common_git is not None and common_runtime is not None
+    return {
+        "status": "verified",
+        "generation_git": common_git,
+        "note": None,
+        "baseline_eligible": True,
+        "runtime_metadata": common_runtime,
+        "provenance_files": relative_provenance_paths,
+    }
 
 REFERENCE_ARTIFACT_DIRNAME = "reference-2011"
 REFERENCE_OVERLAY_SUFFIX = "2011"
@@ -319,14 +918,37 @@ def run_snapshot_local_validation(
     n_steps: int | None = None,
     window_start: int | None = None,
     window_end: int | None = None,
+    order_book: str | None = None,
+    rng_mode: str | None = None,
+    clean_compile: bool = False,
+    generation_git: Mapping[str, object] | None = None,
+    provenance_validation_profile: ValidationProfile | None = None,
 ) -> list[dict[str, object]]:
-    """Execute the Java model snapshot-locally for each seed and extract metrics."""
+    """Execute the Java model snapshot-locally for each seed and extract metrics.
 
+    Supplying ``generation_git`` opts this run into per-seed generation sidecars. Existing callers
+    that omit it retain the historical output contract. ``provenance_validation_profile`` can be a
+    superset of the profile scored immediately, allowing later rescoring inputs to be hashed at
+    generation time without extracting metrics that currently need unavailable target data.
+    """
+
+    runtime_request = _validated_runtime_request(order_book=order_book, rng_mode=rng_mode)
+    normalized_generation_git = (
+        _normalized_generation_git(generation_git) if generation_git is not None else None
+    )
+    if normalized_generation_git is not None and runtime_request is None:
+        raise ValueError(
+            "generation_git requires explicit order_book and rng_mode so provenance records "
+            "observed model runtime metadata"
+        )
     version_config_path = repo_root / "input-data-versions" / version / "config.properties"
     if not version_config_path.exists():
         raise RuntimeError(f"Missing version config: {version_config_path}")
 
-    ensure_project_compiled(repo_root, maven_bin=maven_bin)
+    if clean_compile:
+        ensure_project_compiled(repo_root, maven_bin=maven_bin, clean=True)
+    else:
+        ensure_project_compiled(repo_root, maven_bin=maven_bin)
     configs_dir = output_dir / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -345,6 +967,10 @@ def run_snapshot_local_validation(
                     n_steps=n_steps,
                     window_start=window_start,
                     window_end=window_end,
+                    order_book=runtime_request[0] if runtime_request else None,
+                    rng_mode=runtime_request[1] if runtime_request else None,
+                    generation_git=normalized_generation_git,
+                    provenance_validation_profile=provenance_validation_profile,
                 )
             )
         return seed_results
@@ -364,6 +990,10 @@ def run_snapshot_local_validation(
                 n_steps=n_steps,
                 window_start=window_start,
                 window_end=window_end,
+                order_book=runtime_request[0] if runtime_request else None,
+                rng_mode=runtime_request[1] if runtime_request else None,
+                generation_git=normalized_generation_git,
+                provenance_validation_profile=provenance_validation_profile,
             ): seed
             for seed in seeds
         }
@@ -387,10 +1017,27 @@ def run_validation_seed(
     n_steps: int | None = None,
     window_start: int | None = None,
     window_end: int | None = None,
+    order_book: str | None = None,
+    rng_mode: str | None = None,
+    generation_git: Mapping[str, object] | None = None,
+    provenance_validation_profile: ValidationProfile | None = None,
 ) -> dict[str, object]:
 
-    """Run one snapshot-local validation seed and return its extracted metrics."""
+    """Run one snapshot-local validation seed and return its extracted metrics.
 
+    A non-null ``generation_git`` writes the opt-in generation sidecar after runtime verification
+    and metric extraction both succeed.
+    """
+
+    runtime_request = _validated_runtime_request(order_book=order_book, rng_mode=rng_mode)
+    normalized_generation_git = (
+        _normalized_generation_git(generation_git) if generation_git is not None else None
+    )
+    if normalized_generation_git is not None and runtime_request is None:
+        raise ValueError(
+            "generation_git requires explicit order_book and rng_mode so provenance records "
+            "observed model runtime metadata"
+        )
     version_config_path = repo_root / "input-data-versions" / version / "config.properties"
     if not version_config_path.exists():
         raise RuntimeError(f"Missing version config: {version_config_path}")
@@ -415,8 +1062,17 @@ def run_validation_seed(
         version=version,
         seed=seed,
     )
+    command = [maven_bin, "-q"]
+    if runtime_request is not None:
+        command.extend(
+            [
+                f"-Dhousing.orderbook={runtime_request[0]}",
+                f"-Dhousing.rng={runtime_request[1]}",
+            ]
+        )
+    command.extend(["exec:java", f"-Dexec.args={exec_args}"])
     proc = subprocess.run(
-        [maven_bin, "-q", "exec:java", f"-Dexec.args={exec_args}"],
+        command,
         cwd=repo_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -430,17 +1086,45 @@ def run_validation_seed(
             f"Output tail:\n{proc.stdout[-3000:]}"
         )
 
-    return {
+    runtime_metadata = None
+    if runtime_request is not None:
+        runtime_metadata = _verify_runtime_metadata(
+            proc.stdout,
+            version=version,
+            seed=seed,
+            expected_order_book=runtime_request[0],
+            expected_rng_mode=runtime_request[1],
+        )
+
+    metrics = _extract_seed_metrics(
+        seed_output_dir=seed_output_dir,
+        was_data_root=was_data_root,
+        validation_profile=validation_profile,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    result: dict[str, object] = {
         "seed": seed,
         "outputDir": str(seed_output_dir),
-        "metrics": _extract_seed_metrics(
-            seed_output_dir=seed_output_dir,
-            was_data_root=was_data_root,
-            validation_profile=validation_profile,
-            window_start=window_start,
-            window_end=window_end,
-        ),
+        "metrics": metrics,
     }
+    if runtime_metadata is not None:
+        result["runtimeMetadata"] = runtime_metadata
+    if normalized_generation_git is not None:
+        assert runtime_metadata is not None
+        result["generationProvenance"] = _write_seed_generation_provenance(
+            repo_root=repo_root,
+            version=version,
+            seed=seed,
+            output_dir=output_dir,
+            seed_output_dir=seed_output_dir,
+            version_config_path=version_config_path,
+            materialized_config_path=config_path,
+            validation_profile=provenance_validation_profile or validation_profile,
+            runtime_metadata=runtime_metadata,
+            generation_git=normalized_generation_git,
+        )
+    return result
 
 
 
@@ -452,10 +1136,16 @@ def load_reused_validation_results(
     validation_profile: ValidationProfile,
     window_start: int | None = None,
     window_end: int | None = None,
+    use_cached_seed_results: bool = True,
 ) -> list[dict[str, object]]:
-    """Reuse existing per-seed outputs instead of rerunning the model."""
+    """Reuse existing per-seed outputs instead of rerunning the model.
 
-    cached_seed_results = _load_cached_seed_results(output_dir)
+    Provenance-sensitive callers can disable the derived CSV cache so every value is
+    re-extracted from the immutable, manifest-verified model outputs. The default preserves
+    the existing validation workflow for callers that intentionally use the cache.
+    """
+
+    cached_seed_results = _load_cached_seed_results(output_dir) if use_cached_seed_results else {}
     seed_results: list[dict[str, object]] = []
     for seed in seeds:
         seed_output_dir = output_dir / f"seed-{seed}"
