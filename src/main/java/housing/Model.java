@@ -3,6 +3,7 @@ package housing;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.Scanner;
 import java.time.Instant;
 
@@ -10,6 +11,8 @@ import collectors.*;
 
 import org.apache.commons.cli.*;
 import org.apache.commons.io.FileUtils;
+
+import utilities.OrderBookFactory;
 
 /**************************************************************************************************
  * This is the root object of the simulation. Upon creation it creates and initialises all the
@@ -34,6 +37,11 @@ import org.apache.commons.io.FileUtils;
  *************************************************************************************************/
 
 public class Model {
+
+    static final String BENCHMARK_WARMUP_RUNS_PROPERTY =
+            "housing.benchmark.sameJvmWarmupRuns";
+    static final String BENCHMARK_WARMUP_OUTPUT_ROOT_PROPERTY =
+            "housing.benchmark.warmupOutputRoot";
 
     //------------------//
     //----- Fields -----//
@@ -90,9 +98,7 @@ public class Model {
         houseSaleMarket = new HouseSaleMarket();
         houseRentalMarket = new HouseRentalMarket();
 
-        recorder = new collectors.Recorder(outputFolder);
-        transactionRecorder = new TransactionRecorder(outputFolder);
-        microDataRecorder = new MicroDataRecorder(outputFolder);
+        configureOutputCollectors(outputFolder);
         creditSupply = new collectors.CreditSupply(config.TARGET_POPULATION,
                 config.ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS);
         coreIndicators = new collectors.CoreIndicators();
@@ -117,15 +123,78 @@ public class Model {
         RngMode rngMode = RngFactory.resolveMode();
         rngMode.requireModelSupport();
 
+        boolean benchmarkMode = System.getProperty(BENCHMARK_WARMUP_RUNS_PROPERTY) != null;
+        int benchmarkWarmupRuns = benchmarkWarmupRuns();
+
         // Handle input arguments from command line
         handleInputArguments(args);
 
-        // Create an instance of Model in order to initialise it (reading config file)
-        new Model(configFileName, outputFolder, rngMode);
+        if (!benchmarkMode) {
+            // Create an instance of Model in order to initialise it (reading config file)
+            new Model(configFileName, outputFolder, rngMode);
 
-        // Keep run metadata deterministic and outside the frozen model-output file manifest.
+            // Keep run metadata deterministic and outside the frozen model-output file manifest.
+            printRuntimeMetadata();
+            runConfiguredSimulations();
+
+            long elapsedTime = System.nanoTime() - start;
+            System.out.println("Computing time: " + (double)elapsedTime/1_000_000_000);
+        } else {
+            runSameJvmBenchmark(benchmarkWarmupRuns, rngMode);
+        }
+
+        //Stop the program when finished
+        System.exit(0);
+    }
+
+    /**
+     * Runs the model-speed protocol in one JVM: complete unmeasured simulations first, followed by
+     * the measured simulations. The normal model path above never enters this method.
+     */
+    private static void runSameJvmBenchmark(int warmupRuns, RngMode rngMode) {
+        String measuredOutputFolder = outputFolder;
+        if (warmupRuns == 0) {
+            new Model(configFileName, measuredOutputFolder, rngMode);
+        } else {
+            String firstWarmupOutput = prepareBenchmarkWarmupOutput(1);
+            new Model(configFileName, firstWarmupOutput, rngMode);
+        }
+
+        // Metadata is emitted once per JVM and describes both identical benchmark phases.
+        printRuntimeMetadata();
+        for (int warmupIndex = 1; warmupIndex <= warmupRuns; warmupIndex += 1) {
+            if (warmupIndex > 1) {
+                configureOutputCollectors(prepareBenchmarkWarmupOutput(warmupIndex));
+            }
+            System.out.println("BENCHMARK_PHASE phase=warmup index=" + warmupIndex
+                    + " count=" + warmupRuns);
+            runConfiguredSimulations();
+        }
+
+        if (warmupRuns > 0) {
+            configureOutputCollectors(measuredOutputFolder);
+        }
+        System.out.println("BENCHMARK_PHASE phase=measured index=1 count=1");
+        long measuredStart = System.nanoTime();
+        runConfiguredSimulations();
+        long measuredElapsed = System.nanoTime() - measuredStart;
+        double measuredSeconds = (double) measuredElapsed / 1_000_000_000;
+
+        System.out.println("BENCHMARK_METADATA sameJvmWarmupRuns=" + warmupRuns
+                + " measuredSimulations=" + config.N_SIMS
+                + " orderBook=" + OrderBookFactory.getImpl().name().toLowerCase(Locale.ROOT)
+                + " rngMode=" + rngMode.propertyValue());
+        System.out.println("BENCHMARK_MEASURED_WALL_SECONDS=" + measuredSeconds);
+        System.out.println("Computing time: " + measuredSeconds);
+    }
+
+    private static void printRuntimeMetadata() {
         System.out.println(randomService.metadata().formatLine());
+        System.out.println("MODEL_RUNTIME_METADATA orderBook="
+                + OrderBookFactory.getImpl().name().toLowerCase(Locale.ROOT));
+    }
 
+    private static void runConfiguredSimulations() {
         // Open files for writing multiple runs results
         recorder.openMultiRunFiles(config.recordCoreIndicators);
 
@@ -174,12 +243,50 @@ public class Model {
 
         // After the last simulation, clean up
         recorder.finish(config.recordCoreIndicators);
+    }
 
-        long elapsedTime = System.nanoTime() - start;
-        System.out.println("Computing time: " + (double)elapsedTime/1_000_000_000);
+    private static void configureOutputCollectors(String phaseOutputFolder) {
+        recorder = new collectors.Recorder(phaseOutputFolder);
+        transactionRecorder = new TransactionRecorder(phaseOutputFolder);
+        microDataRecorder = new MicroDataRecorder(phaseOutputFolder);
+    }
 
-        //Stop the program when finished
-        System.exit(0);
+    static int benchmarkWarmupRuns() {
+        String configured = System.getProperty(BENCHMARK_WARMUP_RUNS_PROPERTY, "0").trim();
+        try {
+            int warmupRuns = Integer.parseInt(configured);
+            if (warmupRuns < 0) {
+                throw new IllegalArgumentException(BENCHMARK_WARMUP_RUNS_PROPERTY
+                        + " must be a non-negative integer, got '" + configured + "'");
+            }
+            return warmupRuns;
+        } catch (NumberFormatException exception) {
+            throw new IllegalArgumentException(BENCHMARK_WARMUP_RUNS_PROPERTY
+                    + " must be a non-negative integer, got '" + configured + "'", exception);
+        }
+    }
+
+    private static String prepareBenchmarkWarmupOutput(int warmupIndex) {
+        String configuredRoot = System.getProperty(BENCHMARK_WARMUP_OUTPUT_ROOT_PROPERTY, "").trim();
+        if (configuredRoot.isEmpty()) {
+            throw new IllegalArgumentException(BENCHMARK_WARMUP_OUTPUT_ROOT_PROPERTY
+                    + " is required when " + BENCHMARK_WARMUP_RUNS_PROPERTY + " is positive");
+        }
+
+        File phaseOutput = new File(configuredRoot,
+                String.format(Locale.ROOT, "warmup-%03d/model-output", warmupIndex));
+        if (phaseOutput.exists()) {
+            throw new IllegalStateException("Benchmark warm-up output already exists: " + phaseOutput);
+        }
+        if (!phaseOutput.mkdirs()) {
+            throw new IllegalStateException("Could not create benchmark warm-up output: " + phaseOutput);
+        }
+        try {
+            FileUtils.copyFileToDirectory(new File(configFileName), phaseOutput);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Could not copy config into benchmark warm-up output", exception);
+        }
+        return phaseOutput.getAbsolutePath() + File.separator;
     }
 
     static int simulationSeed(int baseSeed, int runIndex) {
