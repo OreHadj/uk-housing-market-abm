@@ -7,6 +7,10 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/model-speed-lib.sh"
 
+# Standalone JFR and perf profiles share the ordinary whole-process model invocation.
+MODEL_SPEED_TIMING_PROTOCOL="legacy-process-v0"
+MODEL_SPEED_SAME_JVM_WARMUP_COUNT=0
+
 LOG_TAG="SPEED-PROF"
 LOG_COLOR="\033[1;32m"
 model_speed_log_init
@@ -91,6 +95,7 @@ model_speed_capture_environment "${environment_txt}" "${snapshot}" "${mode}" "${
 model_speed_materialize_config "${snapshot}" "${mode}" "${config_path}"
 model_speed_ensure_compiled
 model_speed_resolve_classpath >/dev/null
+model_speed_require_timing_tools
 
 if [[ "${profiler}" == "jfr" ]]; then
   jfr_dir="${run_root}/jfr-run"
@@ -123,6 +128,11 @@ local_manifest="${perf_dir}/model-output.sha256"
 local_command_file="${perf_dir}/command.txt"
 
 declare -a java_cmd=()
+model_speed_reject_reserved_benchmark_options \
+  "${MODEL_SPEED_JAVA_OPTS}" \
+  "${JAVA_TOOL_OPTIONS:-}" \
+  "${_JAVA_OPTIONS:-}" \
+  "${JDK_JAVA_OPTIONS:-}"
 model_speed_build_java_command java_cmd "${config_path}" "${local_output_dir}"
 printf '%q ' perf record --call-graph dwarf -o "${perf_data}" -- "${java_cmd[@]}" > "${local_command_file}"
 printf '\n' >> "${local_command_file}"
@@ -130,10 +140,14 @@ printf '\n' >> "${local_command_file}"
 log "Running perf profile."
 (
   cd "${model_speed_repo_root}"
-  LC_ALL=C /usr/bin/time -v -o "${local_time_file}" \
+  LC_ALL=C "${MODEL_SPEED_TIME_BIN}" -v -o "${local_time_file}" \
     perf record --call-graph dwarf -o "${perf_data}" -- "${java_cmd[@]}" \
     > "${local_stdout_log}" 2> "${local_stderr_log}"
 )
+if ! model_speed_verify_legacy_protocol "${local_stdout_log}"; then
+  log_err "Legacy perf profile refuses Model benchmark markers: ${local_stdout_log}."
+  exit 1
+fi
 
 python3 "$(model_speed_python_helper)" gc-summary --gc-log "${perf_dir}/gc.log" --output "${local_gc_summary}"
 python3 "$(model_speed_python_helper)" manifest --output-dir "${local_output_dir}" --manifest-path "${local_manifest}"
