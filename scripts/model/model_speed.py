@@ -152,8 +152,10 @@ RESULTS_SUMMARY_SERIES: tuple[ResultsSummarySeries, ...] = (
 
 BENCHMARK_NUMERIC_KEYS: tuple[str, ...] = (
     "wall_clock_seconds",
+    "process_wall_clock_seconds",
     "model_computing_seconds",
     "seconds_per_household_month",
+    "ns_per_household_month",
     "output_bytes",
     "max_rss_kb",
     "user_cpu_seconds",
@@ -161,6 +163,15 @@ BENCHMARK_NUMERIC_KEYS: tuple[str, ...] = (
     "gc_pause_count",
     "gc_pause_time_ms_total",
 )
+
+BENCHMARK_SUMMARY_SCHEMA_VERSION = 2
+BENCHMARK_PROTOCOL_ID = "same-jvm-measured-phase-v1"
+BENCHMARK_WALL_CLOCK_SCOPE = "measured_model_phase_only_excludes_warmup_and_jvm_startup"
+BENCHMARK_PROCESS_WALL_CLOCK_SCOPE = "whole_jvm_process_includes_startup_and_same_jvm_warmup"
+BENCHMARK_MODEL_COMPUTING_SCOPE = BENCHMARK_WALL_CLOCK_SCOPE
+BENCHMARK_NORMALIZATION_SCOPE = "measured_config_TARGET_POPULATION_x_N_STEPS_x_N_SIMS_only"
+LEGACY_BENCHMARK_PROTOCOL_ID = "legacy-whole-jvm-wall-v0"
+LEGACY_BENCHMARK_WALL_CLOCK_SCOPE = "whole_jvm_process"
 
 T_CRITICAL_95_TWO_SIDED: dict[int, float] = {
     1: 12.706205,
@@ -1049,7 +1060,230 @@ def metric_stats(values: list[float]) -> dict[str, object]:
     }
 
 
+def read_key_value_properties(path: Path) -> dict[str, str]:
+    properties: dict[str, str] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        key = key.strip()
+        if not separator or not key:
+            raise SystemExit(f"Malformed property at {path}:{line_number}: {raw_line!r}")
+        if key in properties:
+            raise SystemExit(f"Duplicate property {key!r} in {path}")
+        properties[key] = value.strip()
+    return properties
+
+
+def current_benchmark_protocol(warmup_count: int) -> dict[str, object]:
+    return {
+        "protocol_id": BENCHMARK_PROTOCOL_ID,
+        "primary_metric": "wall_clock_seconds",
+        "wall_clock_seconds_scope": BENCHMARK_WALL_CLOCK_SCOPE,
+        "process_wall_clock_seconds_scope": BENCHMARK_PROCESS_WALL_CLOCK_SCOPE,
+        "model_computing_seconds_scope": BENCHMARK_MODEL_COMPUTING_SCOPE,
+        "normalization_scope": BENCHMARK_NORMALIZATION_SCOPE,
+        "same_jvm_warmup_count": warmup_count,
+    }
+
+
+def validate_benchmark_run_protocol(
+    row: dict[str, object],
+    *,
+    expected_warmup_count: int,
+    row_number: int,
+) -> None:
+    row_label = f"measured run row {row_number} ({row.get('run_id', 'unknown')})"
+    for key in (
+        "wall_clock_seconds",
+        "process_wall_clock_seconds",
+        "model_computing_seconds",
+        "seconds_per_household_month",
+        "ns_per_household_month",
+    ):
+        value = row.get(key)
+        if value is None or float(value) <= 0.0:
+            raise SystemExit(f"{row_label}: {key} must be present and positive.")
+    wall_clock_seconds = float(row["wall_clock_seconds"])
+    process_wall_clock_seconds = float(row["process_wall_clock_seconds"])
+    model_computing_seconds = float(row["model_computing_seconds"])
+    if process_wall_clock_seconds < wall_clock_seconds:
+        raise SystemExit(
+            f"{row_label}: process_wall_clock_seconds cannot be less than wall_clock_seconds."
+        )
+    if model_computing_seconds != wall_clock_seconds:
+        raise SystemExit(
+            f"{row_label}: model_computing_seconds must equal wall_clock_seconds under "
+            f"{BENCHMARK_PROTOCOL_ID}."
+        )
+
+    raw_warmup_count = row.get("same_jvm_warmup_count")
+    try:
+        row_warmup_count = int(str(raw_warmup_count))
+    except (TypeError, ValueError) as error:
+        raise SystemExit(
+            f"{row_label}: same_jvm_warmup_count must be an integer, got {raw_warmup_count!r}."
+        ) from error
+    if row_warmup_count != expected_warmup_count:
+        raise SystemExit(
+            f"{row_label}: same_jvm_warmup_count={row_warmup_count} does not match "
+            f"--warmup-count={expected_warmup_count}."
+        )
+
+    raw_scope_path = str(row.get("measurement_scope_path", "")).strip()
+    if not raw_scope_path:
+        raise SystemExit(f"{row_label}: measurement_scope_path is required.")
+    scope_path = Path(raw_scope_path)
+    if not scope_path.is_absolute():
+        scope_path = (Path.cwd() / scope_path).resolve()
+    if not scope_path.is_file():
+        raise SystemExit(f"{row_label}: measurement scope file not found: {scope_path}")
+    properties = read_key_value_properties(scope_path)
+    expected_properties = {
+        "wall_clock_seconds_scope": BENCHMARK_WALL_CLOCK_SCOPE,
+        "process_wall_clock_seconds_scope": BENCHMARK_PROCESS_WALL_CLOCK_SCOPE,
+        "model_computing_seconds_scope": BENCHMARK_MODEL_COMPUTING_SCOPE,
+        "denominator_scope": BENCHMARK_NORMALIZATION_SCOPE,
+        "same_jvm_warmup_count": str(expected_warmup_count),
+    }
+    for key, expected in expected_properties.items():
+        actual = properties.get(key)
+        if actual != expected:
+            raise SystemExit(
+                f"{row_label}: {scope_path} has {key}={actual!r}; expected {expected!r}."
+            )
+
+
+def benchmark_protocol_from_summary(
+    summary: dict[str, object],
+    *,
+    label: str,
+) -> dict[str, object]:
+    raw_protocol = summary.get("benchmark_protocol")
+    if raw_protocol is None:
+        # Historical tracked summaries predate explicit protocol metadata. The old harness used
+        # whole-process wall time only when warm-up count was zero. That one case is unambiguous and
+        # remains comparable to another legacy zero-warm-up summary, but never to the new protocol.
+        source_run = summary.get("source_run")
+        raw_warmup_count = summary.get("warmup_count")
+        if raw_warmup_count is None and isinstance(source_run, dict):
+            raw_warmup_count = source_run.get("warmup_count")
+        try:
+            warmup_count = int(str(raw_warmup_count))
+        except (TypeError, ValueError) as error:
+            raise SystemExit(
+                f"{label}: benchmark_protocol is missing and warm-up count cannot be established."
+            ) from error
+        if warmup_count != 0:
+            raise SystemExit(
+                f"{label}: benchmark_protocol is missing for warmup_count={warmup_count}; "
+                "the historical wall-clock scope is ambiguous. Re-run the benchmark."
+            )
+        return {
+            "protocol_id": LEGACY_BENCHMARK_PROTOCOL_ID,
+            "primary_metric": "wall_clock_seconds",
+            "wall_clock_seconds_scope": LEGACY_BENCHMARK_WALL_CLOCK_SCOPE,
+            "process_wall_clock_seconds_scope": None,
+            "model_computing_seconds_scope": "whole_model_invocation",
+            "normalization_scope": BENCHMARK_NORMALIZATION_SCOPE,
+            "same_jvm_warmup_count": 0,
+            "provenance": "inferred_from_legacy_zero_warmup_summary",
+        }
+    if not isinstance(raw_protocol, dict):
+        raise SystemExit(f"{label}: benchmark_protocol must be a JSON object.")
+
+    protocol = dict(raw_protocol)
+    protocol_id = protocol.get("protocol_id")
+    if protocol_id == BENCHMARK_PROTOCOL_ID:
+        expected_fields = {
+            "primary_metric": "wall_clock_seconds",
+            "wall_clock_seconds_scope": BENCHMARK_WALL_CLOCK_SCOPE,
+            "process_wall_clock_seconds_scope": BENCHMARK_PROCESS_WALL_CLOCK_SCOPE,
+            "model_computing_seconds_scope": BENCHMARK_MODEL_COMPUTING_SCOPE,
+            "normalization_scope": BENCHMARK_NORMALIZATION_SCOPE,
+        }
+    elif protocol_id == LEGACY_BENCHMARK_PROTOCOL_ID:
+        expected_fields = {
+            "primary_metric": "wall_clock_seconds",
+            "wall_clock_seconds_scope": LEGACY_BENCHMARK_WALL_CLOCK_SCOPE,
+            "process_wall_clock_seconds_scope": None,
+            "model_computing_seconds_scope": "whole_model_invocation",
+            "normalization_scope": BENCHMARK_NORMALIZATION_SCOPE,
+        }
+    else:
+        raise SystemExit(f"{label}: unsupported benchmark protocol {protocol_id!r}.")
+    for key, expected in expected_fields.items():
+        if protocol.get(key) != expected:
+            raise SystemExit(
+                f"{label}: benchmark_protocol.{key}={protocol.get(key)!r}; expected {expected!r}."
+            )
+    try:
+        warmup_count = int(str(protocol.get("same_jvm_warmup_count")))
+    except (TypeError, ValueError) as error:
+        raise SystemExit(
+            f"{label}: benchmark_protocol.same_jvm_warmup_count must be a non-negative integer."
+        ) from error
+    if warmup_count < 0:
+        raise SystemExit(
+            f"{label}: benchmark_protocol.same_jvm_warmup_count must be a non-negative integer."
+        )
+    if protocol_id == LEGACY_BENCHMARK_PROTOCOL_ID and warmup_count != 0:
+        raise SystemExit(
+            f"{label}: {LEGACY_BENCHMARK_PROTOCOL_ID} requires same_jvm_warmup_count=0."
+        )
+    source_run = summary.get("source_run")
+    raw_summary_warmup_count = summary.get("warmup_count")
+    if raw_summary_warmup_count is None and isinstance(source_run, dict):
+        raw_summary_warmup_count = source_run.get("warmup_count")
+    if raw_summary_warmup_count is not None:
+        try:
+            summary_warmup_count = int(str(raw_summary_warmup_count))
+        except (TypeError, ValueError) as error:
+            raise SystemExit(f"{label}: summary warm-up count is not an integer.") from error
+        if summary_warmup_count != warmup_count:
+            raise SystemExit(
+                f"{label}: summary warm-up count {summary_warmup_count} disagrees with "
+                f"benchmark_protocol.same_jvm_warmup_count={warmup_count}."
+            )
+    protocol["same_jvm_warmup_count"] = warmup_count
+    return protocol
+
+
+def require_compatible_benchmark_protocols(
+    baseline: dict[str, object],
+    candidate: dict[str, object],
+    *,
+    baseline_label: str,
+    candidate_label: str,
+) -> dict[str, object]:
+    baseline_protocol = benchmark_protocol_from_summary(baseline, label=baseline_label)
+    candidate_protocol = benchmark_protocol_from_summary(candidate, label=candidate_label)
+    compatibility_keys = (
+        "protocol_id",
+        "primary_metric",
+        "wall_clock_seconds_scope",
+        "process_wall_clock_seconds_scope",
+        "model_computing_seconds_scope",
+        "normalization_scope",
+        "same_jvm_warmup_count",
+    )
+    mismatches = [
+        f"{key}: baseline={baseline_protocol.get(key)!r}, candidate={candidate_protocol.get(key)!r}"
+        for key in compatibility_keys
+        if baseline_protocol.get(key) != candidate_protocol.get(key)
+    ]
+    if mismatches:
+        raise SystemExit(
+            "Incompatible benchmark protocols; refusing to compare "
+            f"{baseline_label} with {candidate_label}: " + "; ".join(mismatches)
+        )
+    return candidate_protocol
+
+
 def benchmark_summary(args: argparse.Namespace) -> int:
+    if args.warmup_count < 0:
+        raise SystemExit("--warmup-count must be a non-negative integer.")
     rows: list[dict[str, object]] = []
     with Path(args.runs_tsv).open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
@@ -1066,6 +1300,12 @@ def benchmark_summary(args: argparse.Namespace) -> int:
             rows.append(parsed)
     if not rows:
         raise SystemExit("No measured runs found in TSV.")
+    for row_number, row in enumerate(rows, start=1):
+        validate_benchmark_run_protocol(
+            row,
+            expected_warmup_count=args.warmup_count,
+            row_number=row_number,
+        )
 
     metric_summary: dict[str, dict[str, object]] = {}
     for key in BENCHMARK_NUMERIC_KEYS:
@@ -1075,12 +1315,18 @@ def benchmark_summary(args: argparse.Namespace) -> int:
     median_sorted_rows = sorted(rows, key=lambda item: float(item["wall_clock_seconds"]))
     median_row = median_sorted_rows[(len(median_sorted_rows) - 1) // 2]
     summary = {
+        "summary_schema_version": BENCHMARK_SUMMARY_SCHEMA_VERSION,
+        "benchmark_protocol": current_benchmark_protocol(args.warmup_count),
         "run_count": len(rows),
         "warmup_count": args.warmup_count,
         "cooldown_count": args.cooldown_count,
         "median_run_id": median_row["run_id"],
         "best_run_id": min(rows, key=lambda item: float(item["wall_clock_seconds"]))["run_id"],
         "median_jfr_captured": bool(args.jfr_captured),
+        "median_jfr_protocol_matches_measured_runs": bool(args.jfr_captured),
+        "median_jfr_same_jvm_warmup_count": (
+            args.warmup_count if args.jfr_captured else None
+        ),
         "metric_summary": metric_summary,
         "runs": rows,
     }
@@ -1443,6 +1689,7 @@ def find_run(summary: dict[str, object], run_id: str) -> dict[str, object]:
 def baseline_snapshot(args: argparse.Namespace) -> int:
     summary_path = Path(args.summary)
     summary = load_json(summary_path)
+    benchmark_protocol = benchmark_protocol_from_summary(summary, label=str(summary_path))
     median_row = find_run(summary, str(summary["median_run_id"]))
     manifest_path = Path(str(median_row["manifest_path"]))
     if not manifest_path.is_absolute():
@@ -1458,12 +1705,19 @@ def baseline_snapshot(args: argparse.Namespace) -> int:
     source_run = {
         "type": "snapshot_local_benchmark",
         "benchmark_root": display_path(summary_path.parent),
+        "summary_schema_version": summary.get("summary_schema_version"),
         "warmup_count": summary.get("warmup_count", 0),
         "cooldown_count": summary.get("cooldown_count", 0),
         "measured_repeat_count": summary.get("run_count"),
         "median_run_id": summary.get("median_run_id"),
         "best_run_id": summary.get("best_run_id"),
         "median_jfr_captured": summary.get("median_jfr_captured", False),
+        "median_jfr_protocol_matches_measured_runs": summary.get(
+            "median_jfr_protocol_matches_measured_runs", False
+        ),
+        "median_jfr_same_jvm_warmup_count": summary.get(
+            "median_jfr_same_jvm_warmup_count"
+        ),
     }
     payload = {
         "baseline_id": args.baseline_id,
@@ -1475,6 +1729,7 @@ def baseline_snapshot(args: argparse.Namespace) -> int:
         "purpose": args.purpose,
         "contract": args.contract,
         "manifest_path": None if args.manifest_path is None else args.manifest_path,
+        "benchmark_protocol": benchmark_protocol,
         "source_run": source_run,
         "environment": parse_environment_file(Path(args.environment) if args.environment else None),
         "output_contract": {
@@ -1556,6 +1811,7 @@ def benchmark_compare(args: argparse.Namespace) -> int:
     verdict_metric = args.verdict_metric
     metrics = (
         "wall_clock_seconds",
+        "process_wall_clock_seconds",
         "seconds_per_household_month",
         "max_rss_kb",
         "gc_pause_count",
@@ -1578,6 +1834,26 @@ def benchmark_compare(args: argparse.Namespace) -> int:
         mode, baseline_summary_path, candidate_summary_path = comparison
         baseline = load_json(Path(baseline_summary_path))
         candidate = load_json(Path(candidate_summary_path))
+        protocol = require_compatible_benchmark_protocols(
+            baseline,
+            candidate,
+            baseline_label=baseline_summary_path,
+            candidate_label=candidate_summary_path,
+        )
+        for label, summary in (
+            (baseline_summary_path, baseline),
+            (candidate_summary_path, candidate),
+        ):
+            metric_summary = summary.get("metric_summary")
+            if (
+                not isinstance(metric_summary, dict)
+                or verdict_metric not in metric_summary
+                or not isinstance(metric_summary[verdict_metric], dict)
+                or metric_summary[verdict_metric].get("mean") is None
+            ):
+                raise SystemExit(
+                    f"{label}: verdict metric {verdict_metric!r} is unavailable."
+                )
         primary_diff = difference_stats(
             baseline["metric_summary"][verdict_metric],
             candidate["metric_summary"][verdict_metric],
@@ -1591,6 +1867,9 @@ def benchmark_compare(args: argparse.Namespace) -> int:
                 f"- Baseline summary: `{baseline_summary_path}`",
                 f"- Candidate summary: `{candidate_summary_path}`",
                 f"- Headline metric: `{verdict_metric}`",
+                f"- Timing protocol: `{protocol['protocol_id']}`",
+                f"- Wall-clock scope: `{protocol['wall_clock_seconds_scope']}`",
+                f"- Same-JVM warm-ups per measured sample: `{protocol['same_jvm_warmup_count']}`",
                 f"- Execution-time verdict: `{verdict}`",
                 "",
                 "| Metric | Baseline mean ± 95% CI | Candidate mean ± 95% CI | Candidate - baseline mean ± 95% CI | Delta % | Baseline median | Candidate median |",
@@ -1598,6 +1877,13 @@ def benchmark_compare(args: argparse.Namespace) -> int:
             ]
         )
         for metric in metrics:
+            if (
+                metric not in baseline["metric_summary"]
+                or metric not in candidate["metric_summary"]
+                or baseline["metric_summary"][metric].get("mean") is None
+                or candidate["metric_summary"][metric].get("mean") is None
+            ):
+                continue
             baseline_stats = baseline["metric_summary"][metric]
             candidate_stats = candidate["metric_summary"][metric]
             diff = difference_stats(baseline_stats, candidate_stats)

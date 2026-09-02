@@ -7,6 +7,9 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/model-speed-lib.sh"
 
+MODEL_SPEED_TIMING_PROTOCOL="legacy-process-v0"
+MODEL_SPEED_SAME_JVM_WARMUP_COUNT=0
+
 LOG_TAG="SPEED-REG"
 LOG_COLOR="\033[1;33m"
 model_speed_log_init

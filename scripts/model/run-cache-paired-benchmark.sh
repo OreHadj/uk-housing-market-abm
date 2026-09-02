@@ -7,6 +7,10 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${script_dir}/model-speed-lib.sh"
 
+# Cache pairs may target older worktrees that predate Model's measured-phase markers.
+MODEL_SPEED_TIMING_PROTOCOL="legacy-process-v0"
+MODEL_SPEED_SAME_JVM_WARMUP_COUNT=0
+
 LOG_TAG="CACHE-PAIR"
 LOG_COLOR="\033[1;36m"
 model_speed_log_init
