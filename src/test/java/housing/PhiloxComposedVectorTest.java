@@ -27,7 +27,16 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  *
  * <p>The bounded columns are a low-level Lemire transform oracle. Their presence on every row does
  * not authorize bounded operations for those event IDs; operation authorization belongs to the
- * semantic event registry.</p>
+ * semantic event registry. For the same reason a row's {@code subcounter_hex} is the oracle's
+ * starting block, not a production one: a real {@code BOUNDED_EXCLUSIVE} event always starts at
+ * subcounter 0.</p>
+ *
+ * <p>Two rows use a bound whose rejection zone covers a third of the candidate space so the
+ * rejection path is exercised at all. With the ordinary bound of 7 a rejection arrives roughly once
+ * in a billion draws, so no realistic vector reaches the retry loop by chance. Those rows pin the
+ * rejection threshold, the rejected candidates in attempt order, the retry count and the final
+ * subcounter, because an independent CUDA implementation reimplements that loop and can diverge on
+ * any of them while still returning a plausible integer.</p>
  */
 class PhiloxComposedVectorTest {
 
@@ -38,10 +47,42 @@ class PhiloxComposedVectorTest {
     void frozenRowsPinTheCompleteAddressToTransformChain() throws IOException {
         List<VectorRow> rows = readRows();
 
-        assertEquals(5, rows.size(), "frozen vector row count");
+        assertEquals(7, rows.size(), "frozen vector row count");
         for (VectorRow row : rows) {
             assertRow(row);
         }
+    }
+
+    /**
+     * Guards the gap this vector set previously had: every row accepted its first candidate, so the
+     * rejection branch had no cross-language coverage at all. A CUDA retry loop could have been
+     * wrong in any way and still passed the oracle.
+     */
+    @Test
+    void vectorSetActuallyExercisesRejectionAndRetry() throws IOException {
+        Map<String, VectorRow> rows = new LinkedHashMap<>();
+        for (VectorRow row : readRows()) {
+            rows.put(row.value("name"), row);
+        }
+
+        VectorRow multiRetry = rows.get("sale_tie_break_retry");
+        VectorRow lastSubcounter = rows.get("sale_tie_break_final_subcounter");
+        assertNotNull(multiRetry);
+        assertNotNull(lastSubcounter);
+        assertAll(
+                // Two rejections, so the progression pins more than a single retry step.
+                () -> assertEquals("2", multiRetry.value("bounded_retries")),
+                () -> assertEquals("0000", multiRetry.value("subcounter_hex")),
+                () -> assertEquals("0002", multiRetry.value("bounded_final_subcounter_hex")),
+                () -> assertEquals(2,
+                        multiRetry.value("bounded_rejected_candidates_hex").split(";").length),
+                // Accepting exactly at 0xffff pins that the retry may reach the final subcounter
+                // without wrapping; one more rejection there must throw instead.
+                () -> assertEquals("1", lastSubcounter.value("bounded_retries")),
+                () -> assertEquals("fffe", lastSubcounter.value("subcounter_hex")),
+                () -> assertEquals("ffff", lastSubcounter.value("bounded_final_subcounter_hex")),
+                () -> assertEquals(RandomAddressV1.MAX_UNSIGNED_16,
+                        word(lastSubcounter.value("bounded_final_subcounter_hex"))));
     }
 
     @Test
@@ -133,13 +174,44 @@ class PhiloxComposedVectorTest {
                 () -> assertEquals(As241Normal.branch(uniform) == As241Normal.CENTRAL
                                 ? "exact" : "java-reference-only",
                         row.value("as241_cuda_contract"), "CUDA AS241 policy"),
-                () -> assertEquals(7, bound, "fixed Lemire oracle bound"),
+                () -> assertEquals(word(row.value("bounded_threshold_hex")),
+                        LemireBoundedInt.threshold(bound), "Lemire rejection threshold"),
                 () -> assertEquals(Integer.parseInt(row.value("bounded_int")), bounded,
                         "bounded integer"),
                 () -> assertEquals(Integer.parseInt(row.value("bounded_retries")), retries,
                         "bounded retries"),
                 () -> assertEquals(word(row.value("bounded_final_subcounter_hex")),
-                        subcounter + retries, "bounded final subcounter"));
+                        subcounter + retries, "bounded final subcounter"),
+                () -> assertEquals(row.value("bounded_rejected_candidates_hex"),
+                        rejectedCandidates(seed, simulation, timeStep, entity, event, subcounter,
+                                bound),
+                        "rejected candidate progression"));
+    }
+
+    /**
+     * Returns the word-0 candidates that Lemire rejected, in attempt order, semicolon separated.
+     *
+     * <p>This pins the retry <em>progression</em> rather than only its outcome. A CUDA
+     * implementation that recomputes the block at the wrong subcounter, or that mis-derives the
+     * rejection threshold, still lands on a plausible integer; it cannot also reproduce the exact
+     * sequence of rejected candidates.</p>
+     */
+    private static String rejectedCandidates(long seed, int simulation, int timeStep, int entity,
+                                             int event, int subcounter, int bound) {
+        StringBuilder rejected = new StringBuilder();
+        int retrySubcounter = subcounter;
+        while (true) {
+            int candidate = PhiloxAddressedRandom.word0(
+                    seed, simulation, timeStep, entity, event, retrySubcounter);
+            if (!LemireBoundedInt.rejects(LemireBoundedInt.product(candidate, bound), bound)) {
+                return rejected.toString();
+            }
+            if (rejected.length() > 0) {
+                rejected.append(';');
+            }
+            rejected.append(String.format("%08x", candidate));
+            retrySubcounter++;
+        }
     }
 
     private static int boundedRetries(long seed, int simulation, int timeStep, int entity,
