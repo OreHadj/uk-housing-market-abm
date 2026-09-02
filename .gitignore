@@ -63,3 +63,7 @@ dashboard/release/
 
 # dashboard smoke artifacts
 dashboard/.smoke-dist/
+
+# GPU smoke-test build artifacts
+/gpu/smoke-test/vector_add
+/gpu/smoke-test/libsmoke.so
