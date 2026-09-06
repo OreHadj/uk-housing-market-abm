@@ -6,6 +6,7 @@ import java.util.Iterator;
 import utilities.ArrayOrderBook;
 import utilities.OrderBook2D;
 import utilities.OrderBookFactory;
+import utilities.Precision;
 
 /**************************************************************************************************
  * Class that implements the market mechanism behind both the sale and the rental markets
@@ -157,10 +158,13 @@ public abstract class HousingMarket {
         Iterator<HousingMarketRecord> record = getOffersIterator();
         while(record.hasNext()) {
             offer = (HouseOfferRecord)record.next();
+            PrecisionFragilityProbe.setHouse(offer.getHouse());
             nBids = offer.getMatchedBids().size();
             // If matches for this offer are multiple...
             if(nBids > 1) {
                 // ...first bid up the price
+                double salePriceBase = offer.getPrice();
+                double salePriceMultiplier;
                 if(config.BIDUP > 1.0) {
                     // Bearing in mind the design of the market mechanism, which leads to an unreasonably large number
                     // of bids per offer as bidders "trickle up" to more expensive offers, we need to take the logarithm
@@ -178,13 +182,41 @@ public abstract class HousingMarket {
                             offer.getHouse(), bidUpEvent, pSuccessfulBid);
                     addNBidUps(nBidUps);
                     // Finally compute the new price
-                    salePrice = offer.getPrice()*Math.pow(config.BIDUP, nBidUps);
+                    salePriceMultiplier = Math.pow(config.BIDUP, nBidUps);
+                    salePrice = salePriceBase * salePriceMultiplier;
                 } else {
-                    salePrice = offer.getPrice();                    
+                    salePriceMultiplier = 1.0;
+                    salePrice = salePriceBase;
                 }
                 // ...then choose a bid above the new price
                 offer.getMatchedBids().sort(new HouseBidderRecord.PComparator()); // This orders the list with the highest price last
-                while(nBids > 0 && offer.getMatchedBids().get(nBids - 1).getPrice() >= salePrice) {
+                while (nBids > 0) {
+                    double bidPrice = offer.getMatchedBids().get(nBids - 1).getPrice();
+                    boolean bidClearsPrice;
+                    if (PrecisionFragilityProbe.isEnabled()) {
+                        int coarsestQ = Precision.SHADOW_FRACTION_BITS[
+                                Precision.SHADOW_FRACTION_BITS.length - 1];
+                        bidClearsPrice = PrecisionFragilityProbe.branchDerivedBounded(
+                                "market.bid-clears-bid-up-price",
+                                bidUpEvent.name(),
+                                PrecisionFragilityProbe.Operator.GREATER_OR_EQUAL,
+                                "bidPrice",
+                                bidPrice,
+                                q -> Precision.quantiseForDiagnostics(bidPrice, q),
+                                Precision.gridSpacing(bidPrice, coarsestQ) / 2.0,
+                                "offerPrice*bidUpMultiplier",
+                                salePrice,
+                                q -> Precision.quantiseForDiagnostics(salePriceBase, q)
+                                        * salePriceMultiplier,
+                                Precision.gridSpacing(salePriceBase, coarsestQ)
+                                        * Math.abs(salePriceMultiplier) / 2.0
+                                        + Math.ulp(salePrice));
+                    } else {
+                        bidClearsPrice = bidPrice >= salePrice;
+                    }
+                    if (!bidClearsPrice) {
+                        break;
+                    }
                     --nBids; // This counts the number of bids above the new price
                 }
                 if (offer.getMatchedBids().size() - nBids > 1) {
@@ -215,6 +247,7 @@ public abstract class HousingMarket {
                 removeOfferFromQueues(record, offer);
             }
             // Note that we skip the whole process if there are no matches
+            PrecisionFragilityProbe.clearEntity();
         }
     }
 

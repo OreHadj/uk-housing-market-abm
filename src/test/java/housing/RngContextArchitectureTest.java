@@ -57,8 +57,8 @@ class RngContextArchitectureTest {
         String model = source("Model.java");
 
         assertEquals(1, occurrences(model, "randomService.householdLoopContext("));
-        assertTrue(model.contains(
-                "for(Household h : households) h.step(householdLoopContext);"));
+        assertTrue(model.contains("for (Household h : households) {"));
+        assertEquals(1, occurrences(model, "h.step(householdLoopContext);"));
     }
 
     @Test

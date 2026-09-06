@@ -7,6 +7,7 @@ import collectors.RentalMarketStats;
 
 import utilities.BinnedDataDouble;
 import utilities.Pdf;
+import utilities.Precision;
 
 /**************************************************************************************************
  * Class to implement the behavioural decisions made by households
@@ -200,7 +201,16 @@ public class HouseholdBehaviour {
      */
     double decideDownPayment(RngContext context, Household me, double housePrice,
             boolean isHome) {
-        if (me.getBankBalance() > housePrice*config.DOWNPAYMENT_BANK_BALANCE_FOR_CASH_SALE) {
+        if (PrecisionFragilityProbe.branch(
+                "behaviour.cash-purchase-threshold",
+                isHome ? "home down-payment" : "BTL down-payment",
+                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                "bankBalance",
+                me.getBankBalance(),
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "housePrice*cashThreshold[compute-local]",
+                housePrice * config.DOWNPAYMENT_BANK_BALANCE_FOR_CASH_SALE,
+                PrecisionFragilityProbe.OperandPolicy.FP64)) {
             return housePrice;
         }
         double downpayment;
@@ -224,7 +234,20 @@ public class HouseholdBehaviour {
             downpayment = housingMarketStats.getHPI()
                     * downpaymentDistOO.inverseCumulativeProbability(me.incomePercentile);
         }
-        if (downpayment > me.getBankBalance()) downpayment = me.getBankBalance();
+        if (PrecisionFragilityProbe.branch(
+                "behaviour.downpayment-capped-by-wealth",
+                isHome ? "home down-payment" : "BTL down-payment",
+                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                "desiredDownPayment[compute-local]",
+                downpayment,
+                me.isFirstTimeBuyer()
+                        ? PrecisionFragilityProbe.OperandPolicy.REDUCED
+                        : PrecisionFragilityProbe.OperandPolicy.FP64,
+                "bankBalance",
+                me.getBankBalance(),
+                PrecisionFragilityProbe.OperandPolicy.REDUCED)) {
+            downpayment = me.getBankBalance();
+        }
         return downpayment;
     }
 
@@ -290,8 +313,12 @@ public class HouseholdBehaviour {
             return false;
         }
         // Find out potential mortgage characteristics...
-        MortgageAgreement mortgageApproval = Model.bank.requestApproval(me, purchasePrice,
-                desiredDownPayment, true);
+        MortgageAgreement mortgageApproval = Model.bank.requestApproval(
+                me,
+                purchasePrice,
+                desiredDownPayment,
+                true,
+                PrecisionFragilityProbe.ApprovalPurpose.HOME_PREVIEW);
         // ...compute both purchase and rental annual costs...
         double costOfHouse = mortgageApproval.monthlyPayment * config.constants.MONTHS_IN_YEAR
                 - purchasePrice*getLongTermHPAExpectation();
@@ -323,7 +350,17 @@ public class HouseholdBehaviour {
 
         // Fast decisions...
         // ... from 2 years to maturity, put property for sale whenever bank balance not enough for principal repayment
-        if (mortgage.nPayments <= 24 & mortgage.principal > me.getBankBalance()) {
+        boolean principalExceedsWealth = PrecisionFragilityProbe.branch(
+                "behaviour.maturing-mortgage-exceeds-wealth",
+                "BTL sale fast decision",
+                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                "principal",
+                mortgage.principal,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "bankBalance",
+                me.getBankBalance(),
+                PrecisionFragilityProbe.OperandPolicy.REDUCED);
+        if (mortgage.nPayments <= 24 & principalExceedsWealth) {
             return true;
         }
         // ...always keep at least one investment property (i.e., at least two properties)
@@ -336,7 +373,22 @@ public class HouseholdBehaviour {
         // ...find its current (fair market value) sale price
         double currentMarketPrice = housingMarketStats.getExpAvSalePriceForQuality(h.getQuality());
         // ...find equity, or assets minus liabilities
-        double equity = Math.max(0.01, currentMarketPrice - mortgage.principal); // The 0.01 prevents possible divisions by zero later on
+        double unconstrainedEquity = currentMarketPrice - mortgage.principal;
+        if (PrecisionFragilityProbe.isEnabled()) {
+            double currentPrincipal = mortgage.principal;
+            PrecisionFragilityProbe.branchDerived(
+                    "behaviour.existing-btl-equity-floor",
+                    "BTL sale yield calculation",
+                    PrecisionFragilityProbe.Operator.LESS_THAN,
+                    "marketPrice-principal",
+                    unconstrainedEquity,
+                    q -> currentMarketPrice
+                            - Precision.quantiseForDiagnostics(currentPrincipal, q),
+                    "pennyFloor",
+                    0.01,
+                    q -> 0.01);
+        }
+        double equity = Math.max(0.01, unconstrainedEquity); // The 0.01 prevents possible divisions by zero later on
         // ...find the leverage on that mortgage (Assets divided by equity, or return on equity)
         double leverage = currentMarketPrice / equity;
         // ...find the expected rental yield of this property as its current rental price (under current average
@@ -373,7 +425,29 @@ public class HouseholdBehaviour {
         // Fast decisions...
         // ...do not buy if current bank balance below desired level
         // TODO: Review whether to keep this mechanism as well as its particular position (before or after next rule)
-        if (me.getBankBalance() < data.Wealth.getDesiredBankBalance(me.getAnnualGrossTotalIncome(), propensityToSave)) {
+        double desiredBankBalance = data.Wealth.getDesiredBankBalance(
+                me.getAnnualGrossTotalIncome(), propensityToSave);
+        boolean wealthBelowDesired = me.getBankBalance() < desiredBankBalance;
+        if (PrecisionFragilityProbe.isEnabled()) {
+            double monthlyEmploymentIncome = me.getMonthlyGrossEmploymentIncome();
+            double monthlyRentalIncome = me.getMonthlyGrossRentalIncome();
+            double monthsInYear = config.constants.MONTHS_IN_YEAR;
+            wealthBelowDesired = PrecisionFragilityProbe.branchDerived(
+                    "behaviour.wealth-below-desired-balance",
+                    "BTL purchase fast decision",
+                    PrecisionFragilityProbe.Operator.LESS_THAN,
+                    "bankBalance",
+                    me.getBankBalance(),
+                    q -> Precision.quantiseForDiagnostics(me.getBankBalance(), q),
+                    "desiredBankBalance",
+                    desiredBankBalance,
+                    q -> data.Wealth.getDesiredBankBalance(
+                            (Precision.quantiseForDiagnostics(monthlyEmploymentIncome, q)
+                                    + Precision.quantiseForDiagnostics(monthlyRentalIncome, q))
+                                    * monthsInYear,
+                            propensityToSave));
+        }
+        if (wealthBelowDesired) {
             return false;
         }
         // ...otherwise, always decide to buy if owning no investment property yet (i.e., if owning only one property, a home)
@@ -387,8 +461,23 @@ public class HouseholdBehaviour {
         // household and assuming an average rental yield (over all qualities). This is found as a weighted mix of both
         // rental yield and capital gain times the leverage
         // ...find mortgage with maximum leverage by requesting maximum mortgage with minimum downpayment
-        MortgageAgreement mortgage = Model.bank.requestApproval(me, maxPrice, 0.0, false);
+        MortgageAgreement mortgage = Model.bank.requestApproval(
+                me,
+                maxPrice,
+                0.0,
+                false,
+                PrecisionFragilityProbe.ApprovalPurpose.BTL_PREVIEW);
         // ...find equity, or assets minus liabilities (which, initially, is simply the downpayment)
+        PrecisionFragilityProbe.branch(
+                "behaviour.new-btl-equity-floor",
+                "BTL purchase yield calculation",
+                PrecisionFragilityProbe.Operator.LESS_THAN,
+                "downPayment",
+                mortgage.downPayment,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "pennyFloor",
+                0.01,
+                PrecisionFragilityProbe.OperandPolicy.FP64);
         double equity = Math.max(0.01, mortgage.downPayment); // The 0.01 prevents possible divisions by zero later on
         // ...find the leverage on that mortgage (Assets divided by equity, or return on equity)
         double leverage = mortgage.purchasePrice/equity;

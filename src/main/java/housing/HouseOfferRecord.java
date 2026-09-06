@@ -2,6 +2,8 @@ package housing;
 
 import java.util.ArrayList;
 
+import utilities.Precision;
+
 /**************************************************************************************************
  * This class encapsulates information on a house that is to be offered on the rental or the
  * ownership housing market. One can think of it as the file an estate agent would have on each
@@ -37,10 +39,12 @@ public class HouseOfferRecord extends HousingMarketRecord {
         }
         this.house = house;
         this.BTLOffer = BTLOffer;
-        initialListedPrice = price;
+        initialListedPrice = Precision.store(
+                Precision.Field.OFFER_INITIAL_LISTED_PRICE,
+                getPrice());
         tInitialListing = initialListingTime;
         matchedBids = new ArrayList<>(8); // TODO: Check if this initial size of 8 is good enough or can be improved
-        recalculateHouseSpecificYield(price);
+        recalculateHouseSpecificYield(getPrice());
     }
 
     //-------------------//
@@ -57,9 +61,11 @@ public class HouseOfferRecord extends HousingMarketRecord {
     private void recalculateHouseSpecificYield(double price) {
         int q = house.getQuality();
         if (price > 0) {
-            houseSpecificYield = Model.rentalMarketStats.getAvFlowYieldForQuality(q)
-                    *Model.housingMarketStats.getExpAvSalePriceForQuality(q)
-                    /price;
+            houseSpecificYield = Precision.store(
+                    Precision.Field.OFFER_HOUSE_SPECIFIC_YIELD,
+                    Model.rentalMarketStats.getAvFlowYieldForQuality(q)
+                            *Model.housingMarketStats.getExpAvSalePriceForQuality(q)
+                            /price);
         }
     }
 
@@ -92,7 +98,7 @@ public class HouseOfferRecord extends HousingMarketRecord {
      */
     public void setPrice(double newPrice) {
         super.setPrice(newPrice);
-        recalculateHouseSpecificYield(newPrice);
+        recalculateHouseSpecificYield(getPrice());
     }
 
     public House getHouse() { return house; }

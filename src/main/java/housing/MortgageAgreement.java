@@ -1,5 +1,7 @@
 package housing;
 
+import utilities.Precision;
+
 /**************************************************************************************************
  * Class to represent a mortgage contract, keeping track of the updated principal due, the monthly
  * payment, the number of payments left, etc.
@@ -49,7 +51,9 @@ public class MortgageAgreement extends PaymentAgreement {
             // ...then reduce number of payments due by one
             nPayments -= 1;
             // ...reduce amount due by amount to be paid this month
-            principal = principal*(1.0 + monthlyInterestRate) - monthlyPayment;
+            principal = Precision.store(
+                    Precision.Field.MORTGAGE_PRINCIPAL,
+                    principal*(1.0 + monthlyInterestRate) - monthlyPayment);
             // ...and, if this would bring the number of payments to zero, then add any principal left (zero or close to
             // zero for capital and interest mortgages, full principal for interest-only mortgages)
             if (nPayments == 0) {
@@ -68,15 +72,28 @@ public class MortgageAgreement extends PaymentAgreement {
      * @return The amount that was actually paid off
      */
     double payoff(double amount) {
-        if (amount >= principal) {
+        if (PrecisionFragilityProbe.branch(
+                "mortgage.payoff-covers-principal",
+                "early or terminal mortgage payoff",
+                PrecisionFragilityProbe.Operator.GREATER_OR_EQUAL,
+                "availablePayoffAmount",
+                amount,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "principal",
+                principal,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED)) {
             amount = principal;
-            principal = 0.0;
-            monthlyPayment = 0.0;
+            principal = Precision.store(Precision.Field.MORTGAGE_PRINCIPAL, 0.0);
+            monthlyPayment = Precision.store(Precision.Field.PAYMENT_MONTHLY_PAYMENT, 0.0);
             nPayments = 0;
             Model.bank.endMortgageContract(this);
         } else {
-            monthlyPayment *= (principal - amount) / principal;
-            principal -= amount;
+            monthlyPayment = Precision.store(
+                    Precision.Field.PAYMENT_MONTHLY_PAYMENT,
+                    monthlyPayment * (principal - amount) / principal);
+            principal = Precision.store(
+                    Precision.Field.MORTGAGE_PRINCIPAL,
+                    principal - amount);
         }
         return amount;
     }

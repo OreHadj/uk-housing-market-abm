@@ -14,7 +14,9 @@ final class MersenneRandom implements RandomGenerator {
     private final MersenneTwister delegate;
 
     MersenneRandom(int seed) {
-        delegate = new MersenneTwister(seed);
+        delegate = PrecisionGateTrace.enabled()
+                ? new CountingMersenneTwister(seed)
+                : new MersenneTwister(seed);
     }
 
     @Override
@@ -70,5 +72,49 @@ final class MersenneRandom implements RandomGenerator {
     @Override
     public double nextGaussian() {
         return delegate.nextGaussian();
+    }
+
+    long rawWordCount() {
+        if (delegate instanceof CountingMersenneTwister counting) {
+            return counting.rawWordCount();
+        }
+        return 0L;
+    }
+
+    private static final class CountingMersenneTwister extends MersenneTwister {
+
+        private long rawWordCount;
+
+        private CountingMersenneTwister(int seed) {
+            super(seed);
+        }
+
+        @Override
+        protected int next(int bits) {
+            rawWordCount += 1;
+            return super.next(bits);
+        }
+
+        @Override
+        public void setSeed(int seed) {
+            super.setSeed(seed);
+            rawWordCount = 0L;
+        }
+
+        @Override
+        public void setSeed(int[] seed) {
+            super.setSeed(seed);
+            rawWordCount = 0L;
+        }
+
+        @Override
+        public void setSeed(long seed) {
+            super.setSeed(seed);
+            rawWordCount = 0L;
+        }
+
+        private long rawWordCount() {
+            return rawWordCount;
+        }
     }
 }

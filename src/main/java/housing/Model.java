@@ -13,6 +13,7 @@ import org.apache.commons.cli.*;
 import org.apache.commons.io.FileUtils;
 
 import utilities.OrderBookFactory;
+import utilities.Precision;
 
 /**************************************************************************************************
  * This is the root object of the simulation. Upon creation it creates and initialises all the
@@ -122,6 +123,9 @@ public class Model {
         // Resolve and validate RNG activation before output handling can create or clean anything.
         RngMode rngMode = RngFactory.resolveMode();
         rngMode.requireModelSupport();
+        Precision.requireValidConfiguration();
+        PrecisionGateTrace.requireValidConfiguration();
+        PrecisionFragilityProbe.requireValidConfiguration();
 
         boolean benchmarkMode = System.getProperty(BENCHMARK_WARMUP_RUNS_PROPERTY) != null;
         int benchmarkWarmupRuns = benchmarkWarmupRuns();
@@ -192,6 +196,9 @@ public class Model {
         System.out.println(randomService.metadata().formatLine());
         System.out.println("MODEL_RUNTIME_METADATA orderBook="
                 + OrderBookFactory.getImpl().name().toLowerCase(Locale.ROOT));
+        System.out.println(Precision.metadataLine());
+        System.out.println(PrecisionGateTrace.metadataLine());
+        System.out.println(PrecisionFragilityProbe.metadataLine());
     }
 
     private static void runConfiguredSimulations() {
@@ -202,47 +209,91 @@ public class Model {
         for (nSimulation = 1; nSimulation <= config.N_SIMS; nSimulation += 1) {
 
             randomService.reseedLegacy(simulationSeed(config.SEED, nSimulation));
+            Precision.resetDiagnostics();
+            File simulationOutput = new File(outputFolder);
+            PrecisionGateTrace.beginSimulation(
+                    simulationOutput.toPath(),
+                    nSimulation);
+            PrecisionFragilityProbe.beginSimulation(
+                    simulationOutput.toPath(),
+                    nSimulation,
+                    simulationSeed(config.SEED, nSimulation));
 
-            // For each simulation, open files for writing single-run results
-            recorder.openSingleRunFiles(nSimulation, config.recordQualityBandPrice, config.derivedParams.N_QUALITIES);
-            transactionRecorder.openSingleRunFiles(nSimulation, config.recordTransactions,
-                    config.recordNBidUpFrequency);
-            microDataRecorder.openSingleRunSingleVariableFiles(nSimulation, config.recordHouseholdID,
-                    config.recordEmploymentIncome, config.recordRentalIncome, config.recordBankBalance,
-                    config.recordHousingWealth, config.recordTotalDebt, config.recordNHousesOwned,
-                    config.recordHousingStatus, config.recordAge, config.recordConsumption, config.recordSavingRate);
+            boolean precisionDiagnosticsWritten = false;
+            boolean fragilityDiagnosticsFinished = false;
+            boolean gateTraceFinished = false;
+            try {
 
-            // For each simulation, initialise both houseSaleMarket and houseRentalMarket variables (including HPI)
-            init();
+                // For each simulation, open files for writing single-run results
+                recorder.openSingleRunFiles(nSimulation, config.recordQualityBandPrice,
+                        config.derivedParams.N_QUALITIES);
+                transactionRecorder.openSingleRunFiles(nSimulation, config.recordTransactions,
+                        config.recordNBidUpFrequency);
+                microDataRecorder.openSingleRunSingleVariableFiles(nSimulation, config.recordHouseholdID,
+                        config.recordEmploymentIncome, config.recordRentalIncome, config.recordBankBalance,
+                        config.recordHousingWealth, config.recordTotalDebt, config.recordNHousesOwned,
+                        config.recordHousingStatus, config.recordAge, config.recordConsumption,
+                        config.recordSavingRate);
 
-            // For each simulation, run config.N_STEPS time steps
-            for (t = 0; t <= config.N_STEPS; t += 1) {
+                // For each simulation, initialise both houseSaleMarket and houseRentalMarket variables (including HPI)
+                init();
 
-                // Steps model and stores sale and rental markets bid and offer prices, and their averages, into their
-                // respective variables
-                modelStep();
+                // For each simulation, run config.N_STEPS time steps
+                for (t = 0; t <= config.N_STEPS; t += 1) {
 
-                // Write results of this time step and run to both multi- and single-run files
-                recorder.writeTimeStampResults(config.recordCoreIndicators, t, config.recordQualityBandPrice);
+                    // Steps model and stores sale and rental markets bid and offer prices, and their averages, into their
+                    // respective variables
+                    modelStep();
 
-                // Print time information to screen
-                if (t % 100 == 0) {
-                    System.out.println("Simulation: " + nSimulation + ", time: " + t);
+                    // Write results of this time step and run to both multi- and single-run files
+                    recorder.writeTimeStampResults(config.recordCoreIndicators, t, config.recordQualityBandPrice);
+
+                    // Print time information to screen
+                    if (t % 100 == 0) {
+                        System.out.println("Simulation: " + nSimulation + ", time: " + t);
+                    }
                 }
-            }
 
-            // Finish each simulation within the recorders (closing single-run files, changing line in multi-run files)
-            recorder.finishRun(config.recordCoreIndicators, config.recordQualityBandPrice,
-                    nSimulation == config.N_SIMS);
-            transactionRecorder.finishRun(config.recordTransactions, config.recordNBidUpFrequency);
-            microDataRecorder.finishRun(config.recordHouseholdID, config.recordEmploymentIncome,
-                    config.recordRentalIncome, config.recordBankBalance, config.recordHousingWealth,
-                    config.recordTotalDebt, config.recordNHousesOwned, config.recordHousingStatus,
-                    config.recordAge, config.recordConsumption, config.recordSavingRate);
+                // Finish each simulation within the recorders (closing single-run files, changing line in multi-run files)
+                recorder.finishRun(config.recordCoreIndicators, config.recordQualityBandPrice,
+                        nSimulation == config.N_SIMS);
+                transactionRecorder.finishRun(config.recordTransactions, config.recordNBidUpFrequency);
+                microDataRecorder.finishRun(config.recordHouseholdID, config.recordEmploymentIncome,
+                        config.recordRentalIncome, config.recordBankBalance, config.recordHousingWealth,
+                        config.recordTotalDebt, config.recordNHousesOwned, config.recordHousingStatus,
+                        config.recordAge, config.recordConsumption, config.recordSavingRate);
+                Precision.writeDiagnostics(simulationOutput.toPath(), nSimulation);
+                precisionDiagnosticsWritten = true;
+                PrecisionFragilityProbe.finishSimulation("complete");
+                fragilityDiagnosticsFinished = true;
+                PrecisionGateTrace.finishSimulation();
+                gateTraceFinished = true;
+            } catch (RuntimeException | Error failure) {
+                if (!precisionDiagnosticsWritten) {
+                    finishAfterFailure(failure,
+                            () -> Precision.writeDiagnostics(simulationOutput.toPath(), nSimulation));
+                }
+                if (!fragilityDiagnosticsFinished) {
+                    finishAfterFailure(failure,
+                            () -> PrecisionFragilityProbe.finishSimulation("aborted"));
+                }
+                if (!gateTraceFinished) {
+                    finishAfterFailure(failure, PrecisionGateTrace::finishSimulation);
+                }
+                throw failure;
+            }
         }
 
         // After the last simulation, clean up
         recorder.finish(config.recordCoreIndicators);
+    }
+
+    private static void finishAfterFailure(Throwable primary, Runnable cleanup) {
+        try {
+            cleanup.run();
+        } catch (RuntimeException | Error cleanupFailure) {
+            primary.addSuppressed(cleanupFailure);
+        }
     }
 
     private static void configureOutputCollectors(String phaseOutputFolder) {
@@ -317,24 +368,49 @@ public class Model {
         RngContext householdLoopContext = randomService.householdLoopContext(simulation, t);
         RngContext saleClearingContext = randomService.saleClearingContext(simulation, t);
         RngContext rentClearingContext = randomService.rentClearingContext(simulation, t);
+        PrecisionGateTrace.beginStep(nSimulation, t);
+        PrecisionFragilityProbe.beginStep(t);
         // Update population with births and deaths
+        PrecisionFragilityProbe.beginPhase(RngOrigin.DEMOGRAPHICS);
         demographics.step(demographicsContext);
+        PrecisionGateTrace.endPhase(
+                nSimulation, t, RngOrigin.DEMOGRAPHICS, randomService.legacyRawWordCount());
         // Update number of houses
+        PrecisionFragilityProbe.beginPhase(RngOrigin.CONSTRUCTION);
         construction.step(constructionContext);
+        PrecisionGateTrace.endPhase(
+                nSimulation, t, RngOrigin.CONSTRUCTION, randomService.legacyRawWordCount());
         // Updates regional households consumption, housing decisions, and corresponding regional bids and offers
-        for(Household h : households) h.step(householdLoopContext);
+        PrecisionFragilityProbe.beginPhase(RngOrigin.HOUSEHOLD_LOOP);
+        for (Household h : households) {
+            PrecisionFragilityProbe.setHousehold(h);
+            try {
+                h.step(householdLoopContext);
+            } finally {
+                PrecisionFragilityProbe.clearEntity();
+            }
+        }
+        PrecisionGateTrace.endPhase(
+                nSimulation, t, RngOrigin.HOUSEHOLD_LOOP, randomService.legacyRawWordCount());
+        PrecisionFragilityProbe.stopAfterHouseholdPhaseIfRequested();
         // Reset counters to store credit supply statistics
         creditSupply.preClearingResetCounters(t);
         // Store sale market bid and offer prices and averages before bids are matched by clearing the market
         housingMarketStats.preClearingRecord(t);
         // Clear sale market and updates the HPI
+        PrecisionFragilityProbe.beginPhase(RngOrigin.SALE_CLEARING);
         houseSaleMarket.clearMarket(saleClearingContext);
+        PrecisionGateTrace.endPhase(
+                nSimulation, t, RngOrigin.SALE_CLEARING, randomService.legacyRawWordCount());
         // Compute and store several housing market statistics after bids are matched by clearing the market (such as HPI, HPA)
         housingMarketStats.postClearingRecord();
         // Store rental market bid and offer prices and averages before bids are matched by clearing the market
         rentalMarketStats.preClearingRecord(t);
         // Clears rental market
+        PrecisionFragilityProbe.beginPhase(RngOrigin.RENT_CLEARING);
         houseRentalMarket.clearMarket(rentClearingContext);
+        PrecisionGateTrace.endPhase(
+                nSimulation, t, RngOrigin.RENT_CLEARING, randomService.legacyRawWordCount());
         // Compute and store several rental market statistics after bids are matched by clearing the market (such as HPI, HPA)
         rentalMarketStats.postClearingRecord();
         // Store household statistics after both regional markets have been cleared

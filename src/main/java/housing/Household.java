@@ -1,5 +1,7 @@
 package housing;
 
+import utilities.Precision;
+
 /**************************************************************************************************
  * This represents a household who receives an income, consumes, saves and can buy, sell, let, and
  * invest in houses.
@@ -62,10 +64,19 @@ public class Household implements IHouseOwner {
         incomePercentile = context.uniform(this, RandomEvent.HH_INCOME_PERCENTILE);
         behaviour = new HouseholdBehaviour(context, this, incomePercentile);
         // Find initial values for the annual and monthly gross employment income
-        annualGrossEmploymentIncome = data.EmploymentIncome.getAnnualGrossEmploymentIncome(age, incomePercentile);
-        monthlyGrossEmploymentIncome = annualGrossEmploymentIncome/config.constants.MONTHS_IN_YEAR;
-        bankBalance = data.Wealth.getDesiredBankBalance(getAnnualGrossTotalIncome(), behaviour.getPropensityToSave()); // Desired bank balance is used as initial value for actual bank balance
-        persistentLTILimit = -1; // Dummy value to catch usages before set up
+        annualGrossEmploymentIncome = Precision.store(
+                Precision.Field.HOUSEHOLD_ANNUAL_EMPLOYMENT_INCOME,
+                data.EmploymentIncome.getAnnualGrossEmploymentIncome(age, incomePercentile));
+        monthlyGrossEmploymentIncome = Precision.store(
+                Precision.Field.HOUSEHOLD_MONTHLY_EMPLOYMENT_INCOME,
+                annualGrossEmploymentIncome/config.constants.MONTHS_IN_YEAR);
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                data.Wealth.getDesiredBankBalance(
+                        getAnnualGrossTotalIncome(), behaviour.getPropensityToSave()));
+        persistentLTILimit = Precision.store(
+                Precision.Field.HOUSEHOLD_PERSISTENT_LTI_LIMIT,
+                -1); // Dummy value to catch usages before set up
     }
 
     static IdReservation reserveId() {
@@ -99,32 +110,57 @@ public class Household implements IHouseOwner {
     public void step(RngContext context) {
         isBankrupt = false; // Delete bankruptcies from previous time step
         // Update annual and monthly gross employment income
-        annualGrossEmploymentIncome = data.EmploymentIncome.getAnnualGrossEmploymentIncome(age, incomePercentile);
-        monthlyGrossEmploymentIncome = annualGrossEmploymentIncome/config.constants.MONTHS_IN_YEAR;
+        annualGrossEmploymentIncome = Precision.store(
+                Precision.Field.HOUSEHOLD_ANNUAL_EMPLOYMENT_INCOME,
+                data.EmploymentIncome.getAnnualGrossEmploymentIncome(age, incomePercentile));
+        monthlyGrossEmploymentIncome = Precision.store(
+                Precision.Field.HOUSEHOLD_MONTHLY_EMPLOYMENT_INCOME,
+                annualGrossEmploymentIncome/config.constants.MONTHS_IN_YEAR);
         // Update desired purchase price
-        desiredPurchasePrice = behaviour.updateDesiredPurchasePrice(
-                context, this, annualGrossEmploymentIncome);
+        desiredPurchasePrice = Precision.store(
+                Precision.Field.HOUSEHOLD_DESIRED_PURCHASE_PRICE,
+                behaviour.updateDesiredPurchasePrice(
+                        context, this, annualGrossEmploymentIncome));
         // desiredPurchasePrice = behaviour.getAltDesiredPurchasePrice(
         //         context, this, annualGrossEmploymentIncome, behaviour.decideLTV(context, this));
         // Record scheduled housing cash outflows before payments are made.
         recordHousingCashFlows();
         // Add monthly disposable income (net total income minus essential consumption and housing expenses) to bank balance
         double monthlyDisposableIncome = getMonthlyDisposableIncome();
-        bankBalance += monthlyDisposableIncome;
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                bankBalance + monthlyDisposableIncome);
         // Consume according to gross annual income, capped by current bank balance (after disposable income has been
         // added) and by a maximum fraction of the gross annual income that can be consumed a month
-        desiredConsumption = behaviour.getDesiredConsumption(bankBalance, getAnnualGrossTotalIncome(),
-                monthlyDisposableIncome);
-        desiredConsumption = Math.min(desiredConsumption,
-                getAnnualGrossTotalIncome()*config.MAXIMUM_CONSUMPTION_FRACTION);
-        bankBalance -= desiredConsumption;
+        desiredConsumption = Precision.store(
+                Precision.Field.HOUSEHOLD_DESIRED_CONSUMPTION,
+                behaviour.getDesiredConsumption(
+                        bankBalance, getAnnualGrossTotalIncome(), monthlyDisposableIncome));
+        desiredConsumption = Precision.store(
+                Precision.Field.HOUSEHOLD_DESIRED_CONSUMPTION,
+                Math.min(desiredConsumption,
+                        getAnnualGrossTotalIncome()*config.MAXIMUM_CONSUMPTION_FRACTION));
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                bankBalance - desiredConsumption);
         Model.householdStats.addNonHousingConsumption(desiredConsumption + getMonthlyEssentialConsumption());
         // Compute saving rate
-        savingRate = (monthlyDisposableIncome - desiredConsumption)/getMonthlyGrossTotalIncome();
+        savingRate = Precision.store(
+                Precision.Field.HOUSEHOLD_SAVING_RATE,
+                (monthlyDisposableIncome - desiredConsumption)/getMonthlyGrossTotalIncome());
         // Deal with bankruptcies
         // TODO: Improve bankruptcy procedures (currently, simple cash injection), such as terminating contracts!
-        if (bankBalance < 0.0) {
-            bankBalance = 1.0;
+        if (PrecisionFragilityProbe.branch(
+                "household.bank-balance-negative",
+                "post-consumption bankruptcy trigger",
+                PrecisionFragilityProbe.Operator.LESS_THAN,
+                "bankBalance",
+                bankBalance,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "zero",
+                0.0,
+                PrecisionFragilityProbe.OperandPolicy.FP64)) {
+            bankBalance = Precision.store(Precision.Field.HOUSEHOLD_BANK_BALANCE, 1.0);
             isBankrupt = true;
         }
         // Manage owned properties and close debts on previously owned properties. To this end, walk the
@@ -149,7 +185,9 @@ public class Household implements IHouseOwner {
                         + behaviour.isPropertyInvestor());
                 // ...always try to pay off this type of debt
                 MortgageAgreement mortgage = (MortgageAgreement) payment;
-                bankBalance -= mortgage.payoff(bankBalance);
+                bankBalance = Precision.store(
+                        Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                        bankBalance - mortgage.payoff(bankBalance));
                 // ...and remove it from the payments object as soon as the household manages to do so
                 if ((payment.nPayments == 0) & (mortgage.principal == 0.0)) {
                     housePayments.removeAt(paymentIdx);
@@ -315,7 +353,16 @@ public class Household implements IHouseOwner {
             if (context.timeStep() > forSale.getInitialListingTime()) {
                 // ...then update its price, if the new price is above the mortgage debt on this house
                 double newPrice = behaviour.rethinkHouseSalePrice(context, house, forSale);
-                if (newPrice > mortgageFor(house).principal) {
+                if (PrecisionFragilityProbe.branch(
+                        "household.sale-reprice-above-principal",
+                        "retain repriced sale listing",
+                        PrecisionFragilityProbe.Operator.GREATER_THAN,
+                        "newPrice[compute-local]",
+                        newPrice,
+                        PrecisionFragilityProbe.OperandPolicy.FP64,
+                        "principal",
+                        mortgageFor(house).principal,
+                        PrecisionFragilityProbe.OperandPolicy.REDUCED)) {
                     Model.houseSaleMarket.updateOffer(forSale, newPrice);
                 // ...otherwise, remove the offer from the sale market (note that investment properties will continue to be rented out)
                 } else {
@@ -384,7 +431,9 @@ public class Household implements IHouseOwner {
         }
         MortgageAgreement mortgage = Model.bank.requestLoan(this, sale.getPrice(),
                 desiredDownPayment, home == null);
-        bankBalance -= mortgage.downPayment;
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                bankBalance - mortgage.downPayment);
         Model.householdStats.addDownpaymentCashOutflow(mortgage.downPayment);
         housePayments.put(sale.getHouse(), mortgage);
         if (home == null) { // move in to house
@@ -403,10 +452,14 @@ public class Household implements IHouseOwner {
      ********************************************************/
     public void completeHouseSale(HouseOfferRecord sale) {
         // First, receive money from sale
-        bankBalance += sale.getPrice();
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                bankBalance + sale.getPrice());
         // Second, find mortgage object and pay off as much outstanding debt as possible given bank balance
         MortgageAgreement mortgage = mortgageFor(sale.getHouse());
-        bankBalance -= mortgage.payoff(bankBalance);
+        bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                bankBalance - mortgage.payoff(bankBalance));
         // Third, if there is no more outstanding debt, remove the house from the household's housePayments object
         if (mortgage.nPayments == 0) {
             housePayments.remove(sale.getHouse());
@@ -486,7 +539,9 @@ public class Household implements IHouseOwner {
         if(sale.getHouse().resident != null) System.out.println("Strange: tenant moving into an occupied house");
         // Create a new rental agreement with the agreed price and with a random length between a minimum and a maximum
         RentalAgreement rent = new RentalAgreement();
-        rent.monthlyPayment = sale.getPrice();
+        rent.monthlyPayment = Precision.store(
+                Precision.Field.PAYMENT_MONTHLY_PAYMENT,
+                sale.getPrice());
         rent.nPayments = config.TENANCY_LENGTH_MIN
                 + context.boundedInt(sale.getHouse(), RandomEvent.RENT_TENANCY_LENGTH,
                         config.TENANCY_LENGTH_MAX - config.TENANCY_LENGTH_MIN + 1);
@@ -508,7 +563,9 @@ public class Household implements IHouseOwner {
      ********************************************************/
     private void bidForAHome(RngContext context) {
         // Before any maximum mortgage price calculation, update the persistent LTI limit for this household
-        persistentLTILimit = Model.bank.getLoanToIncomeLimit(isFirstTimeBuyer());
+        persistentLTILimit = Precision.store(
+                Precision.Field.HOUSEHOLD_PERSISTENT_LTI_LIMIT,
+                Model.bank.getLoanToIncomeLimit(isFirstTimeBuyer()));
         // Find household's desired housing expenditure, capped to the maximum mortgage available to the household
         double price = Math.min(getDesiredPurchasePrice(), Model.bank.getMaxMortgagePrice(this, true));
         // Record the bid on householdStats for counting the number of bids above exponential moving average sale price
@@ -573,9 +630,13 @@ public class Household implements IHouseOwner {
     }
 
     private void recalculateMonthlyGrossRentalIncome() {
-        monthlyGrossRentalIncome = 0.0;
+        monthlyGrossRentalIncome = Precision.store(
+                Precision.Field.HOUSEHOLD_MONTHLY_RENTAL_INCOME,
+                0.0);
         for (int i = 0; i < rentalContracts.size(); i++) {
-            monthlyGrossRentalIncome += rentalContracts.valueAt(i).nextPayment();
+            monthlyGrossRentalIncome = Precision.store(
+                    Precision.Field.HOUSEHOLD_MONTHLY_RENTAL_INCOME,
+                    monthlyGrossRentalIncome + rentalContracts.valueAt(i).nextPayment());
         }
         monthlyGrossRentalIncomeDirty = false;
     }
@@ -635,13 +696,17 @@ public class Household implements IHouseOwner {
             }
             // If payment agreement is a mortgage, then try to pay off as much as possible from the deceased household's bank balance
             if (payment instanceof MortgageAgreement) {
-                bankBalance -= ((MortgageAgreement) payment).payoff();
+                bankBalance = Precision.store(
+                        Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                        bankBalance - ((MortgageAgreement) payment).payoff());
             }
             // Remove the house-paymentAgreement entry from the deceased household's housePayments object
             housePayments.removeAt(paymentIdx); // TODO: Not sure this is necessary. Note, though, that this implies erasing all outstanding debt
         }
         // Finally, transfer all remaining liquid wealth to the beneficiary household
-        beneficiary.bankBalance += Math.max(0.0, bankBalance);
+        beneficiary.bankBalance = Precision.store(
+                Precision.Field.HOUSEHOLD_BANK_BALANCE,
+                beneficiary.bankBalance + Math.max(0.0, bankBalance));
     }
     
     /**
@@ -655,11 +720,17 @@ public class Household implements IHouseOwner {
         // Create a null (zero payments) mortgage
         MortgageAgreement nullMortgage = new MortgageAgreement(this,false);
         nullMortgage.nPayments = 0;
-        nullMortgage.downPayment = 0.0;
-        nullMortgage.monthlyInterestRate = 0.0;
-        nullMortgage.monthlyPayment = 0.0;
-        nullMortgage.principal = 0.0; // If changed, trigger to re-try selling must be added to manageHouse, otherwise non-BTL households could keep BTL properties indefinitely
-        nullMortgage.purchasePrice = oldPurchasePrice;
+        nullMortgage.downPayment = Precision.store(Precision.Field.MORTGAGE_DOWN_PAYMENT, 0.0);
+        nullMortgage.monthlyInterestRate = Precision.store(
+                Precision.Field.MORTGAGE_MONTHLY_INTEREST_RATE, 0.0);
+        nullMortgage.monthlyPayment = Precision.store(
+                Precision.Field.PAYMENT_MONTHLY_PAYMENT, 0.0);
+        nullMortgage.principal = Precision.store(
+                Precision.Field.MORTGAGE_PRINCIPAL,
+                0.0); // If changed, trigger to re-try selling must be added to manageHouse, otherwise non-BTL households could keep BTL properties indefinitely
+        nullMortgage.purchasePrice = Precision.store(
+                Precision.Field.MORTGAGE_PURCHASE_PRICE,
+                oldPurchasePrice);
         // Become the owner of the inherited house and include it in my housePayments list (with a null mortgage)
         housePayments.put(h, nullMortgage);
         h.owner = this;

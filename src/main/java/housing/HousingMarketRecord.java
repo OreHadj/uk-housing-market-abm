@@ -1,6 +1,7 @@
 package housing;
 
 import utilities.ArrayOrderBook;
+import utilities.Precision;
 import utilities.PriorityQueue2D;
 
 /**************************************************************************************************
@@ -31,7 +32,7 @@ public abstract class HousingMarketRecord implements ArrayOrderBook.Slotted {
     //------------------------//
 
     HousingMarketRecord(double price) {
-        this.price = price;
+        this.price = Precision.store(Precision.Field.MARKET_RECORD_PRICE, price);
         id = id_pool++;
     }
 
@@ -149,5 +150,7 @@ public abstract class HousingMarketRecord implements ArrayOrderBook.Slotted {
 
     public double getPrice() { return price; }
 
-    public void setPrice(double newPrice) { price = newPrice; }
+    public void setPrice(double newPrice) {
+        price = Precision.store(Precision.Field.MARKET_RECORD_PRICE, newPrice);
+    }
 }

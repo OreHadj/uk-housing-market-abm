@@ -87,6 +87,8 @@ final class RandomService {
             RandomEvent event, int subcounter) {
         RngBackend backend = validateNonBounded(
                 context, entityKind, event, RngOperation.UNIFORM, subcounter);
+        PrecisionGateTrace.recordRequest(context.origin, backend, entityKind, entityId,
+                event, RngOperation.UNIFORM, subcounter, 0L);
         return switch (backend) {
             case MERSENNE -> requireLegacy().nextDouble();
             case PHILOX -> requireAddressed().uniform(masterSeed, context.simulation,
@@ -98,6 +100,8 @@ final class RandomService {
             RandomEvent event, int subcounter) {
         RngBackend backend = validateNonBounded(
                 context, entityKind, event, RngOperation.NORMAL, subcounter);
+        PrecisionGateTrace.recordRequest(context.origin, backend, entityKind, entityId,
+                event, RngOperation.NORMAL, subcounter, 0L);
         return switch (backend) {
             case MERSENNE -> requireLegacy().nextGaussian();
             case PHILOX -> requireAddressed().normal(masterSeed, context.simulation,
@@ -110,6 +114,8 @@ final class RandomService {
         LemireBoundedInt.validateBound(bound);
         RngBackend backend = validate(context, entityKind, event, RngOperation.BOUNDED_INT);
         int initialSubcounter = event.initialBoundedSubcounter();
+        PrecisionGateTrace.recordRequest(context.origin, backend, entityKind, entityId,
+                event, RngOperation.BOUNDED_INT, initialSubcounter, bound);
         return switch (backend) {
             case MERSENNE -> event.legacyConsumptionPolicy()
                     == LegacyConsumptionPolicy.FLOOR_OF_UNIFORM_BOUNDED
@@ -125,6 +131,8 @@ final class RandomService {
         Objects.requireNonNull(pdf, "pdf");
         RngBackend backend = validateNonBounded(
                 context, EntityKind.HOUSE, event, RngOperation.EMPIRICAL_PDF, subcounter);
+        PrecisionGateTrace.recordRequest(context.origin, backend, EntityKind.HOUSE, entityId,
+                event, RngOperation.EMPIRICAL_PDF, subcounter, 0L);
         return switch (backend) {
             case MERSENNE -> pdf.nextDouble(requireLegacy());
             case PHILOX -> pdf.sample(requireAddressed().uniform(masterSeed, context.simulation,
@@ -136,6 +144,9 @@ final class RandomService {
             double probabilityOfSuccess) {
         RngBackend backend = validateNonBounded(
                 context, EntityKind.HOUSE, event, RngOperation.GEOMETRIC, 0);
+        PrecisionGateTrace.recordRequest(context.origin, backend, EntityKind.HOUSE, entityId,
+                event, RngOperation.GEOMETRIC, 0,
+                Double.doubleToRawLongBits(probabilityOfSuccess));
         return switch (backend) {
             case MERSENNE -> new GeometricDistribution(
                     requireLegacy(), probabilityOfSuccess).sample();
@@ -170,6 +181,10 @@ final class RandomService {
             throw new IllegalStateException("RNG mode 'philox' has no Mersenne backend");
         }
         return legacy;
+    }
+
+    long legacyRawWordCount() {
+        return legacy == null ? 0L : ((MersenneRandom) legacy).rawWordCount();
     }
 
     private AddressedRandom requireAddressed() {

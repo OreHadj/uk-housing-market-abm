@@ -2,6 +2,8 @@ package housing;
 
 import java.util.Comparator;
 
+import utilities.Precision;
+
 /**************************************************************************************************
  * This class encapsulates information on a household that has placed a bid for a house on the
  * rental or the ownership housing market. One can think of it as the file an estate agent would
@@ -28,7 +30,9 @@ public class HouseBidderRecord extends HousingMarketRecord {
         super(price);
         this.bidder = h;
         this.BTLBid = BTLBid;
-        this.desiredDownPayment = desiredDownPayment;
+        this.desiredDownPayment = Precision.store(
+                Precision.Field.BID_DESIRED_DOWN_PAYMENT,
+                desiredDownPayment);
     }
 
     //----------------------//

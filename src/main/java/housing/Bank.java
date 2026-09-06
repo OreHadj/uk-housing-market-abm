@@ -1,5 +1,7 @@
 package housing;
 
+import utilities.Precision;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -292,9 +294,23 @@ public class Bank {
      */
     MortgageAgreement requestLoan(Household h, double housePrice, double desiredDownPayment, boolean isHome) {
         // Request the mortgage and create the MortgageAgreement object with all the required parameters
-        MortgageAgreement approval = requestApproval(h, housePrice, desiredDownPayment, isHome);
+        MortgageAgreement approval = requestApproval(
+                h,
+                housePrice,
+                desiredDownPayment,
+                isHome,
+                PrecisionFragilityProbe.ApprovalPurpose.COMMIT);
         // If this is an actual mortgage, i.e., with a non-zero principal...
-        if (approval.principal > 0.0) {
+        if (PrecisionFragilityProbe.branch(
+                "bank.loan-positive-principal",
+                "committed mortgage registration",
+                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                "principal",
+                approval.principal,
+                PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                "zero",
+                0.0,
+                PrecisionFragilityProbe.OperandPolicy.FP64)) {
             // ...add it to the Bank's HashSet of mortgages
             mortgages.add(approval);
             // ...add the principal to the new supply/demand of credit
@@ -306,15 +322,47 @@ public class Bank {
                 // ...differentiating between first-time buyers
                 if (h.isFirstTimeBuyer()) {
                     ++nFTBMortgages_New;
-                    if (approval.principal > h.getAnnualGrossEmploymentIncome()
-                            * centralBank.getFirstTimeBuyerSoftMaxLTI()) {
+                    double softLimitPrincipal = h.getAnnualGrossEmploymentIncome()
+                            * centralBank.getFirstTimeBuyerSoftMaxLTI();
+                    boolean overSoftLimit = approval.principal > softLimitPrincipal;
+                    if (PrecisionFragilityProbe.isEnabled()) {
+                        double annualIncome = h.getAnnualGrossEmploymentIncome();
+                        double softLimit = centralBank.getFirstTimeBuyerSoftMaxLTI();
+                        PrecisionFragilityProbe.branchDerived(
+                                "bank.committed-ftb-over-soft-lti",
+                                "committed FTB quota counter",
+                                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                                "principal",
+                                approval.principal,
+                                q -> Precision.quantiseForDiagnostics(approval.principal, q),
+                                "annualIncome*softLti",
+                                softLimitPrincipal,
+                                q -> Precision.quantiseForDiagnostics(annualIncome, q) * softLimit);
+                    }
+                    if (overSoftLimit) {
                         ++nFTBMortOverSoftMaxLTI_New;
                     }
                 // ...and home movers
                 } else {
                     ++nHMMortgages_New;
-                    if (approval.principal > h.getAnnualGrossEmploymentIncome()
-                            * centralBank.getHomeMoverSoftMaxLTI()) {
+                    double softLimitPrincipal = h.getAnnualGrossEmploymentIncome()
+                            * centralBank.getHomeMoverSoftMaxLTI();
+                    boolean overSoftLimit = approval.principal > softLimitPrincipal;
+                    if (PrecisionFragilityProbe.isEnabled()) {
+                        double annualIncome = h.getAnnualGrossEmploymentIncome();
+                        double softLimit = centralBank.getHomeMoverSoftMaxLTI();
+                        PrecisionFragilityProbe.branchDerived(
+                                "bank.committed-hm-over-soft-lti",
+                                "committed home-mover quota counter",
+                                PrecisionFragilityProbe.Operator.GREATER_THAN,
+                                "principal",
+                                approval.principal,
+                                q -> Precision.quantiseForDiagnostics(approval.principal, q),
+                                "annualIncome*softLti",
+                                softLimitPrincipal,
+                                q -> Precision.quantiseForDiagnostics(annualIncome, q) * softLimit);
+                    }
+                    if (overSoftLimit) {
                         ++nHMMortOverSoftMaxLTI_New;
                     }
                 }
@@ -342,6 +390,24 @@ public class Bank {
      * @return The MortgageApproval object
      */
     MortgageAgreement requestApproval(Household h, double housePrice, double desiredDownPayment, boolean isHome) {
+        return requestApproval(
+                h,
+                housePrice,
+                desiredDownPayment,
+                isHome,
+                PrecisionFragilityProbe.ApprovalPurpose.UNSPECIFIED);
+    }
+
+    /**
+     * Diagnostic-aware approval path. The purpose tag is observational: it does not change lending
+     * policy, but prevents stress mode from treating a state-mutating loan as a safe preview.
+     */
+    MortgageAgreement requestApproval(
+            Household h,
+            double housePrice,
+            double desiredDownPayment,
+            boolean isHome,
+            PrecisionFragilityProbe.ApprovalPurpose purpose) {
         // Create a MortgageAgreement object to store and return the new mortgage data
         MortgageAgreement approval = new MortgageAgreement(h, !isHome);
 
@@ -351,7 +417,10 @@ public class Bank {
 
         // Loan-To-Value (LTV) constraint: it sets a maximum value for the ratio of the principal divided by the house
         // price
-        approval.principal = housePrice * getLoanToValueLimit(h.isFirstTimeBuyer(), isHome);
+        double rawPrincipal = housePrice * getLoanToValueLimit(h.isFirstTimeBuyer(), isHome);
+        approval.principal = Precision.store(
+                Precision.Field.MORTGAGE_PRINCIPAL,
+                rawPrincipal);
 
         if (getNPayments(isHome, h.getAge()) > 0) {
 
@@ -365,12 +434,54 @@ public class Bank {
                 double affordable_principal = getHardMaxAffordability() * h.getMonthlyGrossEmploymentIncome()
                         / getMonthlyPaymentFactor(true, h.getAge());
                 if (getMonthlyPaymentFactor(true, h.getAge()) == 1.0) affordable_principal = 0.0;
-                approval.principal = Math.min(approval.principal, affordable_principal);
+                if (PrecisionFragilityProbe.isEnabled()) {
+                    double priorPrincipal = approval.principal;
+                    double monthlyIncome = h.getMonthlyGrossEmploymentIncome();
+                    double paymentFactor = getMonthlyPaymentFactor(true, h.getAge());
+                    double hardAffordability = getHardMaxAffordability();
+                    PrecisionFragilityProbe.branchDerived(
+                            "bank.approval-affordability-binds",
+                            purpose.name(),
+                            PrecisionFragilityProbe.Operator.GREATER_THAN,
+                            "principalBeforeAffordability",
+                            priorPrincipal,
+                            q -> Precision.quantiseForDiagnostics(priorPrincipal, q),
+                            "affordablePrincipal",
+                            affordable_principal,
+                            q -> paymentFactor == 1.0
+                                    ? 0.0
+                                    : hardAffordability
+                                            * Precision.quantiseForDiagnostics(monthlyIncome, q)
+                                            / paymentFactor);
+                }
+                rawPrincipal = Math.min(rawPrincipal, affordable_principal);
+                approval.principal = Precision.store(
+                        Precision.Field.MORTGAGE_PRINCIPAL,
+                        Math.min(approval.principal, affordable_principal));
                 // Loan-To-Income (LTI) constraint: it sets a maximum value for the principal divided by the household's
                 // annual gross employment income. The specific LTI limit used is that offered to the household in the
                 // approval in principle letter issued by the bank
                 double lti_principal = h.getAnnualGrossEmploymentIncome() * h.getPersistentLTILimit();
-                approval.principal = Math.min(approval.principal, lti_principal);
+                if (PrecisionFragilityProbe.isEnabled()) {
+                    double priorPrincipal = approval.principal;
+                    double annualIncome = h.getAnnualGrossEmploymentIncome();
+                    double persistentLti = h.getPersistentLTILimit();
+                    PrecisionFragilityProbe.branchDerived(
+                            "bank.approval-lti-binds",
+                            purpose.name(),
+                            PrecisionFragilityProbe.Operator.GREATER_THAN,
+                            "principalBeforeLti",
+                            priorPrincipal,
+                            q -> Precision.quantiseForDiagnostics(priorPrincipal, q),
+                            "annualIncome*persistentLti",
+                            lti_principal,
+                            q -> Precision.quantiseForDiagnostics(annualIncome, q)
+                                    * Precision.quantiseForDiagnostics(persistentLti, q));
+                }
+                rawPrincipal = Math.min(rawPrincipal, lti_principal);
+                approval.principal = Precision.store(
+                        Precision.Field.MORTGAGE_PRINCIPAL,
+                        Math.min(approval.principal, lti_principal));
 
                 /*
                  * Constraints specific to BTL mortgages
@@ -381,12 +492,26 @@ public class Bank {
                 // income divided by the relevant annual BTL financing payment
                 double icr_principal = Model.rentalMarketStats.getExpAvFlowYield() * housePrice
                         / (getHardMinICR() * getBTLAnnualPaymentRate(h.getAge()));
-                approval.principal = Math.min(approval.principal, icr_principal);
+                PrecisionFragilityProbe.branch(
+                        "bank.approval-icr-binds",
+                        purpose.name(),
+                        PrecisionFragilityProbe.Operator.GREATER_THAN,
+                        "principalBeforeIcr",
+                        approval.principal,
+                        PrecisionFragilityProbe.OperandPolicy.REDUCED,
+                        "icrPrincipal[compute-local]",
+                        icr_principal,
+                        PrecisionFragilityProbe.OperandPolicy.FP64);
+                rawPrincipal = Math.min(rawPrincipal, icr_principal);
+                approval.principal = Precision.store(
+                        Precision.Field.MORTGAGE_PRINCIPAL,
+                        Math.min(approval.principal, icr_principal));
             }
 
             // If number of payments is zero, then no principal is approved, purchase must be paid outright
         } else {
-            approval.principal = 0.0;
+            rawPrincipal = 0.0;
+            approval.principal = Precision.store(Precision.Field.MORTGAGE_PRINCIPAL, 0.0);
         }
 
         /*
@@ -395,7 +520,11 @@ public class Bank {
 
         // Start by assuming the minimum possible down-payment, i.e., that resulting from the above maximisation of the
         // principal available to the household, given its chosen house price
+        // Derived, not independently stored: principal + downPayment == housePrice must hold exactly.
+        // Quantising both breaks the identity by up to one ulp, which then violates affordability.
         approval.downPayment = housePrice - approval.principal;
+        double rawDownPayment = housePrice - rawPrincipal;
+        boolean downPaymentWasStored = false;
         // Determine the liquid wealth of the household, with no home equity added, as home-movers always sell their
         // homes before bidding for new ones
         double liquidWealth = h.getBankBalance();
@@ -406,8 +535,16 @@ public class Bank {
         // If the desired down-payment is larger than the initially assumed minimum possible down-payment, then set the
         // down-payment to the desired value and update the principal accordingly
         if (desiredDownPayment > approval.downPayment) {
-            approval.downPayment = desiredDownPayment;
-            approval.principal = housePrice - desiredDownPayment;
+            approval.downPayment = Precision.store(
+                    Precision.Field.MORTGAGE_DOWN_PAYMENT,
+                    desiredDownPayment);
+            // Derived from the stored down-payment so the identity holds exactly.
+            approval.principal = housePrice - approval.downPayment;
+            downPaymentWasStored = true;
+        }
+        if (desiredDownPayment > rawDownPayment) {
+            rawDownPayment = desiredDownPayment;
+            rawPrincipal = housePrice - rawDownPayment;
         }
 
         /*
@@ -415,18 +552,62 @@ public class Bank {
          */
 
         if (getNPayments(isHome, h.getAge()) > 0) {
-            approval.monthlyPayment = approval.principal * getMonthlyPaymentFactor(isHome, h.getAge());
+            approval.monthlyPayment = Precision.store(
+                    Precision.Field.PAYMENT_MONTHLY_PAYMENT,
+                    approval.principal * getMonthlyPaymentFactor(isHome, h.getAge()));
         } else {
-            approval.monthlyPayment = 0.0;
+            approval.monthlyPayment = Precision.store(
+                    Precision.Field.PAYMENT_MONTHLY_PAYMENT,
+                    0.0);
         }
         approval.nPayments = getNPayments(isHome, h.getAge());
-        approval.monthlyInterestRate = getMortgageInterestRate() / config.constants.MONTHS_IN_YEAR;
+        approval.monthlyInterestRate = Precision.store(
+                Precision.Field.MORTGAGE_MONTHLY_INTEREST_RATE,
+                getMortgageInterestRate() / config.constants.MONTHS_IN_YEAR);
+        // Derived: fully determined by the pair above.
         approval.purchasePrice = approval.principal + approval.downPayment;
-        // Throw error and stop program if requested mortgage has down-payment larger than household's liquid wealth
-        if (approval.downPayment > liquidWealth) {
-            System.out.println("Error at Bank.requestApproval(), down-payment larger than household's bank balance: "
-                    + "downpayment = " + approval.downPayment + ", bank balance = " + liquidWealth);
-            System.exit(0);
+        boolean validApproval;
+        if (PrecisionFragilityProbe.mode() == PrecisionFragilityProbe.Mode.SHADOW) {
+            PrecisionFragilityProbe.shadowMortgageApprovalInvariant(
+                    h,
+                    purpose,
+                    housePrice,
+                    rawPrincipal,
+                    rawDownPayment,
+                    liquidWealth,
+                    downPaymentWasStored);
+            validApproval = approval.downPayment <= liquidWealth;
+        } else {
+            double sourceGridSpacing = downPaymentWasStored
+                    ? Precision.gridSpacing(rawDownPayment, Precision.fractionBits())
+                    : Precision.gridSpacing(rawPrincipal, Precision.fractionBits());
+            String sourceRole = downPaymentWasStored
+                    ? "downPayment[stored]"
+                    : "downPayment[derived-from-principal]";
+            validApproval = PrecisionFragilityProbe.mortgageApprovalInvariant(
+                    h,
+                    purpose,
+                    rawDownPayment,
+                    approval.downPayment,
+                    liquidWealth,
+                    sourceGridSpacing,
+                    sourceRole);
+        }
+        // Throw unless stress mode has explicitly classified this call as a side-effect-free BTL preview.
+        if (!validApproval && !PrecisionFragilityProbe.mayContinueMortgageViolation(purpose)) {
+            throw new IllegalStateException(
+                    "Bank.requestApproval produced a down-payment larger than liquid wealth"
+                            + " at timeStep=" + Model.getTime()
+                            + ", householdId=" + h.id
+                            + ", housePrice=" + housePrice
+                            + ", desiredDownPayment=" + desiredDownPayment
+                            + ", principal=" + approval.principal
+                            + ", downPayment=" + approval.downPayment
+                            + ", liquidWealth=" + liquidWealth
+                            + ", approvalPurpose=" + purpose);
+        }
+        if (!validApproval) {
+            PrecisionFragilityProbe.markTainted();
         }
 
         return approval;
@@ -617,15 +798,47 @@ public class Bank {
         // Bank, differentiating between first-time buyers and home-movers
         if (isFTB) {
             ++Model.bank.nFTBMortgages_Prospec;
-            if (price > max_downpayment
-                    + annualGrossEmploymentIncome * Model.centralBank.getFirstTimeBuyerSoftMaxLTI()) {
+            double softLimit = Model.centralBank.getFirstTimeBuyerSoftMaxLTI();
+            double threshold = max_downpayment + annualGrossEmploymentIncome * softLimit;
+            boolean overSoftLimit = price > threshold;
+            if (PrecisionFragilityProbe.isEnabled()) {
+                PrecisionFragilityProbe.branchDerived(
+                        "bank.prospective-ftb-over-soft-lti",
+                        "accepted approval-in-principle quota counter",
+                        PrecisionFragilityProbe.Operator.GREATER_THAN,
+                        "bidPrice[compute-local]",
+                        price,
+                        q -> price,
+                        "liquidWealth+annualIncome*softLti",
+                        threshold,
+                        q -> Precision.quantiseForDiagnostics(max_downpayment, q)
+                                + Precision.quantiseForDiagnostics(
+                                        annualGrossEmploymentIncome, q) * softLimit);
+            }
+            if (overSoftLimit) {
                 ++Model.bank.nFTBMortOverSoftMaxLTI_Prospec;
             }
         // ...and home movers
         } else {
             ++Model.bank.nHMMortgages_Prospec;
-            if (price > max_downpayment
-                    + annualGrossEmploymentIncome * Model.centralBank.getHomeMoverSoftMaxLTI()) {
+            double softLimit = Model.centralBank.getHomeMoverSoftMaxLTI();
+            double threshold = max_downpayment + annualGrossEmploymentIncome * softLimit;
+            boolean overSoftLimit = price > threshold;
+            if (PrecisionFragilityProbe.isEnabled()) {
+                PrecisionFragilityProbe.branchDerived(
+                        "bank.prospective-hm-over-soft-lti",
+                        "accepted approval-in-principle quota counter",
+                        PrecisionFragilityProbe.Operator.GREATER_THAN,
+                        "bidPrice[compute-local]",
+                        price,
+                        q -> price,
+                        "liquidWealth+annualIncome*softLti",
+                        threshold,
+                        q -> Precision.quantiseForDiagnostics(max_downpayment, q)
+                                + Precision.quantiseForDiagnostics(
+                                        annualGrossEmploymentIncome, q) * softLimit);
+            }
+            if (overSoftLimit) {
                 ++Model.bank.nHMMortOverSoftMaxLTI_Prospec;
             }
         }
