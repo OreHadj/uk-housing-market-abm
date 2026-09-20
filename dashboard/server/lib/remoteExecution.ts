@@ -374,7 +374,7 @@ function mapSsmStatus(status: string): RemoteJobStatus {
   if (status === 'Success') {
     return 'succeeded';
   }
-  if (status === 'Cancelled' || status === 'Cancelling') {
+  if (status === 'Cancelled') {
     return 'canceled';
   }
   if (
@@ -1315,9 +1315,14 @@ export class RemoteExecutionManager {
     }
     if (job.ssmCommandId) {
       await this.adapter.cancelCommand(this.config.runnerInstanceId, job.ssmCommandId);
+      // Cancellation is asynchronous. Keep the job active until SSM confirms a terminal state,
+      // so a following delete cannot remove artifacts while the runner is still writing them.
+      const invocation = await this.adapter.getCommandInvocation(this.config.runnerInstanceId, job.ssmCommandId);
+      job.status = invocation ? mapSsmStatus(invocation.status) : 'running';
+    } else {
+      job.status = 'canceled';
     }
-    job.status = 'canceled';
-    job.endedAt = isoNow();
+    if (TERMINAL_STATUSES.has(job.status)) job.endedAt = isoNow();
     await this.saveIndex(index);
     await this.startQueuedRemoteJobs(index);
     return { job: this.toExperimentJobSummary(job) };

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   KpiMetricKey,
@@ -31,6 +31,10 @@ import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shar
 import { formatModelOptionLabel } from '../../../lib/modelAnchors';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
+import { ExperimentRunProgress } from './ExperimentRunProgress';
+import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
+import { useResultsTopNavigation } from './useResultsTopNavigation';
+import { getResultsQueueRows } from '../../../lib/resultsQueue';
 
 const KPI_OPTIONS = SELECTABLE_KPI_KEYS.map((key) => ({ key, ...KPI_LABELS[key] }));
 
@@ -62,6 +66,11 @@ function statusClass(status: SensitivityExperimentSummary['status']): string {
 
 function formatStatus(status: SensitivityExperimentSummary['status']): string {
   return status.replace('_', ' ');
+}
+
+function formatQueueTimestamp(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 function isFinishedStatus(status: SensitivityExperimentSummary['status']): boolean {
@@ -206,6 +215,7 @@ function formatExperimentOptionLabel(experiment: SensitivityExperimentSummary): 
 }
 
 export function SensitivityResultsView({
+  canWrite,
   canDownloadResults,
   canDeleteResults,
   deleteKeyRequired,
@@ -216,10 +226,15 @@ export function SensitivityResultsView({
   sidebarSubtitle
 }: SensitivityResultsViewProps) {
   const [experiments, setExperiments] = useState<SensitivityExperimentSummary[]>([]);
-  const [selectedExperimentId, setSelectedExperimentId] = useState<string>('');
-  const [detail, setDetail] = useState<SensitivityExperimentMetadata | null>(null);
-  const [results, setResults] = useState<SensitivityExperimentResultsPayload | null>(null);
-  const [charts, setCharts] = useState<SensitivityExperimentChartsPayload | null>(null);
+  // The route is the single selection source. A click and a history refresh cannot fight over it.
+  const selectedExperimentId = requestedExperimentId || experiments[0]?.experimentId || '';
+  const { selectionRef, requestScrollToTop } = useResultsTopNavigation();
+  const [loadedDetail, setDetail] = useState<SensitivityExperimentMetadata | null>(null);
+  const [loadedResults, setResults] = useState<SensitivityExperimentResultsPayload | null>(null);
+  const [loadedCharts, setCharts] = useState<SensitivityExperimentChartsPayload | null>(null);
+  const detail = loadedDetail?.experimentId === selectedExperimentId ? loadedDetail : null;
+  const results = loadedResults?.experimentId === selectedExperimentId ? loadedResults : null;
+  const charts = loadedCharts?.experimentId === selectedExperimentId ? loadedCharts : null;
   const [selectedIndicatorId, setSelectedIndicatorId] = useState<string>('');
   const [selectedKpiKey, setSelectedKpiKey] = useState<KpiMetricKey>('mean');
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
@@ -227,36 +242,43 @@ export function SensitivityResultsView({
   const [isDownloadingExperiment, setIsDownloadingExperiment] = useState<boolean>(false);
   const [isDeletingExperimentId, setIsDeletingExperimentId] = useState<string>('');
   const [pageError, setPageError] = useState<string>('');
+  const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
+  const removedExperimentIds = useRef(new Set<string>());
+  const stopDeletion = useStopAndDeleteExperiment({
+    canWrite, canDeleteResults, deleteKeyRequired,
+    onDeleted: ({ id }) => {
+      removedExperimentIds.current.add(id);
+      setExperiments((current) => current.filter((experiment) => experiment.experimentId !== id));
+      if (selectedExperimentId === id) {
+        setDetail(null);
+        setResults(null);
+        setCharts(null);
+        onSelectedExperimentIdChange('');
+      }
+    }
+  });
   const activeExperiments = useMemo(
-    () => experiments.filter((experiment) => experiment.status === 'queued' || experiment.status === 'running'),
-    [experiments]
+    () => {
+      const active = experiments.filter((experiment) => experiment.status === 'queued' || experiment.status === 'running' || stopDeletion.pending?.jobRef === `sensitivity:${experiment.experimentId}`);
+      return active;
+    },
+    [experiments, stopDeletion.pending?.jobRef]
   );
+  const selectedExperimentStatus = experiments.find((experiment) => experiment.experimentId === selectedExperimentId)?.status;
+  const { preview: queuePreviewExperiment, waitingCount, visibleRemaining: remainingQueueExperiments } = getResultsQueueRows(activeExperiments, isQueueExpanded);
 
   useEffect(() => {
-    // Wait for the experiment list to load before syncing the selection back to the URL. On mount
-    // selectedExperimentId is '' while a requested experimentId may be present in the URL; writing
-    // that empty selection back would strip experimentId out of the URL and bounce the user out of
-    // the results view before the experiment list has loaded (the "View results" button appears to
-    // do nothing). Once history has loaded, the effect below resolves the requested id.
-    if (isLoadingHistory) {
-      return;
+    // Fill an absent selection once; never write an older local selection over an explicit URL.
+    if (!isLoadingHistory && !requestedExperimentId && selectedExperimentId) {
+      onSelectedExperimentIdChange(selectedExperimentId);
     }
-    if (requestedExperimentId === selectedExperimentId) {
-      return;
-    }
-    onSelectedExperimentIdChange(selectedExperimentId);
   }, [isLoadingHistory, onSelectedExperimentIdChange, requestedExperimentId, selectedExperimentId]);
 
   const refreshHistory = async () => {
     try {
       const payload = await fetchSensitivityExperiments();
-      setExperiments(payload.experiments);
-      setSelectedExperimentId((current) => {
-        if (current && payload.experiments.some((item) => item.experimentId === current)) {
-          return current;
-        }
-        return payload.experiments[0]?.experimentId ?? '';
-      });
+      const availableExperiments = payload.experiments.filter((experiment) => !removedExperimentIds.current.has(experiment.experimentId));
+      setExperiments(availableExperiments);
     } catch (error) {
       if (!isRetryableApiError(error)) {
         setPageError((error as Error).message);
@@ -266,11 +288,12 @@ export function SensitivityResultsView({
     }
   };
 
-  const refreshDetail = async (experimentId: string) => {
+  const refreshDetail = async (experimentId: string, isCurrent: () => boolean) => {
     if (!experimentId) {
       setDetail(null);
       setResults(null);
       setCharts(null);
+      setIsLoadingDetail(false);
       return;
     }
 
@@ -282,6 +305,7 @@ export function SensitivityResultsView({
         fetchSensitivityExperimentCharts(experimentId)
       ]);
 
+      if (!isCurrent() || removedExperimentIds.current.has(experimentId)) return;
       setDetail(detailPayload.experiment);
       setResults(resultsPayload);
       setCharts(chartsPayload);
@@ -292,11 +316,11 @@ export function SensitivityResultsView({
         return chartsPayload.deltaTrend[0]?.indicatorId ?? '';
       });
     } catch (error) {
-      if (!isRetryableApiError(error)) {
+      if (isCurrent() && !removedExperimentIds.current.has(experimentId) && !isRetryableApiError(error)) {
         setPageError((error as Error).message);
       }
     } finally {
-      setIsLoadingDetail(false);
+      if (isCurrent()) setIsLoadingDetail(false);
     }
   };
 
@@ -340,20 +364,10 @@ export function SensitivityResultsView({
   }, []);
 
   useEffect(() => {
-    if (!requestedExperimentId || experiments.length === 0) {
-      return;
-    }
-
-    if (!experiments.some((experiment) => experiment.experimentId === requestedExperimentId)) {
-      return;
-    }
-
-    setSelectedExperimentId(requestedExperimentId);
-  }, [experiments, requestedExperimentId]);
-
-  useEffect(() => {
-    void refreshDetail(selectedExperimentId);
-  }, [selectedExperimentId]);
+    let cancelled = false;
+    void refreshDetail(selectedExperimentId, () => !cancelled);
+    return () => { cancelled = true; };
+  }, [selectedExperimentId, selectedExperimentStatus]);
 
   const activeDeltaSeries = useMemo(() => {
     if (!charts || !selectedIndicatorId) {
@@ -432,8 +446,10 @@ export function SensitivityResultsView({
     setIsDeletingExperimentId(experimentId);
     try {
       await deleteSensitivityExperiment(experimentId, deleteKey ?? undefined);
+      removedExperimentIds.current.add(experimentId);
+      setExperiments((current) => current.filter((experiment) => experiment.experimentId !== experimentId));
       if (selectedExperimentId === experimentId) {
-        setSelectedExperimentId('');
+        onSelectedExperimentIdChange('');
         setDetail(null);
         setResults(null);
         setCharts(null);
@@ -449,6 +465,29 @@ export function SensitivityResultsView({
   const sweptPolicy = useMemo(() => describeSweptPolicy(detail), [detail]);
   const sweepSummary = useMemo(() => describeSweepSummary(detail), [detail]);
 
+  const selectExperiment = (experimentId: string) => {
+    setPageError('');
+    onSelectedExperimentIdChange(experimentId);
+  };
+
+  const viewRunResults = (experimentId: string) => {
+    if (experimentId !== selectedExperimentId) selectExperiment(experimentId);
+    requestScrollToTop();
+  };
+
+  const renderStopAndDeleteButton = (experiment: SensitivityExperimentSummary) => canWrite && canDeleteResults && (
+    <button
+      type="button"
+      className="danger-button"
+      disabled={Boolean(stopDeletion.pending)}
+      onClick={() => void stopDeletion.stopAndDelete(`sensitivity:${experiment.experimentId}`, experiment.title || experiment.experimentId)}
+    >
+      {stopDeletion.pending?.jobRef === `sensitivity:${experiment.experimentId}`
+        ? stopDeletion.pending.phase === 'stopping' ? 'Stopping…' : 'Deleting…'
+        : 'Cancel'}
+    </button>
+  );
+
   const loginPath = `/login?next=${encodeURIComponent(
     buildExperimentsPath({
       ...DEFAULT_EXPERIMENT_ROUTE_STATE,
@@ -461,34 +500,87 @@ export function SensitivityResultsView({
   return (
     <section className="results-layout">
       {pageError && <p className="error-banner">{pageError}</p>}
+      {stopDeletion.error && (
+        <div className="error-banner" role="alert">
+          <p>{stopDeletion.error}</p>
+          {stopDeletion.retry && <button type="button" className="danger-button" onClick={() => void stopDeletion.retry?.()}>Retry cancellation</button>}
+        </div>
+      )}
+      {stopDeletion.pending && (
+        <p className="info-banner" role="status">
+          {stopDeletion.pending.phase === 'stopping' ? 'Stopping' : 'Deleting'} run “{stopDeletion.pending.title}”…
+        </p>
+      )}
 
-      {activeExperiments.length > 0 && (
-        <CollapsibleSection
-          className="results-card run-queue-card sensitivity-run-queue-card"
-          title="Queue"
-          description="Sensitivity analyses that are running or waiting to run."
-          summary={`${activeExperiments.length} active ${activeExperiments.length === 1 ? 'run' : 'runs'}`}
-          defaultOpen={queueInitiallyExpanded}
-        >
-          <ul className="run-list sensitivity-run-history-list">
-            {activeExperiments.map((experiment) => (
-              <li key={experiment.experimentId} className="run-item">
-                <div className="run-item-head">
+      {queuePreviewExperiment && (
+        <article className="results-card run-queue-card sensitivity-run-queue-card">
+          <div className="disclosure-preview-head">
+            <div className="disclosure-preview-title">
+              <h3>Queue</h3>
+              <p>
+                {waitingCount} other queued {waitingCount === 1 ? 'run' : 'runs'}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="disclosure-preview-toggle"
+              aria-expanded={isQueueExpanded}
+              onClick={() => setIsQueueExpanded((current) => !current)}
+              disabled={waitingCount === 0}
+            >
+              {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
+            </button>
+          </div>
+
+          <div className="run-preview-card is-static">
+            <span className="run-preview-title">
+              {queuePreviewExperiment.title || queuePreviewExperiment.experimentId}
+            </span>
+            <span className="run-preview-meta">
+              <span className="status-pill partial">
+                {stopDeletion.pending?.jobRef === `sensitivity:${queuePreviewExperiment.experimentId}`
+                  ? stopDeletion.pending.phase === 'stopping' ? 'Stopping…' : 'Deleting…'
+                  : queuePreviewExperiment.status === 'running' ? 'In progress' : 'Queued'}
+              </span>
+              {(queuePreviewExperiment.status === 'running' || queuePreviewExperiment.status === 'queued') && (
+                <ExperimentRunProgress
+                  key={queuePreviewExperiment.experimentId}
+                  jobRef={`sensitivity:${queuePreviewExperiment.experimentId}`}
+                  title={queuePreviewExperiment.title || queuePreviewExperiment.experimentId}
+                  status={queuePreviewExperiment.status}
+                />
+              )}
+              <span>{formatQueueTimestamp(queuePreviewExperiment.createdAt)}</span>
+              {renderStopAndDeleteButton(queuePreviewExperiment)}
+            </span>
+            <span className="run-preview-meta">
+              <span>Instrument: {queuePreviewExperiment.parameter.title}</span>
+            </span>
+          </div>
+
+          {remainingQueueExperiments.length > 0 && (
+            <ul className="job-list run-queue-list">
+              {remainingQueueExperiments.map((experiment) => (
+                <li key={experiment.experimentId} className="job-item">
                   <strong>{experiment.title || experiment.experimentId}</strong>
-                  <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
-                </div>
-                <p>Instrument: {experiment.parameter.title}</p>
-                <button
-                  type="button"
-                  className="run-select-btn"
-                  onClick={() => setSelectedExperimentId(experiment.experimentId)}
-                >
-                  View run
-                </button>
-              </li>
-            ))}
-          </ul>
-        </CollapsibleSection>
+                  <p className="run-preview-meta">
+                    <span className="status-pill partial">
+                      {stopDeletion.pending?.jobRef === `sensitivity:${experiment.experimentId}`
+                        ? stopDeletion.pending.phase === 'stopping' ? 'Stopping…' : 'Deleting…'
+                        : experiment.status === 'running' ? 'In progress' : 'Queued'}
+                    </span>
+                    {(experiment.status === 'running' || experiment.status === 'queued') && (
+                      <ExperimentRunProgress jobRef={`sensitivity:${experiment.experimentId}`} title={experiment.title || experiment.experimentId} status={experiment.status} />
+                    )}
+                  </p>
+                  <p>Instrument: {experiment.parameter.title}</p>
+                  <p>{formatQueueTimestamp(experiment.createdAt)}</p>
+                  <div className="job-actions-row">{renderStopAndDeleteButton(experiment)}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
       )}
 
       <article className="results-card sensitivity-summary-card">
@@ -522,11 +614,15 @@ export function SensitivityResultsView({
           <label>
             <span>Select run to view</span>
             <select
+              ref={selectionRef}
               value={selectedExperimentId}
               disabled={isLoadingHistory || experiments.length === 0}
-              onChange={(event) => setSelectedExperimentId(event.target.value)}
+              onChange={(event) => selectExperiment(event.target.value)}
             >
               {experiments.length === 0 && <option value="">No sensitivity analyses yet</option>}
+              {selectedExperimentId && !experiments.some((experiment) => experiment.experimentId === selectedExperimentId) && (
+                <option value={selectedExperimentId}>{detail?.title || selectedExperimentId}</option>
+              )}
               {experiments.map((experiment) => (
                 <option key={experiment.experimentId} value={experiment.experimentId}>
                   {formatExperimentOptionLabel(experiment)}
@@ -534,7 +630,9 @@ export function SensitivityResultsView({
               ))}
             </select>
             {selectedExperiment && (
-              <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
+              <span className="run-preview-meta">
+                <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
+              </span>
             )}
           </label>
         </div>
@@ -545,7 +643,7 @@ export function SensitivityResultsView({
           <p className="info-banner">
             No sensitivity analyses yet. <Link to="/sensitivity/new">Create one to begin.</Link>
           </p>
-        ) : isLoadingDetail ? (
+        ) : isLoadingDetail || (selectedExperimentId && !detail && !pageError) ? (
           <p className="loading-banner">Loading experiment detail...</p>
         ) : !detail ? (
           <p className="info-banner">Select a sensitivity analysis to view its results.</p>
@@ -848,9 +946,11 @@ export function SensitivityResultsView({
                     <button
                       type="button"
                       className={`run-select-btn ${isSelected ? 'active' : ''}`}
-                      onClick={() => setSelectedExperimentId(experiment.experimentId)}
+                      onClick={() => viewRunResults(experiment.experimentId)}
+                      disabled={!isFinishedStatus(experiment.status)}
+                      title={!isFinishedStatus(experiment.status) ? 'Results are available when the run finishes. Progress is shown in the queue.' : undefined}
                     >
-                      {isSelected ? 'Viewing this run' : 'View run'}
+                      View results
                     </button>
                     {canDeleteResults && (
                       <button

@@ -1882,9 +1882,6 @@ export function ValidationPage({
         onPurposeBack={isCombinedValidationDemo ? modelEvidenceDemo?.onPurposeBack : undefined}
         finishLabel={isCombinedValidationDemo ? 'Finish and inspect Validation' : undefined}
         pauseLabel={isCombinedValidationDemo ? 'Pause demo' : undefined}
-        pausePrompt={isCombinedValidationDemo
-          ? 'Pause the Model evidence demo and keep your progress for this tab?'
-          : undefined}
         primaryVersion={selectedVersion}
         isCompareChecked={isComparisonPickerOpen}
         sortMetricId={sortMetricId}

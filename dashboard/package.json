@@ -22,6 +22,7 @@
     "test:smoke": "node --import tsx/esm tests/smoke.test.ts",
     "test:policy-wizard": "node --import tsx/esm tests/policy-wizard.test.ts",
     "test:policy-experiment-demo": "node --import tsx/esm tests/policy-experiment-demo.test.ts",
+    "test:experiment-demo-coordinator": "node --import tsx/esm tests/experiment-demo-coordinator.test.ts",
     "test:sensitivity-wizard": "node --import tsx/esm tests/sensitivity-wizard.test.ts",
     "test:calibration-demo": "node --import tsx/esm tests/calibration-demo.test.ts",
     "test:model-evidence-demo": "node --import tsx/esm tests/model-evidence-demo.test.ts",

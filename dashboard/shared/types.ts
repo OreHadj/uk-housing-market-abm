@@ -1041,6 +1041,7 @@ export interface ModelRunSubmitRequest {
   title?: string;
   overrides: Record<string, number | boolean>;
   maxWorkers?: number;
+  /** Authorises replacement of existing results; runtime warnings are always advisory. */
   confirmWarnings?: boolean;
 }
 
@@ -1112,6 +1113,7 @@ export interface SensitivityExperimentCreateRequest {
   sampleCount?: number;
   overrides?: Record<string, number | boolean>;
   maxWorkers?: number;
+  /** Retained for older clients. Sensitivity warnings no longer require confirmation. */
   confirmWarnings?: boolean;
 }
 

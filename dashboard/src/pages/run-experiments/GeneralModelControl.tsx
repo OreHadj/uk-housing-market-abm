@@ -23,6 +23,11 @@ interface GeneralModelControlProps {
   defaultOpen?: boolean;
   includeFixedControls?: boolean;
   embedded?: boolean;
+  recordSettingsOpen?: boolean;
+  onRecordSettingsOpenChange?: (open: boolean) => void;
+  recordSettingsDemoTarget?: string;
+  recordSettingsContentDemoTarget?: string;
+  fixedRecordingDemoTarget?: string;
 }
 
 export function isRecordSetting(parameter: ModelRunParameterDefinition): boolean {
@@ -109,7 +114,12 @@ export function GeneralModelControl({
   showRecordSettings = true,
   defaultOpen = false,
   includeFixedControls = false,
-  embedded = false
+  embedded = false,
+  recordSettingsOpen,
+  onRecordSettingsOpenChange,
+  recordSettingsDemoTarget,
+  recordSettingsContentDemoTarget,
+  fixedRecordingDemoTarget
 }: GeneralModelControlProps) {
   const disabledKeys = new Set(disabledParameterKeys);
   const visibleParameters = parameters
@@ -180,6 +190,11 @@ export function GeneralModelControl({
           formValues={formValues}
           executionDisabled={executionDisabled}
           onFormValueChange={onFormValueChange}
+          open={recordSettingsOpen}
+          onOpenChange={onRecordSettingsOpenChange}
+          demoTarget={recordSettingsDemoTarget}
+          contentDemoTarget={recordSettingsContentDemoTarget}
+          fixedRecordingDemoTarget={fixedRecordingDemoTarget}
         />
       )}
     </>
@@ -207,6 +222,11 @@ interface RecordSettingsControlProps {
   formValues: Record<string, FormValue>;
   executionDisabled: boolean;
   onFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
+  contentDemoTarget?: string;
+  fixedRecordingDemoTarget?: string;
 }
 
 export function RecordSettingsControl({
@@ -214,11 +234,21 @@ export function RecordSettingsControl({
   parameters,
   formValues,
   executionDisabled,
-  onFormValueChange
+  onFormValueChange,
+  open,
+  onOpenChange,
+  demoTarget,
+  contentDemoTarget,
+  fixedRecordingDemoTarget
 }: RecordSettingsControlProps) {
   if (mode === 'sensitivity') {
     return (
-      <section className="sensitivity-recording-settings" aria-labelledby="sensitivity-recording-settings-heading">
+      <section
+        className="sensitivity-recording-settings"
+        aria-labelledby="sensitivity-recording-settings-heading"
+        tabIndex={fixedRecordingDemoTarget ? -1 : undefined}
+        data-experiment-demo-target={fixedRecordingDemoTarget}
+      >
         <h4 id="sensitivity-recording-settings-heading">Recording settings</h4>
         <p className="sensitivity-recording-note">
           Transaction, bid-up, quality-band and household microdata files are unavailable for sensitivity analyses.
@@ -233,8 +263,12 @@ export function RecordSettingsControl({
       <CollapsibleSection
         title={mode === 'manual' ? 'Additional data exports' : 'Record settings'}
         defaultOpen={false}
+        open={open}
+        onOpenChange={onOpenChange}
         summary={mode === 'manual' ? 'Optional transaction and household-level files' : `${parameters.length} controls`}
         className="record-settings-control"
+        experimentDemoTarget={demoTarget}
+        experimentDemoContentTarget={contentDemoTarget}
       >
         {mode === 'manual' && (
           <p className="additional-data-exports-intro">

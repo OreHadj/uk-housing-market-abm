@@ -365,7 +365,6 @@ interface ValidationDemoPrototypeProps extends ValidationDemoRuntimeState {
   onPurposeBack?: () => void;
   finishLabel?: string;
   pauseLabel?: string;
-  pausePrompt?: string;
   representativeThemeId: string;
   representativeMetricId: string;
   onRetryComparison: () => void;
@@ -640,7 +639,6 @@ export function ValidationDemoPrototype({
   onPurposeBack,
   finishLabel = 'Finish and inspect page',
   pauseLabel = 'Exit demo',
-  pausePrompt = 'Pause the Validation demo and keep your progress for this tab?',
   primaryVersion,
   isCompareChecked,
   sortMetricId,
@@ -1034,7 +1032,7 @@ export function ValidationDemoPrototype({
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.repeat) {
         event.preventDefault();
-        if (window.confirm(pausePrompt)) pauseWalkthrough();
+        pauseWalkthrough();
         return;
       }
 
@@ -1066,7 +1064,7 @@ export function ValidationDemoPrototype({
       document.removeEventListener('keydown', handleKeyDown, true);
       document.removeEventListener('focusin', handleFocusIn, true);
     };
-  }, [currentStep, isVisible, pausePrompt, pauseWalkthrough, targetState]);
+  }, [currentStep, isVisible, pauseWalkthrough, targetState]);
 
   const scrimStyles = useMemo(
     () => buildScrimStyles(targetState === 'ready' ? spotlight : null),

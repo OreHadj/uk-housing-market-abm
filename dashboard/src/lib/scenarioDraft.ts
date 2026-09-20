@@ -17,6 +17,8 @@ export interface ScenarioDraftV1 {
   basePolicy: BasePolicyId;
   formValues: Record<string, FormValue>;
   maxWorkers: string;
+  /** The last setup section visited, within the five-step policy builder. */
+  currentStep?: number;
   /** Builder fields fixed by the workflow that created this draft. Ordinary drafts omit it. */
   lockedParameterKeys?: string[];
 }
@@ -51,6 +53,9 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
       basePolicy: typeof parsed.basePolicy === 'string' ? parsed.basePolicy : '2024',
       formValues: parsed.formValues && typeof parsed.formValues === 'object' ? parsed.formValues : {},
       maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1',
+      ...(typeof parsed.currentStep === 'number' && Number.isInteger(parsed.currentStep) && parsed.currentStep >= 0 && parsed.currentStep <= 4
+        ? { currentStep: parsed.currentStep }
+        : {}),
       ...(lockedParameterKeys.length > 0 ? { lockedParameterKeys } : {})
     };
   } catch {
@@ -60,6 +65,14 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
 
 export function writeScenarioDraft(draftId: string, draft: ScenarioDraftV1): void {
   if (draftId) sessionStorage.setItem(scenarioDraftStorageKey(draftId), JSON.stringify(draft));
+}
+
+export function updateScenarioDraftStep(draftId: string, currentStep: number): boolean {
+  if (!Number.isInteger(currentStep) || currentStep < 0 || currentStep > 4) return false;
+  const draft = readScenarioDraft(draftId);
+  if (!draft) return false;
+  writeScenarioDraft(draftId, { ...draft, currentStep });
+  return true;
 }
 
 export function clearScenarioDraft(draftId: string): void {

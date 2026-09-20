@@ -1580,7 +1580,8 @@ export function prepareModelRunSubmission(
     });
   }
 
-  if (warnings.length > 0 && payload.confirmWarnings !== true) {
+  // Runtime/output-size warnings are advisory. Only replacing saved results needs consent.
+  if (warnings.some((warning) => warning.code === 'output_folder_exists') && payload.confirmWarnings !== true) {
     return {
       accepted: false,
       warnings

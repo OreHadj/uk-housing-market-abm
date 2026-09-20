@@ -1788,14 +1788,7 @@ export function prepareSensitivityExperimentSubmission(
   } = validatePayload(pathsInput, payload);
   const { warnings, warningSummary } = buildWarnings(valuesByKey, policyPackage, samplePoints, policyBindingValues);
 
-  if (warnings.length > 0 && payload.confirmWarnings !== true) {
-    return {
-      accepted: false,
-      warnings,
-      warningSummary
-    };
-  }
-
+  // Workload and policy-binding warnings travel with the experiment; they do not block Start.
   const now = options.now ?? new Date();
   const experimentId = options.forcedExperimentId
     ? validateForcedExperimentId(options.forcedExperimentId)

@@ -13,6 +13,7 @@ interface UkHousingDesktopSupportBundleExportResult {
 }
 
 interface UkHousingDesktopApi {
+  getAppVersion: () => Promise<string>;
   getApiAuthToken: () => Promise<string>;
   openResultsFolder: () => Promise<UkHousingDesktopFolderOpenResult>;
   openLogsFolder: () => Promise<UkHousingDesktopFolderOpenResult>;

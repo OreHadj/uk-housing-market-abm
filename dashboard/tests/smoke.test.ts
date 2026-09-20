@@ -6638,15 +6638,15 @@ try {
     'Expected the runtime warning above 50 seeds'
   );
 
-  const warningResponse = submitModelRun(modelRunFixtureRoot, {
+  const warningResponse = prepareModelRunSubmission(modelRunFixtureRoot, {
     baseline: 'v1.0',
     title: 'warning-check',
     overrides: { N_STEPS: 5001 },
     confirmWarnings: false
   });
-  assert.equal(warningResponse.accepted, false, 'Expected submit to request explicit warning confirmation');
-  assert.ok((warningResponse.warnings?.length ?? 0) > 0, 'Expected warning payload when confirmation is missing');
-  assert.equal(listModelRunJobs().length, 0, 'Expected warning-only submit not to enqueue a job');
+  assert.ok(warningResponse.accepted, 'Expected runtime warnings to allow starting without confirmation');
+  assert.ok(warningResponse.prepared.warnings.length > 0, 'Expected advisory warnings to remain available');
+  assert.equal(listModelRunJobs().length, 0, 'Preparing a submission must not enqueue a job');
 
   markSmokeStep('checking cross-era manual base-policy config');
   __resetModelRunManagerForTests();
@@ -6771,15 +6771,15 @@ try {
     'Expected successful run output folder to persist'
   );
 
-  const warningCoreIndicatorsOff = submitModelRun(modelRunFixtureRoot, {
+  const warningCoreIndicatorsOff = prepareModelRunSubmission(modelRunFixtureRoot, {
     baseline: 'v1.0',
     title: 'core-off-warning',
     overrides: { recordCoreIndicators: false },
     confirmWarnings: false
   });
-  assert.equal(warningCoreIndicatorsOff.accepted, false, 'Expected submit to block until warnings are confirmed');
+  assert.ok(warningCoreIndicatorsOff.accepted, 'Expected recording warnings to be advisory');
   assert.ok(
-    warningCoreIndicatorsOff.warnings.some((warning) => warning.code === 'core_indicators_disabled'),
+    warningCoreIndicatorsOff.prepared.warnings.some((warning) => warning.code === 'core_indicators_disabled'),
     'Expected warning when recordCoreIndicators is disabled'
   );
 
@@ -7594,7 +7594,7 @@ try {
     return process as never;
   });
 
-  const warningSubmit = submitSensitivityExperiment(sensitivityFixtureRoot, {
+  const warningSubmit = prepareSensitivityExperimentSubmission(sensitivityFixtureRoot, {
     baseline: 'v1.0',
     basePolicy: '2011',
     parameterKey: 'CENTRAL_BANK_INITIAL_BASE_RATE',
@@ -7603,8 +7603,8 @@ try {
     overrides: { TARGET_POPULATION: 20_000 },
     confirmWarnings: false
   });
-  assert.equal(warningSubmit.accepted, false, 'Expected sensitivity submit to require warning confirmation');
-  assert.ok((warningSubmit.warnings.length ?? 0) > 0, 'Expected warning payload for high target population points');
+  assert.ok(warningSubmit.accepted, 'Expected sensitivity runtime warnings to be advisory');
+  assert.ok(warningSubmit.prepared.warnings.length > 0, 'Expected warning payload for high target population points');
 
   const policyWarningCases = [
     {
@@ -7676,7 +7676,7 @@ try {
   ];
 
   for (const testCase of policyWarningCases) {
-    const response = submitSensitivityExperiment(sensitivityFixtureRoot, {
+    const response = prepareSensitivityExperimentSubmission(sensitivityFixtureRoot, {
       baseline: 'v1.0',
       basePolicy: '2011',
       parameterKey: testCase.parameterKey,
@@ -7685,9 +7685,9 @@ try {
       overrides: { N_SIMS: 1 },
       confirmWarnings: false
     });
-    assert.equal(response.accepted, false, `Expected ${testCase.parameterKey} to require warning confirmation`);
+    assert.ok(response.accepted, `Expected ${testCase.parameterKey} warnings to be advisory`);
     assert.ok(
-      response.warnings.some((warning) => warning.code === testCase.expectedCode),
+      response.prepared.warnings.some((warning) => warning.code === testCase.expectedCode),
       `Expected ${testCase.parameterKey} to emit ${testCase.expectedCode}`
     );
   }
@@ -9490,7 +9490,7 @@ assert.ok(
 );
 assert.ok(
   appSource.includes('const modelEvidenceVisible = true;'),
-  'App should expose model evidence as a main page in the four-page structure'
+  'App should expose model evidence as a main page'
 );
 assert.ok(
   appSource.includes('VIEW_MODE_OPTIONS') &&
@@ -9534,7 +9534,7 @@ assert.ok(
 );
 assert.ok(
   appSource.includes('<Route path="/experiments" element={<ExperimentsLandingPage />} />'),
-  'App should register the minimal Experiments landing page'
+  'App should register the Experiments type chooser'
 );
 assert.ok(
   appSource.includes('path="/scenarios/new"') && appSource.includes('path="/sensitivity/new"'),
@@ -9588,41 +9588,45 @@ const experimentsLandingMarkup = renderToStaticMarkup(
 assert.ok(
   experimentsLandingPageSource.includes("to: '/scenarios/new'") &&
     experimentsLandingPageSource.includes("to: '/sensitivity/new'") &&
-    experimentsLandingMarkup.includes('New policy scenario') &&
-    experimentsLandingMarkup.includes('New sensitivity analysis') &&
+    experimentsLandingMarkup.includes('Policy run') &&
+    experimentsLandingMarkup.includes('Sensitivity analysis') &&
     experimentsLandingMarkup.includes('Test a specific combination of policy settings and compare the results with a baseline.') &&
     experimentsLandingMarkup.includes('Vary one policy instrument across a range to see how model outcomes respond.'),
   'Experiments landing page should link to both creation flows'
 );
 assert.equal(
-  experimentsLandingMarkup.match(/class="experiment-launch-action"/g)?.length ?? 0,
+  experimentsLandingMarkup.match(/class="experiment-type-choice"/g)?.length ?? 0,
   2,
-  'Experiments landing page should visibly contain exactly two large actions'
+  'Experiments should expose exactly two experiment-type choices'
 );
 assert.ok(
   experimentsPageSource.includes("navigate('/experiments')") &&
-    experimentsPageSource.includes('onClick={isPolicyDemo ? exitPolicyDemo : returnToExperiments}') &&
-    experimentsPageSource.includes('returnToExperiments();'),
-  'Closing or discarding experiment creation should return to the Experiments hub, with demo cleanup when needed'
+    experimentsPageSource.includes('onClick={isExperimentDemo ? exitExperimentDemo : startOver}') &&
+    experimentsPageSource.includes('clearExperimentDemoState(demoProgress?.journeyId') &&
+    experimentsPageSource.includes("navigate('/')") &&
+    experimentsPageSource.includes('setSearchParams(new URLSearchParams({ draft: nextDraftId }), { replace: true })'),
+  'Starting over should replace the current draft in place, while ending a demo returns Home'
 );
 assert.ok(
-  experimentsPageSource.includes("initialView === 'create' && <ExperimentsLandingPage />") &&
+  experimentsPageSource.includes('inlineSetup && <ExperimentsLandingPage activeType={workspace} />') &&
+    experimentsPageSource.includes("role={inlineSetup ? 'region' : 'dialog'}") &&
+    experimentsPageSource.includes("className={inlineSetup ? 'experiment-setup-workspace' : 'scenario-create-modal-backdrop'}") &&
     experimentsPageSource.includes("initialView !== 'create' && <article") &&
     experimentsPageSource.includes("initialView !== 'create' && (workspace === 'manual'"),
-  'Creation routes should keep the Experiments hub behind the modal instead of rendering result workspaces'
+  'Ordinary creation routes should place setup below the type chooser without rendering result workspaces; demos retain the modal'
 );
 assert.ok(
-  experimentsPageSource.includes('onManualRunAccepted={(runId) => navigate(') &&
+  experimentsPageSource.includes('onManualRunAccepted={(runId, jobRef) => navigate(') &&
     experimentsPageSource.includes('/results?type=manual&queue=open') &&
-    experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
+    experimentsPageSource.includes('onSensitivityRunAccepted={(id, jobRef) => navigate(') &&
     experimentsPageSource.includes('/results?type=sensitivity&queue=open') &&
     experimentsPageSource.includes('queueInitiallyExpanded={queueInitiallyExpanded}') &&
     resultsPageSource.includes("searchParams.get('queue') === 'open'") &&
     (resultsPageSource.match(/queueInitiallyExpanded=\{queueInitiallyExpanded\}/g)?.length ?? 0) === 2 &&
     manualResultsViewSource.includes('useState<boolean>(queueInitiallyExpanded)') &&
-    sensitivityResultsViewSource.includes('title="Queue"') &&
-    sensitivityResultsViewSource.includes('defaultOpen={queueInitiallyExpanded}'),
-  'Accepted scenario and sensitivity submissions should move into Results with the queue expanded'
+    sensitivityResultsViewSource.includes('<h3>Queue</h3>') &&
+    sensitivityResultsViewSource.includes('useState<boolean>(queueInitiallyExpanded)'),
+  'Accepted scenario and sensitivity submissions should move into Results with their job identity and retain the queue entry points'
 );
 assert.ok(
   resultsPageSource.includes('className="results-view-switcher"') &&
@@ -9660,12 +9664,18 @@ assert.ok(
     appSource.includes('void refreshAuthStatus();'),
   'App should initialise the Electron-provided auth token before refreshing auth status'
 );
+const settingsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/SettingsPage.tsx'), 'utf-8');
 assert.ok(
-  appSource.includes('desktopApi.openResultsFolder') &&
-    appSource.includes('desktopApi.openLogsFolder') &&
-    appSource.includes('desktopApiInput.exportSupportBundle') &&
-    appSource.includes('Support Bundle'),
-  'App should expose desktop results, logs, and support-bundle actions when Electron preload is available'
+  appSource.includes('to="/settings"') &&
+    appSource.includes('<Route path="/settings" element={<SettingsPage desktopApi={desktopApi} />} />') &&
+    appSource.includes("!authLoaded && activePrimaryDestination !== 'settings'") &&
+    !appSource.includes('desktop-folder-actions') &&
+    settingsPageSource.includes('desktopApi && (') &&
+    settingsPageSource.includes('desktopApi.openResultsFolder()') &&
+    settingsPageSource.includes('desktopApi.openLogsFolder()') &&
+    settingsPageSource.includes('desktopApi.exportSupportBundle()') &&
+    !resultsPageSource.includes('openResultsFolder'),
+  'Settings should own desktop support actions outside the shared header, Results workflow and access gate'
 );
 assert.ok(
   appSource.includes("const browserAuthControlsVisible = !isDesktopRuntime && viewMode !== 'preview_desktop';") &&
@@ -10370,12 +10380,18 @@ assert.ok(
   'Run demo trigger should expose the chooser as a controlled dialog'
 );
 assert.ok(
-  (homePageSource.match(/to: null/g) ?? []).length === 2 &&
-    homePageSource.includes('to: POLICY_EXPERIMENT_DEMO_LAUNCH_HREF') &&
+  (homePageSource.match(/to: null/g) ?? []).length === 3 &&
+    homePageSource.includes('opensExperimentChooser: true') &&
+    homePageSource.includes("label: 'Both — policy then sensitivity'") &&
+    homePageSource.includes("label: 'Policy scenario demo'") &&
+    homePageSource.includes("label: 'Sensitivity analysis demo'") &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_COMBINED_LAUNCH_HREF') &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_POLICY_LAUNCH_HREF') &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_SENSITIVITY_LAUNCH_HREF') &&
     homePageSource.includes('to: MODEL_EVIDENCE_DEMO_LAUNCH_HREF') &&
-    homePageSource.includes('disabled={!choice.to}') &&
-    homePageSource.includes('onClick={choice.to ? () => navigate(choice.to) : undefined}'),
-  'The Experiment and Model Evidence choices should launch their current walkthroughs'
+    homePageSource.includes("disabled={!choice.to && !('opensExperimentChooser' in choice && choice.opensExperimentChooser)}") &&
+    homePageSource.includes("'opensExperimentChooser' in choice && choice.opensExperimentChooser"),
+  'The Experiment chooser should expose all three launch modes, while Model Evidence launches directly'
 );
 assert.ok(
   !homePageSource.includes('Coming soon') && !homePageSource.includes('home-action-inactive'),
@@ -10837,7 +10853,7 @@ assert.ok(
 );
 assert.equal(
   electronMainSource.match(/assertTrustedDesktopIpcEvent\(event\);/g)?.length,
-  4,
+  5,
   'Every desktop IPC handler should validate the trusted sender before returning data or opening folders'
 );
 assert.ok(

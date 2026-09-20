@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useLayoutEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ManualResultsView } from './experiments/view/ManualResultsView';
 import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
@@ -16,12 +16,12 @@ const RESULT_TYPES: ReadonlyArray<{ id: ExperimentType; label: string; descripti
   {
     id: 'manual',
     label: 'Policy scenarios',
-    description: 'Open a finished policy scenario, and compare it against another run.'
+    description: 'Follow a submitted policy scenario, or open and compare finished runs.'
   },
   {
     id: 'sensitivity',
     label: 'Sensitivity analysis',
-    description: 'Open a finished sweep and read how each indicator responds across the tested range.'
+    description: 'Follow a submitted analysis, or read the results across its tested range.'
   }
 ];
 
@@ -30,7 +30,7 @@ function isExperimentType(value: string): value is ExperimentType {
 }
 
 /**
- * One place to read finished work of either kind.
+ * One place to follow submitted work and read finished results of either kind.
  *
  * The two result views are the same components the Scenarios and Sensitivity workspaces render —
  * this page only chooses between them and drops the "create" affordance, so reading results is
@@ -47,6 +47,10 @@ export function ResultsPage({
 }: ResultsPageProps) {
   const [searchParams, setSearchParams] = useSearchParams();
 
+  useLayoutEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, []);
+
   const requestedType = searchParams.get('type')?.trim() ?? '';
   // Scenarios are the common case, and the legacy `?type=` links this route already received use
   // the same vocabulary, so an old link lands on the workspace it originally meant.
@@ -56,6 +60,8 @@ export function ResultsPage({
   const comparisonRunId = searchParams.get('comparisonRunId')?.trim() ?? '';
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
   const queueInitiallyExpanded = searchParams.get('queue') === 'open';
+  const requestedJobRef = searchParams.get('jobRef')?.trim() ?? '';
+  const submittedJobRef = requestedJobRef.startsWith(`${activeType}:`) ? requestedJobRef : '';
 
   const updateSearch = useCallback(
     (updates: Record<string, string>) => {
@@ -103,8 +109,9 @@ export function ResultsPage({
           authEnabled={authEnabled}
           requestedBaselineRunId={baselineRunId}
           requestedComparisonRunId={comparisonRunId}
+          requestedJobRef={submittedJobRef}
           queueInitiallyExpanded={queueInitiallyExpanded}
-          onManualSelectionChange={(selection) => updateSearch(selection)}
+          onManualSelectionChange={(selection) => updateSearch({ ...selection, jobRef: '' })}
           sidebarSubtitle="Manage policy scenario runs"
         />
       ) : (
@@ -116,7 +123,7 @@ export function ResultsPage({
           authEnabled={authEnabled}
           requestedExperimentId={experimentId}
           queueInitiallyExpanded={queueInitiallyExpanded}
-          onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
+          onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value, jobRef: '' })}
           sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />
       )}

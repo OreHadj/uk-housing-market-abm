@@ -4,27 +4,41 @@ import { ExperimentRunMode } from './experiments/run/ExperimentRunMode';
 import { ManualResultsView } from './experiments/view/ManualResultsView';
 import { SensitivityResultsView } from './experiments/view/SensitivityResultsView';
 import { ExperimentsLandingPage } from './ExperimentsLandingPage';
+import { ExperimentHeaderStartTarget } from '../components/ExperimentHeaderStartButton';
 import type { ExperimentType } from './experiments/types';
 import {
   clearScenarioDraft,
   createScenarioDraftId,
+  readScenarioDraft,
   resumableScenarioDraftId,
   setActiveScenarioDraftId
 } from '../lib/scenarioDraft';
 import {
   clearSensitivityDraft,
   createSensitivityDraftId,
+  readSensitivityDraft,
   resumableSensitivityDraftId,
   setActiveSensitivityDraftId
 } from '../lib/sensitivityDraft';
 import {
-  clearPolicyExperimentDemoState,
-  createPolicyExperimentDemoDraftId,
-  isPolicyExperimentDemoDraftId,
-  isPolicyExperimentDemoRequested,
-  readPolicyExperimentDemoProgress
-} from '../lib/policyExperimentDemo';
-import type { PolicyExperimentDemoCoordinator } from '../components/PolicyExperimentDemoPrototype';
+  buildExperimentDemoLaunchHref,
+  clearExperimentDemoState,
+  completeExperimentDemoChapter,
+  continueExperimentDemoToSensitivity,
+  createExperimentDemoProgress,
+  experimentDemoLaunchMode,
+  isExperimentDemoJourneyId,
+  readExperimentDemoProgress,
+  setExperimentDemoPaused,
+  updateExperimentDemoStep,
+  writeExperimentDemoProgress,
+  type ExperimentDemoProgress,
+  type ExperimentDemoProgressEvent,
+  type ExperimentDemoStepProgressEvent
+} from '../lib/experimentDemo';
+import type { ExperimentDemoCoordinator } from '../components/ExperimentDemoOverlay';
+import { policyExperimentDemoWizardStep } from '../components/PolicyExperimentDemo';
+import { sensitivityExperimentDemoWizardStep } from '../components/SensitivityExperimentDemo';
 
 interface ExperimentsPageProps {
   canWrite: boolean;
@@ -53,32 +67,99 @@ export function ExperimentsPage({
   const experimentId = searchParams.get('experimentId')?.trim() ?? '';
   const queueInitiallyExpanded = searchParams.get('queue') === 'open';
   const [isSetupOpen, setIsSetupOpen] = useState(initialView === 'create');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [headerStartTarget, setHeaderStartTarget] = useState<HTMLSpanElement | null>(null);
   const draftId = searchParams.get('draft')?.trim() ?? '';
-  const isPolicyDemo = workspace === 'manual' && isPolicyExperimentDemoRequested(searchParams);
-  const effectiveDraftId = isPolicyDemo
-    ? isPolicyExperimentDemoDraftId(draftId) ? draftId : ''
+  const requestedDemoMode = experimentDemoLaunchMode(searchParams);
+  const isExperimentDemo = requestedDemoMode !== null;
+  const inlineSetup = initialView === 'create' && !isExperimentDemo;
+  const setupVisible = inlineSetup || (isExperimentDemo && isSetupOpen);
+  const queryJourneyId = searchParams.get('journey')?.trim() ?? '';
+  const currentDemoChapter = workspace === 'manual' ? 'policy' : 'sensitivity';
+  const [demoProgress, setDemoProgress] = useState<ExperimentDemoProgress | null>(() => {
+    if (!requestedDemoMode || !isExperimentDemoJourneyId(queryJourneyId)) return null;
+    const stored = readExperimentDemoProgress();
+    return stored?.journeyId === queryJourneyId && stored.mode === requestedDemoMode ? stored : null;
+  });
+  const pendingDemoProgressRef = useRef<ExperimentDemoProgress | null>(demoProgress);
+  const resumeDemoButtonRef = useRef<HTMLButtonElement>(null);
+  const setupHeadingRef = useRef<HTMLHeadingElement>(null);
+  const effectiveDraftId = isExperimentDemo
+    ? demoProgress?.[currentDemoChapter].draftId ?? ''
     : draftId;
-  const pendingPolicyDemoDraftIdRef = useRef('');
 
   const returnToExperiments = useCallback(() => {
     setIsSetupOpen(false);
     navigate('/experiments');
   }, [navigate]);
 
+  const startOver = () => {
+    if (!effectiveDraftId || isExperimentDemo || isSubmitting) return;
+    const storedDraft = workspace === 'manual'
+      ? readScenarioDraft(effectiveDraftId)
+      : readSensitivityDraft(effectiveDraftId);
+    if (storedDraft && !window.confirm('Clear setup? This will restore the default settings and return to step 1.')) return;
+
+    const nextDraftId = workspace === 'manual' ? createScenarioDraftId() : createSensitivityDraftId();
+    if (workspace === 'manual') {
+      clearScenarioDraft(effectiveDraftId);
+      setActiveScenarioDraftId(nextDraftId);
+    } else {
+      clearSensitivityDraft(effectiveDraftId);
+      setActiveSensitivityDraftId(nextDraftId);
+    }
+    // A new identity resets both the controller and the wizard to step 1. Drop evidence-return
+    // and job-following parameters too, so they cannot override the fresh setup's defaults.
+    setSearchParams(new URLSearchParams({ draft: nextDraftId }), { replace: true });
+    setupHeadingRef.current?.focus();
+  };
+
   useEffect(() => {
-    if (!isSetupOpen) return;
-    if (isPolicyDemo) {
-      if (isPolicyExperimentDemoDraftId(draftId)) {
-        pendingPolicyDemoDraftIdRef.current = '';
+    if (!setupVisible) return;
+    if (requestedDemoMode) {
+      let progress = pendingDemoProgressRef.current;
+      const hasMatchingJourney = Boolean(
+        progress &&
+        progress.mode === requestedDemoMode &&
+        (!queryJourneyId || progress.journeyId === queryJourneyId)
+      );
+      if (!hasMatchingJourney) {
+        clearExperimentDemoState();
+        progress = createExperimentDemoProgress(
+          requestedDemoMode,
+          isExperimentDemoJourneyId(queryJourneyId) ? queryJourneyId : undefined
+        );
+        pendingDemoProgressRef.current = progress;
+        writeExperimentDemoProgress(progress);
+        setDemoProgress(progress);
+      }
+      if (!progress) return;
+
+      const expectedChapter = progress.mode === 'policy'
+        ? 'policy'
+        : progress.mode === 'sensitivity'
+          ? 'sensitivity'
+          : progress.phase === 'policy' || progress.phase === 'policy-transition'
+            ? 'policy'
+            : 'sensitivity';
+      if (expectedChapter !== currentDemoChapter) {
+        navigate(
+          buildExperimentDemoLaunchHref(progress.mode, progress.journeyId, expectedChapter),
+          { replace: true }
+        );
         return;
       }
-      clearPolicyExperimentDemoState();
-      const nextDraftId = pendingPolicyDemoDraftIdRef.current || createPolicyExperimentDemoDraftId();
-      pendingPolicyDemoDraftIdRef.current = nextDraftId;
+
       const next = new URLSearchParams(searchParams);
-      next.set('draft', nextDraftId);
+      next.set('demo', 'experiment');
+      next.set('mode', progress.mode);
+      next.set('journey', progress.journeyId);
+      next.set('draft', progress[currentDemoChapter].draftId);
+      next.delete('segment');
       next.delete('step');
-      setSearchParams(next, { replace: true });
+      if (next.toString() !== searchParams.toString()) {
+        setSearchParams(next, { replace: true });
+      }
       return;
     }
     if (draftId) {
@@ -86,7 +167,7 @@ export function ExperimentsPage({
       else setActiveSensitivityDraftId(draftId);
       return;
     }
-    // Reopening picks up the draft the last close left behind; only discarding or submitting
+    // Reopening picks up the draft the last close left behind; only starting over or submitting
     // retires it, so a fresh id is minted just for a genuinely new scenario.
     const nextDraftId = workspace === 'manual'
       ? resumableScenarioDraftId() || createScenarioDraftId()
@@ -96,7 +177,17 @@ export function ExperimentsPage({
     const next = new URLSearchParams(searchParams);
     next.set('draft', nextDraftId);
     setSearchParams(next, { replace: true });
-  }, [draftId, isPolicyDemo, isSetupOpen, searchParams, setSearchParams, workspace]);
+  }, [
+    currentDemoChapter,
+    draftId,
+    setupVisible,
+    navigate,
+    queryJourneyId,
+    requestedDemoMode,
+    searchParams,
+    setSearchParams,
+    workspace
+  ]);
 
   const updateSearch = useCallback((updates: Record<string, string>) => {
     const next = new URLSearchParams(searchParams);
@@ -107,33 +198,109 @@ export function ExperimentsPage({
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const exitPolicyDemo = useCallback(() => {
-    clearPolicyExperimentDemoState(effectiveDraftId);
-    setIsSetupOpen(false);
-    navigate('/experiments');
-  }, [effectiveDraftId, navigate]);
+  const updateDemoProgress = useCallback((
+    update: (current: ExperimentDemoProgress) => ExperimentDemoProgress
+  ) => {
+    setDemoProgress((current) => {
+      const base = current ?? readExperimentDemoProgress();
+      if (!base) return current;
+      const next = update(base);
+      if (next !== base) {
+        pendingDemoProgressRef.current = next;
+        writeExperimentDemoProgress(next);
+      }
+      return next;
+    });
+  }, []);
 
-  const completePolicyDemoPrototype = useCallback(() => {
-    updateSearch({ step: 'model-version' });
-  }, [updateSearch]);
+  const pauseExperimentDemo = useCallback(() => {
+    if (!demoProgress) return;
+    updateDemoProgress((current) => setExperimentDemoPaused(current, demoProgress.journeyId, true));
+  }, [demoProgress, updateDemoProgress]);
 
-  const policyDemo = useMemo<PolicyExperimentDemoCoordinator | undefined>(() => {
-    if (!isPolicyDemo) return undefined;
-    return {
-      active: true,
-      draftId: effectiveDraftId,
-      onPrototypeComplete: completePolicyDemoPrototype,
-      onExit: exitPolicyDemo
-    };
-  }, [completePolicyDemoPrototype, effectiveDraftId, exitPolicyDemo, isPolicyDemo]);
-
-  const policyDemoProgress = isPolicyDemo ? readPolicyExperimentDemoProgress() : null;
-  const initialScenarioStep = isPolicyDemo
-    ? policyDemoProgress?.draftId === effectiveDraftId && policyDemoProgress.stageId === 'complete' ? 1 : 0
-    : searchParams.get('step') === 'model-version' ? 1 : 0;
+  const resumeExperimentDemo = useCallback(() => {
+    if (!demoProgress) return;
+    updateDemoProgress((current) => setExperimentDemoPaused(current, demoProgress.journeyId, false));
+  }, [demoProgress, updateDemoProgress]);
 
   useEffect(() => {
-    if (!isSetupOpen) {
+    if (demoProgress?.paused) resumeDemoButtonRef.current?.focus();
+  }, [demoProgress?.paused]);
+
+  const exitExperimentDemo = useCallback(() => {
+    clearExperimentDemoState(demoProgress?.journeyId ?? '');
+    pendingDemoProgressRef.current = null;
+    setDemoProgress(null);
+    setIsSetupOpen(false);
+    navigate('/');
+  }, [demoProgress?.journeyId, navigate]);
+
+  const recordDemoStep = useCallback((event: ExperimentDemoStepProgressEvent) => {
+    updateDemoProgress((current) => updateExperimentDemoStep(current, event));
+  }, [updateDemoProgress]);
+
+  const recordDemoChapterComplete = useCallback((event: ExperimentDemoProgressEvent) => {
+    updateDemoProgress((current) => completeExperimentDemoChapter(current, event));
+  }, [updateDemoProgress]);
+
+  const continueToSensitivityDemo = useCallback(() => {
+    if (!demoProgress) return;
+    const next = continueExperimentDemoToSensitivity(demoProgress, demoProgress.journeyId);
+    if (next === demoProgress) return;
+    pendingDemoProgressRef.current = next;
+    writeExperimentDemoProgress(next);
+    setDemoProgress(next);
+    navigate(buildExperimentDemoLaunchHref(next.mode, next.journeyId, 'sensitivity'));
+  }, [demoProgress, navigate]);
+
+  const experimentDemo = useMemo<ExperimentDemoCoordinator | undefined>(() => {
+    if (!isExperimentDemo || !demoProgress) return undefined;
+    return {
+      active: true,
+      paused: demoProgress.paused,
+      journeyId: demoProgress.journeyId,
+      draftId: demoProgress[currentDemoChapter].draftId,
+      mode: demoProgress.mode,
+      savedStepId: demoProgress[currentDemoChapter].stepId,
+      onProgress: recordDemoStep,
+      onChapterComplete: recordDemoChapterComplete,
+      onContinueToSensitivity: continueToSensitivityDemo,
+      onFinish: exitExperimentDemo,
+      onPause: pauseExperimentDemo,
+      onExit: exitExperimentDemo
+    };
+  }, [
+    continueToSensitivityDemo,
+    currentDemoChapter,
+    demoProgress,
+    exitExperimentDemo,
+    isExperimentDemo,
+    pauseExperimentDemo,
+    recordDemoChapterComplete,
+    recordDemoStep
+  ]);
+
+  const initialScenarioStep = isExperimentDemo && demoProgress
+    ? policyExperimentDemoWizardStep(demoProgress.policy.stepId)
+    : searchParams.get('step') === 'model-version' ? 1 : undefined;
+  const initialSensitivityStep = isExperimentDemo && demoProgress
+    ? sensitivityExperimentDemoWizardStep(demoProgress.sensitivity.stepId)
+    : searchParams.get('step') === 'model-baseline' ? 2 : undefined;
+
+  useEffect(() => {
+    // Evidence returns choose an initial section once; subsequent reloads resume saved progress.
+    if (!inlineSetup || !effectiveDraftId || !searchParams.has('step')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('step');
+    setSearchParams(next, { replace: true });
+  }, [effectiveDraftId, inlineSetup, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (inlineSetup) setupHeadingRef.current?.focus({ preventScroll: true });
+  }, [inlineSetup, workspace]);
+
+  useEffect(() => {
+    if (!setupVisible || inlineSetup) {
       return;
     }
 
@@ -143,7 +310,7 @@ export function ExperimentsPage({
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [isSetupOpen]);
+  }, [inlineSetup, setupVisible]);
 
   const copy = useMemo(() => workspace === 'manual' ? {
     heading: 'Policy scenarios',
@@ -163,7 +330,7 @@ export function ExperimentsPage({
 
   return (
     <section className="run-exp-layout workspace-page">
-      {initialView === 'create' && <ExperimentsLandingPage />}
+      {inlineSetup && <ExperimentsLandingPage activeType={workspace} />}
 
       {initialView !== 'create' && <article className="results-card workspace-heading">
         <div>
@@ -174,58 +341,79 @@ export function ExperimentsPage({
           <button
             type="button"
             className="primary-button scenario-launch-button"
-            aria-expanded={isSetupOpen}
-            aria-haspopup="dialog"
-            onClick={() => setIsSetupOpen(true)}
+            onClick={() => navigate(workspace === 'manual' ? '/scenarios/new' : '/sensitivity/new')}
           >
             {copy.createAction}
           </button>
         </div>
       </article>}
 
-      {/*
-        No click-outside and no Escape handler: a half-built experiment is expensive to lose, so the
-        setup closes only through Discard draft or the close button. Closing keeps the draft; it is
-        resumed on reopen and cleared only by discarding or by a successful submit.
-      */}
-      <div hidden={!isSetupOpen} className="scenario-create-modal-backdrop" role="presentation">
+      {/* The paused guided demos retain their existing modal and target containers. */}
+      <div
+        hidden={!setupVisible}
+        className={inlineSetup ? 'experiment-setup-workspace' : 'scenario-create-modal-backdrop'}
+        role={inlineSetup ? undefined : 'presentation'}
+      >
         <section
-          className="scenario-create-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="experiment-create-modal-title"
+          className={inlineSetup ? 'experiment-setup-content' : 'scenario-create-modal'}
+          role={inlineSetup ? 'region' : 'dialog'}
+          aria-modal={inlineSetup ? undefined : true}
+          aria-labelledby={inlineSetup ? 'experiment-setup-title' : 'experiment-create-modal-title'}
         >
-          <div className="scenario-create-modal-head">
+          <div className={inlineSetup ? 'experiment-setup-heading' : 'scenario-create-modal-head'}>
             <div>
-              <p className="trend-modal-eyebrow">{copy.modalEyebrow}</p>
-              <h2 id="experiment-create-modal-title">{copy.modalHeading}</h2>
+              {!inlineSetup && <p className="trend-modal-eyebrow">{copy.modalEyebrow}</p>}
+              <h2
+                id={inlineSetup ? 'experiment-setup-title' : 'experiment-create-modal-title'}
+                ref={setupHeadingRef}
+                className={inlineSetup ? 'visually-hidden' : undefined}
+                tabIndex={inlineSetup ? -1 : undefined}
+              >{copy.modalHeading}</h2>
               <p>{copy.modalDescription}</p>
             </div>
             <div className="scenario-modal-head-actions">
-              {effectiveDraftId && (
-                <button type="button" className="danger-button scenario-discard-draft-button" onClick={() => {
-                  if (isPolicyDemo) {
-                    exitPolicyDemo();
-                    return;
-                  }
-                  if (workspace === 'manual') clearScenarioDraft(effectiveDraftId);
-                  else clearSensitivityDraft(draftId);
-                  returnToExperiments();
-                }}>{isPolicyDemo ? 'Exit demo' : 'Discard draft'}</button>
+              {inlineSetup && <span ref={setHeaderStartTarget} style={{ display: 'inline-flex' }} />}
+              {demoProgress && (
+                <button
+                  ref={demoProgress.paused ? resumeDemoButtonRef : undefined}
+                  type="button"
+                  className="secondary-button scenario-pause-demo-button"
+                  onClick={demoProgress.paused ? resumeExperimentDemo : pauseExperimentDemo}
+                >
+                  {demoProgress.paused ? 'Resume demo' : 'Pause demo'}
+                </button>
               )}
-              <button
+              {(inlineSetup || effectiveDraftId || isExperimentDemo) && (
+                <button
+                  type="button"
+                  className={isExperimentDemo ? 'danger-button scenario-discard-draft-button' : 'danger-button scenario-discard-draft-button scenario-start-over-button'}
+                  disabled={!isExperimentDemo && (!effectiveDraftId || isSubmitting)}
+                  onClick={isExperimentDemo ? exitExperimentDemo : startOver}
+                >{isExperimentDemo ? 'End demo' : 'Clear'}</button>
+              )}
+              {!inlineSetup && <button
                 type="button"
                 className="trend-modal-close"
-                aria-label={isPolicyDemo
-                  ? 'Exit Policy creation preview'
+                aria-label={isExperimentDemo
+                  ? 'End experiment creation demo'
                   : `Close ${workspace === 'manual' ? 'scenario' : 'sensitivity'} setup`}
-                onClick={isPolicyDemo ? exitPolicyDemo : returnToExperiments}
-              >×</button>
+                onClick={isExperimentDemo ? exitExperimentDemo : returnToExperiments}
+              >×</button>}
             </div>
           </div>
-          <div className="scenario-create-modal-body">
-            <ExperimentRunMode
-              key={isPolicyDemo ? effectiveDraftId || 'policy-demo-loading' : undefined}
+          <div className={inlineSetup ? 'experiment-setup-body' : 'scenario-create-modal-body'}>
+            {demoProgress?.paused && (
+              <p className="info-banner experiment-demo-paused-banner" role="status">
+                Demo paused at the current step. Your demo-owned draft and journey progress are preserved in this tab.
+              </p>
+            )}
+            {setupVisible && !effectiveDraftId && (
+              <div className="scenario-builder-loading" role="status">
+                <p className="loading-banner">Preparing experiment setup...</p>
+              </div>
+            )}
+            {setupVisible && effectiveDraftId && <ExperimentHeaderStartTarget.Provider value={inlineSetup ? headerStartTarget : null}><ExperimentRunMode
+              key={isExperimentDemo ? `${demoProgress?.journeyId ?? 'experiment-demo-loading'}:${effectiveDraftId}` : `${workspace}:${effectiveDraftId}`}
               activeType={workspace}
               canWrite={canWrite}
               canDownloadResults={canDownloadResults}
@@ -237,13 +425,16 @@ export function ExperimentsPage({
               showRunManagement={false}
               draftId={effectiveDraftId}
               initialScenarioStep={initialScenarioStep}
-              initialSensitivityStep={searchParams.get('step') === 'model-baseline' ? 2 : 0}
-              policyDemo={policyDemo}
-              onManualRunAccepted={(runId) => navigate(
-                `/results?type=manual&queue=open${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`
+              initialSensitivityStep={initialSensitivityStep}
+              experimentDemo={experimentDemo}
+              onSubmissionStateChange={setIsSubmitting}
+              onManualRunAccepted={(runId, jobRef) => navigate(
+                `/results?type=manual&queue=open${jobRef ? `&jobRef=${encodeURIComponent(jobRef)}` : ''}${runId ? `&baselineRunId=${encodeURIComponent(runId)}` : ''}`,
+                { replace: true }
               )}
-              onSensitivityRunAccepted={(id) => navigate(
-                `/results?type=sensitivity&queue=open${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`
+              onSensitivityRunAccepted={(id, jobRef) => navigate(
+                `/results?type=sensitivity&queue=open${jobRef ? `&jobRef=${encodeURIComponent(jobRef)}` : ''}${id ? `&experimentId=${encodeURIComponent(id)}` : ''}`,
+                { replace: true }
               )}
               onSelectedJobRefChange={(jobRef) => updateSearch({ jobRef })}
               onOpenManualResults={(runId) => {
@@ -254,7 +445,7 @@ export function ExperimentsPage({
                 setIsSetupOpen(false);
                 navigate(`/results?type=sensitivity&experimentId=${encodeURIComponent(id)}`);
               }}
-            />
+            /></ExperimentHeaderStartTarget.Provider>}
           </div>
         </section>
       </div>

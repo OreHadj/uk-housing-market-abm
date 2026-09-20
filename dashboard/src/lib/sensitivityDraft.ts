@@ -15,6 +15,8 @@ export interface SensitivityDraftV1 {
   sampleCount: string;
   formValues: Record<string, FormValue>;
   maxWorkers: string;
+  /** The last setup section visited, within the five-step sensitivity builder. */
+  currentStep?: number;
 }
 
 export interface RestoredSensitivityDraft {
@@ -26,14 +28,14 @@ export function createSensitivityDraftId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-function storageKey(draftId: string): string {
+export function sensitivityDraftStorageKey(draftId: string): string {
   return `${STORAGE_PREFIX}${draftId}`;
 }
 
 export function readSensitivityDraft(draftId: string): SensitivityDraftV1 | null {
   if (!draftId) return null;
   try {
-    const parsed = JSON.parse(sessionStorage.getItem(storageKey(draftId)) ?? 'null') as Partial<SensitivityDraftV1> | null;
+    const parsed = JSON.parse(sessionStorage.getItem(sensitivityDraftStorageKey(draftId)) ?? 'null') as Partial<SensitivityDraftV1> | null;
     if (!parsed || parsed.version !== 1 || typeof parsed.title !== 'string' || typeof parsed.calibratedModel !== 'string') {
       return null;
     }
@@ -47,7 +49,10 @@ export function readSensitivityDraft(draftId: string): SensitivityDraftV1 | null
       max: typeof parsed.max === 'string' ? parsed.max : '',
       sampleCount: typeof parsed.sampleCount === 'string' ? parsed.sampleCount : '5',
       formValues: parsed.formValues && typeof parsed.formValues === 'object' ? parsed.formValues : {},
-      maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1'
+      maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1',
+      ...(typeof parsed.currentStep === 'number' && Number.isInteger(parsed.currentStep) && parsed.currentStep >= 0 && parsed.currentStep <= 4
+        ? { currentStep: parsed.currentStep }
+        : {})
     };
   } catch {
     return null;
@@ -57,16 +62,24 @@ export function readSensitivityDraft(draftId: string): SensitivityDraftV1 | null
 export function writeSensitivityDraft(draftId: string, draft: SensitivityDraftV1): void {
   if (!draftId) return;
   try {
-    sessionStorage.setItem(storageKey(draftId), JSON.stringify(draft));
+    sessionStorage.setItem(sensitivityDraftStorageKey(draftId), JSON.stringify(draft));
   } catch {
     // Storage unavailable: the setup still works, but cannot survive leaving the page.
   }
 }
 
+export function updateSensitivityDraftStep(draftId: string, currentStep: number): boolean {
+  if (!Number.isInteger(currentStep) || currentStep < 0 || currentStep > 4) return false;
+  const draft = readSensitivityDraft(draftId);
+  if (!draft) return false;
+  writeSensitivityDraft(draftId, { ...draft, currentStep });
+  return true;
+}
+
 export function clearSensitivityDraft(draftId: string): void {
   if (!draftId) return;
   try {
-    sessionStorage.removeItem(storageKey(draftId));
+    sessionStorage.removeItem(sensitivityDraftStorageKey(draftId));
     if (readActiveSensitivityDraftId() === draftId) sessionStorage.removeItem(ACTIVE_DRAFT_KEY);
   } catch {
     // Nothing to clear.

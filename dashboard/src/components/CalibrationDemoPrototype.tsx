@@ -941,9 +941,7 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !event.repeat) {
         event.preventDefault();
-        if (window.confirm('Pause the Model evidence demo and keep your progress for this tab?')) {
-          pauseWalkthrough();
-        }
+        pauseWalkthrough();
         return;
       }
       if (event.key !== 'Tab') return;

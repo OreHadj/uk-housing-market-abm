@@ -12,6 +12,7 @@ import type {
 } from '../shared/types.js';
 import { createDevelopmentRuntimePaths } from '../server/lib/runtimePaths.js';
 import { prepareSensitivityExperimentSubmission } from '../server/lib/sensitivityRuns.js';
+import { sensitivityDraftStorageKey } from '../src/lib/sensitivityDraft.js';
 import {
   buildSensitivityGeneralModelControlOverridesFromForm,
   normalizeSensitivityFormValues
@@ -184,6 +185,45 @@ const firstStepMarkup = renderToStaticMarkup(
   createElement(MemoryRouter, null, createElement(SensitivitySetupCard, commonProps))
 );
 assert.equal(firstStepMarkup.includes('Start sensitivity analysis'), false, 'Submission must not appear before review');
+const previousSessionStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+Object.defineProperty(globalThis, 'sessionStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => key === sensitivityDraftStorageKey(commonProps.draftId)
+      ? JSON.stringify({ version: 1, title: commonProps.title, calibratedModel: snapshot.version, currentStep: 4 })
+      : null
+  }
+});
+try {
+  const resumedMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(SensitivitySetupCard, commonProps))
+  );
+  assert.ok(resumedMarkup.includes('Start sensitivity analysis'), 'Reopening a sensitivity draft restores its saved review step');
+  const loadingMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(SensitivitySetupCard, { ...commonProps, isLoadingOptions: true }))
+  );
+  const loadingStageButtons = loadingMarkup.match(/<button\b[^>]*>/g) ?? [];
+  assert.equal(loadingStageButtons.length, 5, 'Sensitivity setup keeps all five stages visible while options load');
+  assert.ok(loadingStageButtons.every((button) => button.includes('disabled=""')), 'Loading sensitivity stages cannot be changed');
+  assert.match(
+    loadingMarkup,
+    /<button\b[^>]*aria-current="step"[^>]*><span>5<\/span>Review and start<\/button>/,
+    'Loading a saved sensitivity draft preserves its active review stage'
+  );
+  assert.match(loadingMarkup, /role="status"[^>]*>(?:<[^>]+>)*Loading sensitivity analysis options/, 'Sensitivity option loading is announced');
+  assert.equal(/<(?:input|select|textarea)\b/.test(loadingMarkup), false, 'Sensitivity fields are withheld until options load');
+  assert.equal(loadingMarkup.includes('Start sensitivity analysis'), false, 'A saved review stage cannot submit before options load');
+  const evidenceReturnMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(SensitivitySetupCard, { ...commonProps, initialStep: 2 }))
+  );
+  assert.ok(
+    evidenceReturnMarkup.includes('aria-current="step"><span>3</span>Model and baseline'),
+    'An explicit evidence-return step overrides the saved sensitivity step'
+  );
+} finally {
+  if (previousSessionStorage) Object.defineProperty(globalThis, 'sessionStorage', previousSessionStorage);
+  else Reflect.deleteProperty(globalThis, 'sessionStorage');
+}
 assert.ok(firstStepMarkup.includes('Back') && firstStepMarkup.includes('Continue'));
 assert.equal((firstStepMarkup.match(/role="tab"/g) ?? []).length, 0, 'The stepper should use step navigation, not result tabs');
 assert.equal((firstStepMarkup.match(/<nav class="scenario-stepper sensitivity-stepper"/g) ?? []).length, 1);
@@ -236,11 +276,11 @@ const warningMarkup = renderToStaticMarkup(
     })
   )
 );
-assert.ok(warningMarkup.includes('Confirm and start') && warningMarkup.includes('This run may take longer.'));
+assert.ok(warningMarkup.includes('Start sensitivity analysis') && warningMarkup.includes('This run may take longer.'));
 assert.equal(
-  warningMarkup.includes('Start sensitivity analysis'),
+  warningMarkup.includes('Confirm and start'),
   false,
-  'Warning confirmation should replace the start action instead of rendering a duplicate button'
+  'Advisory warnings must not add a confirmation step'
 );
 
 const prepared = prepareSensitivityExperimentSubmission(

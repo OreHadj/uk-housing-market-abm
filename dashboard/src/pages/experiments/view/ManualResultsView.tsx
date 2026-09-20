@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type {
   KpiMetricSummary,
@@ -63,6 +63,10 @@ import {
 } from '../../../lib/manualOverlayChartOption';
 import { NewLendingCard, unavailableMessage, type LendingView } from './NewLendingCard';
 import { FullRunDetailsDialog } from './FullRunDetailsDialog';
+import { ExperimentRunProgress } from './ExperimentRunProgress';
+import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
+import { useResultsTopNavigation } from './useResultsTopNavigation';
+import { getResultsQueueRows } from '../../../lib/resultsQueue';
 import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName, formatModelOptionLabel } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
@@ -273,6 +277,7 @@ interface ManualResultsViewProps {
   authEnabled: boolean;
   requestedBaselineRunId: string;
   requestedComparisonRunId: string;
+  requestedJobRef?: string;
   queueInitiallyExpanded?: boolean;
   onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string }) => void;
   sidebarSubtitle: string;
@@ -347,14 +352,16 @@ export function ManualResultsView({
   authEnabled,
   requestedBaselineRunId,
   requestedComparisonRunId,
+  requestedJobRef = '',
   queueInitiallyExpanded = false,
   onManualSelectionChange,
   sidebarSubtitle
 }: ManualResultsViewProps) {
   const navigate = useNavigate();
+  const { selectionRef, requestScrollToTop } = useResultsTopNavigation();
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
-  const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
-  const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
+  const [loadedBaselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
+  const [loadedComparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
   // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
   // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
   const [previewRunId, setPreviewRunId] = useState<string>('');
@@ -367,7 +374,7 @@ export function ManualResultsView({
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
   const [runDetailsTarget, setRunDetailsTarget] = useState<ManifestTarget | null>(null);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
-  const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
+  const [loadedComparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [analysisCutoffMonths, setAnalysisCutoffMonths] = useState<number>(500);
   const compareWindow: CompareWindow = analysisCutoffMonths === 0
     ? 'full'
@@ -399,21 +406,49 @@ export function ManualResultsView({
   // Clearing the comparison is an explicit user choice for this primary run. Keep that choice
   // locally so the URL's absent comparison id is not immediately reinterpreted as "choose default".
   const [comparisonDefaultOptOutRunId, setComparisonDefaultOptOutRunId] = useState<string>('');
+  const requestedJobId = requestedJobRef.startsWith('manual:') ? requestedJobRef.slice('manual:'.length) : '';
+  const removedJobIds = useRef(new Set<string>());
+  const removedRunIds = useRef(new Set<string>());
+  const stopDeletion = useStopAndDeleteExperiment({
+    canWrite, canDeleteResults, deleteKeyRequired,
+    onDeleted: ({ jobRef, id, runId }) => {
+      removedJobIds.current.add(id);
+      if (runId) removedRunIds.current.add(runId);
+      setRunJobs((current) => current.filter((job) => job.jobId !== id));
+      setRuns((current) => current.filter((run) => run.runId !== runId));
+      if (jobRef === requestedJobRef || runId === requestedBaselineRunId || runId === requestedComparisonRunId) {
+        onManualSelectionChange({
+          baselineRunId: requestedBaselineRunId === runId ? '' : requestedBaselineRunId,
+          comparisonRunId: requestedComparisonRunId === runId ? '' : requestedComparisonRunId
+        });
+      }
+    }
+  });
+  const requestedJob = runJobs.find((job) => job.jobId === requestedJobId);
+  const requestedJobPending = Boolean(requestedJobId) &&
+    (!requestedJob || requestedJob.status === 'queued' || requestedJob.status === 'running');
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
   // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
   // belong in the Queue until they finish — so History only shows runs that actually completed.
   const activeRunIds = useMemo(
-    () =>
-      new Set(
+    () => {
+      const ids = new Set(
         runJobs
-          .filter((job) => job.status === 'queued' || job.status === 'running')
+          .filter((job) => job.status === 'queued' || job.status === 'running' || stopDeletion.pending?.jobRef === `manual:${job.jobId}`)
           .map((job) => job.runId)
           .filter(Boolean)
-      ),
-    [runJobs]
+      );
+      // The results directory may arrive before the first jobs response. Preserve the submitted
+      // run's queued identity instead of treating its empty directory as completed output.
+      if (requestedJobPending && requestedBaselineRunId) ids.add(requestedBaselineRunId);
+      return ids;
+    },
+    [requestedBaselineRunId, requestedJobPending, runJobs, stopDeletion.pending?.jobRef]
   );
   const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
+  const awaitingRequestedResult = requestedJob?.status === 'succeeded' &&
+    !historyRuns.some((run) => run.runId === requestedBaselineRunId);
 
   const resolvedSelection = useMemo(
     () =>
@@ -429,6 +464,12 @@ export function ManualResultsView({
     () => (baselineRunId ? (comparisonRunId ? [baselineRunId, comparisonRunId] : [baselineRunId]) : []),
     [baselineRunId, comparisonRunId]
   );
+  // Never label the previous run's cached details or chart as the newly selected run.
+  const baselineDetail = loadedBaselineDetail?.runId === baselineRunId ? loadedBaselineDetail : null;
+  const comparisonDetail = loadedComparisonDetail?.runId === comparisonRunId ? loadedComparisonDetail : null;
+  const comparePayload = loadedComparePayload?.runIds.length === selectedRunIds.length &&
+    loadedComparePayload.runIds.every((runId, index) => runId === selectedRunIds[index])
+    ? loadedComparePayload : null;
   const manifestRunId = manifestTarget === 'comparison' && comparisonRunId ? comparisonRunId : baselineRunId;
   const manifestTargetLabel = manifestTarget === 'comparison' && comparisonRunId
     ? COMPARISON_RUN_LABEL
@@ -446,14 +487,15 @@ export function ManualResultsView({
     // loading, `runs` is empty and resolveManualRunSelection() returns an empty selection, which
     // would strip a requested baselineRunId out of the URL and bounce the user straight back out
     // of the results view — the "View results" button appears to do nothing. Once runs have
-    // loaded, a genuinely-missing id falls back to a default run instead of an empty one, so it is
-    // safe to write the resolved selection back.
-    if (isLoadingRuns) {
+    // loaded, a genuinely-missing id falls back to a default run instead of an empty one. An
+    // accepted job keeps its requested result id until the job and its finished output arrive.
+    if (isLoadingRuns || requestedJobPending || awaitingRequestedResult) {
       return;
     }
     if (
       requestedBaselineRunId === baselineRunId &&
-      requestedComparisonRunId === comparisonRunId
+      requestedComparisonRunId === comparisonRunId &&
+      requestedJob?.status !== 'succeeded'
     ) {
       return;
     }
@@ -466,6 +508,9 @@ export function ManualResultsView({
     baselineRunId,
     comparisonRunId,
     isLoadingRuns,
+    requestedJobPending,
+    requestedJob?.status,
+    awaitingRequestedResult,
     onManualSelectionChange,
     requestedBaselineRunId,
     requestedComparisonRunId
@@ -476,8 +521,9 @@ export function ManualResultsView({
     setIsLoadingRuns(true);
 
     try {
-      const runsPayload = await fetchResultsRuns();
+      const runsPayload = (await fetchResultsRuns()).filter((run) => !removedRunIds.current.has(run.runId));
       setRuns(runsPayload);
+      return runsPayload;
     } finally {
       setIsLoadingRuns(false);
     }
@@ -517,22 +563,36 @@ export function ManualResultsView({
   useEffect(() => {
     let cancelled = false;
     let previousActive = false;
+    let previousRequestedStatus: ModelRunJobStatus | undefined;
+    let polling = false;
 
     const pollActiveRuns = async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const jobs = await fetchModelRunJobs();
+        const jobs = (await fetchModelRunJobs()).filter((job) => !removedJobIds.current.has(job.jobId));
         if (cancelled) {
           return;
         }
         setRunJobs(jobs);
         const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
-        if (previousActive && !active) {
-          // A run just finished — refresh the completed-runs list so it appears in the picker.
-          void loadRuns();
+        const submittedJob = jobs.find((job) => job.jobId === requestedJobId);
+        const requestedStatus = submittedJob?.status;
+        if ((previousActive && !active) || (requestedStatus === 'succeeded' && previousRequestedStatus !== 'succeeded')) {
+          // The submitted run can finish while another job remains active. Refresh its output
+          // immediately so the preserved requested selection becomes available in the picker.
+          const refreshedRuns = await loadRuns();
+          if (requestedStatus === 'succeeded' && !refreshedRuns.some((run) => run.runId === submittedJob?.runId)) {
+            // Output listing can lag job completion; retry on the next poll without losing focus.
+            return;
+          }
         }
         previousActive = active;
+        previousRequestedStatus = requestedStatus;
       } catch {
         // Model runs may be unavailable (e.g. cloud/preview); ignore polling errors.
+      } finally {
+        polling = false;
       }
     };
 
@@ -545,7 +605,7 @@ export function ManualResultsView({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [loadRuns]);
+  }, [loadRuns, requestedJobId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1060,6 +1120,12 @@ export function ManualResultsView({
     updateSelection(runId, '');
   };
 
+  const viewRunResults = (runId: string) => {
+    // Returning to the current primary run must preserve an explicitly selected comparison.
+    if (runId !== baselineRunId) setBaselineSelection(runId);
+    requestScrollToTop();
+  };
+
   const openMatchingBaselineBuilder = () => {
     if (!matchingBaselineDraft) {
       setLoadError('This run does not record enough setup detail to pre-fill a matching baseline.');
@@ -1210,26 +1276,49 @@ export function ManualResultsView({
 
   // Queue = pending work only (queued/running). Run History = every finished run: the completed
   // runs on disk plus failed/cancelled jobs from this session (which have no saved results).
-  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running');
-  const failedHistoryJobs = runJobs.filter((job) => job.status === 'failed' || job.status === 'canceled');
-  const queuePreviewJob = queueItems.find((job) => job.status === 'running') ?? queueItems[0] ?? null;
-  const remainingQueueItems = queuePreviewJob
-    ? queueItems.filter((job) => job.jobId !== queuePreviewJob.jobId)
-    : queueItems;
+  const renderStopAndDeleteButton = (job: ModelRunJob) => canWrite && canDeleteResults && (
+    <button
+      type="button"
+      className="danger-button"
+      disabled={Boolean(stopDeletion.pending)}
+      onClick={() => void stopDeletion.stopAndDelete(`manual:${job.jobId}`, job.title || job.runId || job.jobId)}
+    >
+      {stopDeletion.pending?.jobRef === `manual:${job.jobId}`
+        ? stopDeletion.pending.phase === 'stopping' ? 'Stopping…' : 'Deleting…'
+        : 'Cancel'}
+    </button>
+  );
+  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running' || stopDeletion.pending?.jobRef === `manual:${job.jobId}`);
+  const failedHistoryJobs = runJobs.filter((job) =>
+    (job.status === 'failed' || job.status === 'canceled') && stopDeletion.pending?.jobRef !== `manual:${job.jobId}`
+  );
+  const loadingRequestedJob = Boolean(requestedJobId) && !requestedJob;
+  const { preview: queuePreviewJob, waitingCount, visibleRemaining: remainingQueueItems } = getResultsQueueRows(queueItems, isQueueExpanded);
   const historyPreviewRun = baselineSummary ?? historyRuns[0] ?? null;
   const finishedRunCount = historyRuns.length + failedHistoryJobs.length;
 
   return (
     <section className="results-layout manual-results-layout">
       {loadError && <p className="error-banner">{loadError}</p>}
+      {stopDeletion.error && (
+        <div className="error-banner" role="alert">
+          <p>{stopDeletion.error}</p>
+          {stopDeletion.retry && <button type="button" className="danger-button" onClick={() => void stopDeletion.retry?.()}>Retry cancellation</button>}
+        </div>
+      )}
+      {stopDeletion.pending && (
+        <p className="info-banner" role="status">
+          {stopDeletion.pending.phase === 'stopping' ? 'Stopping' : 'Deleting'} run “{stopDeletion.pending.title}”…
+        </p>
+      )}
       <div className="results-main results-main-full">
-          {queueItems.length > 0 && (
+          {(queueItems.length > 0 || loadingRequestedJob) && (
           <article className="results-card run-queue-card">
             <div className="disclosure-preview-head">
               <div className="disclosure-preview-title">
                 <h3>Queue</h3>
                 <p>
-                  {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
+                  {waitingCount} other queued {waitingCount === 1 ? 'run' : 'runs'}
                 </p>
               </div>
               <button
@@ -1237,7 +1326,7 @@ export function ManualResultsView({
                 className="disclosure-preview-toggle"
                 aria-expanded={isQueueExpanded}
                 onClick={() => setIsQueueExpanded((current) => !current)}
-                disabled={remainingQueueItems.length === 0}
+                disabled={waitingCount === 0}
               >
                 {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
               </button>
@@ -1252,23 +1341,38 @@ export function ManualResultsView({
                   <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
                     {QUEUE_STATUS_META[queuePreviewJob.status].label}
                   </span>
+                  {(queuePreviewJob.status === 'running' || queuePreviewJob.status === 'queued') && (
+                    <ExperimentRunProgress
+                      key={queuePreviewJob.jobId}
+                      jobRef={`manual:${queuePreviewJob.jobId}`}
+                      title={queuePreviewJob.title || queuePreviewJob.runId}
+                      status={queuePreviewJob.status}
+                    />
+                  )}
                   <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
+                  {renderStopAndDeleteButton(queuePreviewJob)}
                 </span>
               </div>
             ) : (
-              <p className="info-banner">No runs in progress.</p>
+              <p className="info-banner" role="status">
+                {loadingRequestedJob ? 'Loading submitted run...' : 'No runs in progress.'}
+              </p>
             )}
 
-            {isQueueExpanded && remainingQueueItems.length > 0 && (
+            {remainingQueueItems.length > 0 && (
               <ul className="job-list run-queue-list">
                 {remainingQueueItems.map((job) => (
                   <li key={job.jobId} className="job-item">
                     <strong>{job.title || job.runId || job.jobId}</strong>
-                    <p>
+                    <p className="run-preview-meta">
                       <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
+                      {(job.status === 'running' || job.status === 'queued') && (
+                        <ExperimentRunProgress jobRef={`manual:${job.jobId}`} title={job.title || job.runId} status={job.status} />
+                      )}
                     </p>
                     {job.baseline && <p>Model {job.baseline}</p>}
                     <p>{formatQueueTimestamp(job.createdAt)}</p>
+                    <div className="job-actions-row">{renderStopAndDeleteButton(job)}</div>
                   </li>
                 ))}
               </ul>
@@ -1291,6 +1395,7 @@ export function ManualResultsView({
                 <label>
                 <span>Primary run</span>
                 <select
+                  ref={selectionRef}
                   value={baselineRunId}
                   disabled={historyRuns.length === 0}
                   onChange={(event) => setBaselineSelection(event.target.value)}
@@ -1831,13 +1936,13 @@ export function ManualResultsView({
               <button
                 type="button"
                 className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
-                onClick={() => setBaselineSelection(historyPreviewRun.runId)}
+                onClick={() => viewRunResults(historyPreviewRun.runId)}
               >
                 <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
                 <span className="run-preview-meta">
                   <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
                   <span className="run-preview-action">
-                    {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
+                    View results
                   </span>
                 </span>
               </button>
@@ -1929,9 +2034,9 @@ export function ManualResultsView({
                             <button
                               type="button"
                               className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
-                              onClick={() => setBaselineSelection(run.runId)}
+                              onClick={() => viewRunResults(run.runId)}
                             >
-                              {isBaselineSelected ? 'Primary run selected' : 'Set as primary run'}
+                              View results
                             </button>
                             <button
                               type="button"

@@ -113,7 +113,7 @@ export interface ExperimentRunController {
   onFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
   onSensitivityFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
   onSubmitRun: (confirmWarnings: boolean) => Promise<void>;
-  onSubmitSensitivity: (confirmWarnings: boolean) => Promise<void>;
+  onSubmitSensitivity: () => Promise<void>;
   onCancelActiveSensitivity: () => Promise<void>;
   onCancelJob: (jobRef: string) => Promise<void>;
   refreshJobs: () => Promise<void>;
@@ -126,19 +126,19 @@ interface UseExperimentRunControllerOptions {
   onSelectedJobRefChange: (jobRef: string) => void;
   onOpenManualResults: (runId: string) => void;
   onOpenSensitivityResults: (experimentId: string) => void;
-  onManualRunAccepted?: (runId: string) => void;
-  onSensitivityRunAccepted?: (experimentId: string) => void;
+  onManualRunAccepted?: (runId: string, jobRef: string) => void;
+  onSensitivityRunAccepted?: (experimentId: string, jobRef: string) => void;
   // Manual jobRef to auto-follow: once it completes, redirect to its results (Home "Default Run" hand-off).
   followJobRef?: string;
   draftId?: string;
-  policyDemoActive?: boolean;
+  experimentDemoActive?: boolean;
 }
 
-export function isPolicyExperimentDemoSubmissionBlocked(
+export function isExperimentDemoSubmissionBlocked(
   activeType: ExperimentType,
-  policyDemoActive: boolean
+  experimentDemoActive: boolean
 ): boolean {
-  return activeType === 'manual' && policyDemoActive;
+  return experimentDemoActive && (activeType === 'manual' || activeType === 'sensitivity');
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -241,7 +241,7 @@ export function useExperimentRunController({
   onSensitivityRunAccepted,
   followJobRef,
   draftId = '',
-  policyDemoActive = false
+  experimentDemoActive = false
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -285,6 +285,16 @@ export function useExperimentRunController({
   const [pendingSensitivityExperimentId, setPendingSensitivityExperimentId] = useState<string>('');
   const [pendingManualJobRef, setPendingManualJobRef] = useState<string>('');
   const [pendingSensitivityJobRef, setPendingSensitivityJobRef] = useState<string>('');
+  const jobsLifecycleRef = useRef<symbol | null>(null);
+  const submissionInFlightRef = useRef(false);
+
+  useEffect(() => {
+    // A fresh token also rejects requests from StrictMode's previous effect setup.
+    jobsLifecycleRef.current = Symbol('experiment jobs lifecycle');
+    return () => {
+      jobsLifecycleRef.current = null;
+    };
+  }, []);
 
   const selectedJob = useMemo(
     () => jobs.find((job) => job.jobRef === selectedJobRef) ?? null,
@@ -369,7 +379,7 @@ export function useExperimentRunController({
           setManualLockedParameterKeys(restored.draft.lockedParameterKeys ?? []);
           setManualMaxWorkers(restored.draft.maxWorkers);
           setManualMaxWorkersTouched((restored.draft.lockedParameterKeys?.length ?? 0) === 0);
-          setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : 'Scenario draft restored for this tab.');
+          setDraftNotice(restored.choicesChanged ? 'Some saved choices are no longer available and were replaced with current defaults.' : '');
         }
       }
       if (activeType === 'sensitivity' && draftId && hydrateDraft) {
@@ -415,7 +425,7 @@ export function useExperimentRunController({
           skipSensitivityRangeResetForPackage.current = restored.draft.policyPackageId;
           setDraftNotice(restored.choicesChanged
             ? 'Some saved choices are no longer available and were replaced with current defaults.'
-            : 'Sensitivity draft restored for this tab.');
+            : '');
         }
       }
       setDraftHydrated(true);
@@ -437,6 +447,7 @@ export function useExperimentRunController({
       basePolicy,
       formValues,
       maxWorkers: manualMaxWorkers,
+      currentStep: readScenarioDraft(draftId)?.currentStep,
       ...(manualLockedParameterKeys.length > 0 ? { lockedParameterKeys: manualLockedParameterKeys } : {})
     });
   }, [activeType, basePolicy, draftHydrated, draftId, formValues, manualLockedParameterKeys, manualMaxWorkers, options, selectedBaseline, title]);
@@ -453,7 +464,8 @@ export function useExperimentRunController({
       max: sensitivityMax,
       sampleCount: sensitivitySampleCount,
       formValues: sensitivityFormValues,
-      maxWorkers: sensitivityMaxWorkers
+      maxWorkers: sensitivityMaxWorkers,
+      currentStep: readSensitivityDraft(draftId)?.currentStep
     });
   }, [
     activeType,
@@ -472,8 +484,12 @@ export function useExperimentRunController({
   ]);
 
   const refreshJobs = async () => {
+    const lifecycle = jobsLifecycleRef.current;
+    if (!lifecycle) return;
+
     try {
       const payload = await fetchExperimentJobs();
+      if (jobsLifecycleRef.current !== lifecycle) return;
       setJobs(payload.jobs);
       setManualSubmissionLockedBySensitivity(payload.locks.manualSubmissionLocked);
       setSensitivitySubmissionLockedByManual(payload.locks.sensitivitySubmissionLocked);
@@ -489,11 +505,11 @@ export function useExperimentRunController({
         onSelectedJobRefChange(nextSelectedJobRef);
       }
     } catch (error) {
-      if (!isRetryableApiError(error)) {
+      if (jobsLifecycleRef.current === lifecycle && !isRetryableApiError(error)) {
         setPageError((error as Error).message);
       }
     } finally {
-      setIsLoadingJobs(false);
+      if (jobsLifecycleRef.current === lifecycle) setIsLoadingJobs(false);
     }
   };
 
@@ -812,10 +828,12 @@ export function useExperimentRunController({
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {
-    if (isPolicyExperimentDemoSubmissionBlocked(activeType, policyDemoActive)) {
-      setPageError('Policy scenario submission is disabled during the guided preview.');
+    if (isExperimentDemoSubmissionBlocked(activeType, experimentDemoActive)) {
+      setPageError('Experiment submission is disabled during the guided demo.');
       return;
     }
+    if (submissionInFlightRef.current) return;
+    submissionInFlightRef.current = true;
     setPageError('');
     setIsSubmitting(true);
 
@@ -836,26 +854,38 @@ export function useExperimentRunController({
       setWarnings([]);
       setTitle('');
       setManualLockedParameterKeys([]);
+      const jobRef = response.job ? `manual:${response.job.jobId}` : '';
+      if (onManualRunAccepted) {
+        // Hand ownership to Results once. In-flight setup polls must not rewrite the old route.
+        jobsLifecycleRef.current = null;
+        onManualRunAccepted(response.job?.runId ?? '', jobRef);
+        return;
+      }
       if (response.job) {
-        const jobRef = `manual:${response.job.jobId}`;
         setPendingManualJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
-      onManualRunAccepted?.(response.job?.runId ?? '');
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);
     } finally {
+      submissionInFlightRef.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const onSubmitSensitivity = async (confirmWarnings: boolean) => {
+  const onSubmitSensitivity = async () => {
+    if (isExperimentDemoSubmissionBlocked(activeType, experimentDemoActive)) {
+      setPageError('Experiment submission is disabled during the guided demo.');
+      return;
+    }
     if (!selectedSensitivityPackage) {
       setPageError('Select a policy instrument for the sensitivity analysis.');
       return;
     }
 
+    if (submissionInFlightRef.current) return;
+    submissionInFlightRef.current = true;
     setPageError('');
     setIsSubmittingSensitivity(true);
 
@@ -879,8 +909,7 @@ export function useExperimentRunController({
         max,
         sampleCount,
         overrides: buildSensitivityGeneralOverrides(),
-        maxWorkers: Math.min(maxWorkers, options?.sensitivityMaxWorkersCap ?? maxWorkers),
-        confirmWarnings
+        maxWorkers: Math.min(maxWorkers, options?.sensitivityMaxWorkersCap ?? maxWorkers)
       });
 
       if (!response.accepted) {
@@ -892,23 +921,31 @@ export function useExperimentRunController({
       clearSensitivityDraft(draftId);
       setSensitivityWarnings([]);
       setSensitivityTitle('');
-      let acceptedExperimentId = '';
+      const acceptedExperimentId = response.experiment?.experimentId ?? '';
+      const jobRef = acceptedExperimentId ? `sensitivity:${acceptedExperimentId}` : '';
+      if (onSensitivityRunAccepted) {
+        jobsLifecycleRef.current = null;
+        onSensitivityRunAccepted(acceptedExperimentId, jobRef);
+        return;
+      }
       if (response.experiment) {
-        acceptedExperimentId = response.experiment.experimentId;
-        const jobRef = `sensitivity:${acceptedExperimentId}`;
         setPendingSensitivityJobRef(jobRef);
         onSelectedJobRefChange(jobRef);
       }
-      onSensitivityRunAccepted?.(acceptedExperimentId);
       await refreshJobs();
     } catch (error) {
       setPageError((error as Error).message);
     } finally {
+      submissionInFlightRef.current = false;
       setIsSubmittingSensitivity(false);
     }
   };
 
   const onCancelActiveSensitivity = async () => {
+    if (experimentDemoActive) {
+      setPageError('Canceling active jobs is disabled during the guided demo.');
+      return;
+    }
     if (!activeSensitivityJob) {
       return;
     }
@@ -926,6 +963,10 @@ export function useExperimentRunController({
   };
 
   const onCancelJob = async (jobRef: string) => {
+    if (experimentDemoActive) {
+      setPageError('Canceling active jobs is disabled during the guided demo.');
+      return;
+    }
     setPageError('');
 
     try {

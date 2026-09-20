@@ -40,7 +40,11 @@ assert.equal(
   DEMO_CHOICES.find((choice) => choice.label === 'Run model evidence demo')?.to,
   MODEL_EVIDENCE_DEMO_LAUNCH_HREF
 );
-assert.equal(DEMO_CHOICES.filter((choice) => choice.to === null).length, 2);
+assert.equal(
+  DEMO_CHOICES.filter((choice) => choice.to === null && !choice.opensExperimentChooser).length,
+  2,
+  'Only Full and Results remain disabled; Experiment opens its in-place sub-chooser'
+);
 for (const disabledChoice of ['Run full demo', 'Run results demo']) {
   assert.equal(DEMO_CHOICES.find((choice) => choice.label === disabledChoice)?.to, null);
 }

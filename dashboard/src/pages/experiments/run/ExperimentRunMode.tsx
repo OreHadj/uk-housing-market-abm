@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ExperimentJobSummary } from '../../../../shared/types';
 import { deleteExperimentJob, downloadResultsRun, downloadSensitivityExperiment } from '../../../lib/api';
@@ -8,7 +8,7 @@ import { experimentTypeRegistry } from '../registry';
 import { ExperimentLogCard } from '../../run-experiments/ExperimentLogCard';
 import { ExperimentQueueCard } from '../../run-experiments/ExperimentQueueCard';
 import { useExperimentRunController } from './useExperimentRunController';
-import type { PolicyExperimentDemoCoordinator } from '../../../components/PolicyExperimentDemoPrototype';
+import type { ExperimentDemoCoordinator } from '../../../components/ExperimentDemoOverlay';
 
 interface ExperimentRunModeProps {
   activeType: ExperimentType;
@@ -26,9 +26,10 @@ interface ExperimentRunModeProps {
   draftId?: string;
   initialScenarioStep?: number;
   initialSensitivityStep?: number;
-  onManualRunAccepted?: (runId: string) => void;
-  onSensitivityRunAccepted?: (experimentId: string) => void;
-  policyDemo?: PolicyExperimentDemoCoordinator;
+  onManualRunAccepted?: (runId: string, jobRef: string) => void;
+  onSensitivityRunAccepted?: (experimentId: string, jobRef: string) => void;
+  onSubmissionStateChange?: (isSubmitting: boolean) => void;
+  experimentDemo?: ExperimentDemoCoordinator;
 }
 
 export function ExperimentRunMode({
@@ -45,11 +46,12 @@ export function ExperimentRunMode({
   followJobRef,
   showRunManagement = true,
   draftId = '',
-  initialScenarioStep = 0,
-  initialSensitivityStep = 0,
+  initialScenarioStep,
+  initialSensitivityStep,
   onManualRunAccepted,
   onSensitivityRunAccepted,
-  policyDemo
+  onSubmissionStateChange,
+  experimentDemo
 }: ExperimentRunModeProps) {
   const controller = useExperimentRunController({
     activeType,
@@ -59,7 +61,7 @@ export function ExperimentRunMode({
     onOpenSensitivityResults,
     followJobRef,
     draftId,
-    policyDemoActive: policyDemo?.active === true,
+    experimentDemoActive: experimentDemo?.active === true,
     onManualRunAccepted,
     onSensitivityRunAccepted
   });
@@ -67,8 +69,13 @@ export function ExperimentRunMode({
   const [deletingJobRef, setDeletingJobRef] = useState<string>('');
   const [downloadError, setDownloadError] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string>('');
+  const isSubmitting = controller.isSubmitting || controller.isSubmittingSensitivity;
 
-  const runActionsDisabled = controller.executionDisabled || !canWrite || policyDemo?.active === true;
+  useEffect(() => {
+    onSubmissionStateChange?.(isSubmitting);
+  }, [isSubmitting, onSubmissionStateChange]);
+
+  const runActionsDisabled = controller.executionDisabled || !canWrite || experimentDemo?.active === true;
   const RunSetupComponent = experimentTypeRegistry[activeType].RunSetupComponent;
   const workspaceJobs = controller.jobs.filter((job) => job.type === activeType);
 
@@ -187,7 +194,7 @@ export function ExperimentRunMode({
           runActionsDisabled={runActionsDisabled}
           initialScenarioStep={initialScenarioStep}
           initialSensitivityStep={initialSensitivityStep}
-          policyDemo={policyDemo}
+          experimentDemo={experimentDemo}
         />
 
         {showRunManagement && (

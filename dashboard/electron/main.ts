@@ -146,6 +146,10 @@ function assertTrustedDesktopIpcEvent(event: IpcMainInvokeEvent): void {
 }
 
 function registerDesktopIpc(): void {
+  ipcMain.handle('uk-housing-desktop:get-app-version', (event: IpcMainInvokeEvent) => {
+    assertTrustedDesktopIpcEvent(event);
+    return app.getVersion();
+  });
   ipcMain.handle('uk-housing-desktop:get-api-auth-token', (event: IpcMainInvokeEvent) => {
     assertTrustedDesktopIpcEvent(event);
     return desktopAuthToken;
