@@ -143,6 +143,15 @@ jobs:
         working-directory: dashboard
         run: npm --prefix electron ci
 
+      - name: Installer configuration and test helpers
+        run: |
+          node scripts/windows/write-installer-release-manifest.mjs --config-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts/windows/tests/installer.test.mjs
+
+      - name: Installer directory hook regression
+        run: node scripts/windows/test-installer-directory-hook.mjs
+
       - name: Dashboard lint
         working-directory: dashboard
         run: npm run lint
@@ -187,6 +196,18 @@ jobs:
       - name: Installed app smoke test
         working-directory: dashboard
         run: npm run test:windows-installed-installer
+
+      - name: Installed app in a custom folder with spaces
+        working-directory: dashboard
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'UK Housing installer path spaces\UK Housing Model'
+          npm run test:windows-installed-installer -- --install-dir "$installDir"
+
+      - name: Installed app in a custom folder with non-ASCII characters
+        working-directory: dashboard
+        run: |
+          $installDir = Join-Path $env:RUNNER_TEMP 'UK Housing modèle 用户\UK Housing Model'
+          npm run test:windows-installed-installer -- --install-dir "$installDir"
 
       - id: installer-artifacts
         name: Detect installer artifacts
@@ -238,7 +259,11 @@ jobs:
           ~~~
 
           3. Compare the result with 'SHA256SUMS.txt' or '$installerName.sha256'.
-          4. Run the installer and launch **UK Housing Model** from the Start Menu or desktop shortcut.
+          4. Run the installer. **Only for me** is selected by default; **Anyone who uses this computer** requires administrator permissions.
+          5. Keep the suggested application folder or choose another writable location, then complete setup.
+          6. Launch **UK Housing Model** from the Start Menu or desktop shortcut.
+
+          Upgrades reuse the existing application folder unless you choose a different destination. Results, logs, and generated configurations remain in the current user's AppData\Roaming\UK Housing Model folder. Selecting an application folder does not move these files, and normal uninstall preserves them.
 
           The release workflow runs dashboard linting, dashboard build checks, smoke tests, Maven tests, and the packaged-launcher regression before publishing these assets.
           "@
