@@ -1,16 +1,19 @@
 import { SensitivitySetupCard } from '../../run-experiments/SensitivitySetupCard';
+import type { ExperimentDemoCoordinator } from '../../../lib/guidedDemos/creation';
 import type { ExperimentRunController } from './useExperimentRunController';
 
 interface SensitivityRunSetupPanelProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
   initialSensitivityStep?: number;
+  experimentDemo?: ExperimentDemoCoordinator;
 }
 
 export function SensitivityRunSetupPanel({
   controller,
   runActionsDisabled,
-  initialSensitivityStep = 0
+  initialSensitivityStep,
+  experimentDemo
 }: SensitivityRunSetupPanelProps) {
   return (
     <SensitivitySetupCard
@@ -58,12 +61,21 @@ export function SensitivityRunSetupPanel({
           : null
       }
       hasActiveSensitivityJob={controller.hasActiveSensitivityJob}
-      onSubmit={(confirmWarnings) => {
-        void controller.onSubmitSensitivity(confirmWarnings);
+      onSubmit={() => {
+        void controller.onSubmitSensitivity();
       }}
       onCancelActive={() => {
         void controller.onCancelActiveSensitivity();
       }}
+      sensitivityDemo={experimentDemo ? {
+        ...experimentDemo,
+        ready: controller.isDraftHydrated && Boolean(controller.options),
+        loading: controller.isLoadingOptions,
+        error: controller.isLoadingOptions ? '' : controller.optionsError,
+        onRetryLoad: () => {
+          void controller.retryOptions();
+        }
+      } : undefined}
     />
   );
 }

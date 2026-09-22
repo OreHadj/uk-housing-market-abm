@@ -29,7 +29,7 @@ const PARAMETER_HELP_BY_KEY: Record<string, string> = {
     'Month when transaction-level export begins. Earlier recording creates larger files and may affect performance.',
   CUMULATIVE_WEIGHT_BEYOND_YEAR:
     'Weight given to events older than twelve months. The default of 0.14 is the config default in the user-set parameters table of the Bank of England working paper.',
-  recordTransactions: 'Exports every transaction event for downloaded or external analysis. This can create very large files and affect performance.',
+  recordTransactions: 'Enables Lending risk charts in policy reports by saving individual sale and rental transactions. This can create very large files and add file-writing time.',
   recordNBidUpFrequency: 'Exports bid-up frequency data for analysis outside the dashboard.',
   recordCoreIndicators: 'Writes the main indicator series required by charts in the dashboard.',
   recordQualityBandPrice: 'Exports prices by quality band for analysis outside the dashboard; this does not add dashboard charts.',

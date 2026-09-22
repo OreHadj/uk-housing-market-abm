@@ -44,6 +44,9 @@ interface PolicyValueFieldProps {
   disabled: boolean;
   mode: ExperimentControlMode;
   onChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
+  demoTarget?: string;
+  onDemoEdit?: () => void;
+  onDemoCommit?: (storedValue: string) => void;
 }
 
 /**
@@ -68,7 +71,20 @@ interface PolicyValueFieldProps {
  * An untouched field emits no change at all, so the base policy's exact stored fraction
  * (0.0510833333, not a 2-dp stand-in) is submitted byte-for-byte.
  */
-function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suffix, disabled, mode, onChange }: PolicyValueFieldProps) {
+function PolicyValueField({
+  parameter,
+  label,
+  value,
+  basePolicyValue,
+  scale,
+  suffix,
+  disabled,
+  mode,
+  onChange,
+  demoTarget,
+  onDemoEdit,
+  onDemoCommit
+}: PolicyValueFieldProps) {
   const storedString = typeof value === 'string' ? value : '';
   const storedNumber = Number.parseFloat(storedString);
   const fallbackNumber =
@@ -98,6 +114,7 @@ function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suf
 
   const handleEdit = (raw: string) => {
     setText(raw);
+    onDemoEdit?.();
     const parsed = Number.parseFloat(raw);
     if (!Number.isFinite(parsed) || parsed < 0) {
       // Keep the last valid stored value; blur restores the text so nothing invalid can be submitted.
@@ -106,11 +123,13 @@ function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suf
     const stored = scaledInputToStoredFraction(raw, scale);
     committedRef.current = Number.parseFloat(stored);
     onChange(parameter, stored);
+    onDemoCommit?.(stored);
   };
 
   const handleBlur = () => {
     const parsed = Number.parseFloat(text);
     if (Number.isFinite(parsed) && parsed >= 0) {
+      onDemoCommit?.(scaledInputToStoredFraction(text, scale));
       return;
     }
     setText(Number.isFinite(effectiveNumber) ? formatExactScaled(effectiveNumber, scale) : '');
@@ -127,7 +146,15 @@ function PolicyValueField({ parameter, label, value, basePolicyValue, scale, suf
           value={text}
           disabled={disabled}
           aria-label={`${label} value`}
+          data-experiment-demo-target={demoTarget}
           onChange={(event) => handleEdit(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+            const parsed = Number.parseFloat(event.currentTarget.value);
+            if (!Number.isFinite(parsed) || parsed < 0) return;
+            event.preventDefault();
+            onDemoCommit?.(scaledInputToStoredFraction(event.currentTarget.value, scale));
+          }}
           onBlur={handleBlur}
         />
         {suffix ? (
@@ -151,6 +178,9 @@ interface CentralBankPolicyInputProps {
   executionDisabled: boolean;
   mode?: ExperimentControlMode;
   onChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
+  demoTarget?: string;
+  onDemoEdit?: () => void;
+  onDemoCommit?: (storedValue: string) => void;
 }
 
 /**
@@ -166,7 +196,10 @@ export function CentralBankPolicyInput({
   basePolicyValue,
   executionDisabled,
   mode = 'manual',
-  onChange
+  onChange,
+  demoTarget,
+  onDemoEdit,
+  onDemoCommit
 }: CentralBankPolicyInputProps) {
   const units = POLICY_FIELD_UNITS[parameter.key];
   if (units) {
@@ -181,6 +214,9 @@ export function CentralBankPolicyInput({
         disabled={executionDisabled}
         mode={mode}
         onChange={onChange}
+        demoTarget={demoTarget}
+        onDemoEdit={onDemoEdit}
+        onDemoCommit={onDemoCommit}
       />
     );
   }

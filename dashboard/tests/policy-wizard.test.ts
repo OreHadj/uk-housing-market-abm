@@ -6,6 +6,8 @@ import { BASE_POLICY_OPTIONS, CENTRAL_BANK_POLICY_KEYS } from '../shared/policyC
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../shared/policyDisplay.js';
 import type { ModelRunParameterDefinition, ModelRunSnapshotOption } from '../shared/types.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
+import { scenarioDraftStorageKey } from '../src/lib/scenarioDraft.js';
+import { applyPolicyRunBuilderDefaults, buildGeneralModelControlOverridesFromForm, normalizeManualScenarioFormValues, toInitialFormValues } from '../src/lib/experimentRunDefaults.js';
 
 const noop = () => {};
 const basePolicy = BASE_POLICY_OPTIONS.find((policy) => policy.id === '2024');
@@ -46,6 +48,26 @@ const generalParameters: ModelRunParameterDefinition[] = [
   }
 ];
 
+const sharedDefaults = toInitialFormValues(generalParameters, basePolicy);
+const policyDefaults = applyPolicyRunBuilderDefaults(generalParameters, sharedDefaults);
+assert.equal(sharedDefaults.recordTransactions, false, 'Shared defaults must keep transaction exports off outside policy runs');
+assert.equal(policyDefaults.recordTransactions, true, 'New policy runs should retain the transactions needed by Lending risk');
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(generalParameters, policyDefaults).recordTransactions,
+  true,
+  'Policy submission should enable transaction recording even when the model config defaults it off'
+);
+const optedOut = normalizeManualScenarioFormValues({ ...policyDefaults, recordTransactions: false });
+assert.equal(optedOut.recordTransactions, false, 'Restored or edited policy settings must retain an explicit recording opt-out');
+const recordingOnParameters = generalParameters.map((parameter) => parameter.key === 'recordTransactions'
+  ? { ...parameter, defaultValue: true }
+  : parameter);
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(recordingOnParameters, optedOut).recordTransactions,
+  false,
+  'An explicit opt-out must override a model config that enables recording'
+);
+
 const baselineFormValues: Record<string, string | boolean> = {
   N_STEPS: '3500',
   N_SIMS: '3',
@@ -85,6 +107,50 @@ const firstStepMarkup = renderToStaticMarkup(
 );
 assert.ok(firstStepMarkup.includes('Review and start'), 'The policy wizard should expose a fifth review step');
 assert.equal(firstStepMarkup.includes('Start policy scenario'), false, 'Submission must not appear before review');
+
+const previousSessionStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+Object.defineProperty(globalThis, 'sessionStorage', {
+  configurable: true,
+  value: {
+    getItem: (key: string) => key === scenarioDraftStorageKey('resumed-policy')
+      ? JSON.stringify({ version: 1, title: commonProps.title, calibratedModel: snapshot.version, currentStep: 4 })
+      : null
+  }
+});
+try {
+  const resumedMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(ManualRunSetupCard, { ...commonProps, draftId: 'resumed-policy' }))
+  );
+  assert.ok(resumedMarkup.includes('Start policy scenario'), 'Reopening a policy draft restores its saved review step');
+  const loadingMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+      ...commonProps, draftId: 'resumed-policy', isLoadingOptions: true
+    }))
+  );
+  const loadingStageButtons = loadingMarkup.match(/<button\b[^>]*>/g) ?? [];
+  assert.equal(loadingStageButtons.length, 5, 'Policy setup keeps all five stages visible while options load');
+  assert.ok(loadingStageButtons.every((button) => button.includes('disabled=""')), 'Loading policy stages cannot be changed');
+  assert.match(
+    loadingMarkup,
+    /<button\b[^>]*aria-current="step"[^>]*><span>5<\/span>Review and start<\/button>/,
+    'Loading a saved policy draft preserves its active review stage'
+  );
+  assert.match(loadingMarkup, /role="status"[^>]*>(?:<[^>]+>)*Loading scenario options/, 'Policy option loading is announced');
+  assert.equal(/<(?:input|select|textarea)\b/.test(loadingMarkup), false, 'Policy fields are withheld until options load');
+  assert.equal(loadingMarkup.includes('Start policy scenario'), false, 'A saved review stage cannot submit before options load');
+  const evidenceReturnMarkup = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+      ...commonProps, draftId: 'resumed-policy', initialStep: 1
+    }))
+  );
+  assert.ok(
+    evidenceReturnMarkup.includes('aria-current="step"><span>2</span>Model version'),
+    'An explicit evidence-return step overrides the saved policy step'
+  );
+} finally {
+  if (previousSessionStorage) Object.defineProperty(globalThis, 'sessionStorage', previousSessionStorage);
+  else Reflect.deleteProperty(globalThis, 'sessionStorage');
+}
 
 const matchingBaselineTechnicalMarkup = renderToStaticMarkup(
   createElement(
@@ -179,6 +245,18 @@ const warningMarkup = renderToStaticMarkup(
     })
   )
 );
-assert.ok(warningMarkup.includes('Confirm and start') && warningMarkup.includes('This scenario may take longer.'));
+assert.ok(warningMarkup.includes('Start policy scenario') && warningMarkup.includes('This scenario may take longer.'));
+assert.equal(warningMarkup.includes('Confirm and start'), false, 'Advisory warnings must not add a confirmation step');
+assert.equal(warningMarkup.includes('Replace results and start'), false, 'Advisory warnings must not authorise replacement');
+
+const overwriteMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+    ...commonProps,
+    initialStep: 4,
+    warnings: [{ code: 'output_folder_exists', message: 'Existing results will be overwritten.', severity: 'warning' }]
+  }))
+);
+assert.ok(overwriteMarkup.includes('Replace results and start'), 'Replacing saved results must remain explicit');
+assert.ok(overwriteMarkup.includes('Choose a different scenario name to keep both runs'));
 
 console.log('Policy wizard tests passed.');

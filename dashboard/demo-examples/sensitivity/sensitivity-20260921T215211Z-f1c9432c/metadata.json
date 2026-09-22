@@ -1,0 +1,157 @@
+{
+  "experimentId": "sensitivity-20260921T215211Z-f1c9432c",
+  "title": "Example: LTI threshold, 4× to 5×",
+  "baseline": "v0o7",
+  "basePolicy": "2024",
+  "status": "succeeded",
+  "createdAt": "2026-09-21T21:52:11.703Z",
+  "seedsPerPoint": 8,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+  ],
+  "maxWorkers": 14,
+  "generalOverrides": {
+    "N_SIMS": 8,
+    "recordTransactions": false,
+    "recordNBidUpFrequency": false,
+    "recordCoreIndicators": true,
+    "recordQualityBandPrice": false,
+    "recordHouseholdID": false,
+    "recordEmploymentIncome": false,
+    "recordRentalIncome": false,
+    "recordBankBalance": false,
+    "recordHousingWealth": false,
+    "recordTotalDebt": false,
+    "recordHousingStatus": false,
+    "recordConsumption": false,
+    "recordNHousesOwned": false,
+    "recordAge": false,
+    "recordSavingRate": false,
+    "N_STEPS": 2000,
+    "CUMULATIVE_WEIGHT_BEYOND_YEAR": 0.25
+  },
+  "parameter": {
+    "key": "owner_occupier_lti_soft_max",
+    "packageId": "owner_occupier_lti_soft_max",
+    "parameterKeys": [
+      "CENTRAL_BANK_LTI_SOFT_MAX_FTB",
+      "CENTRAL_BANK_LTI_SOFT_MAX_HM"
+    ],
+    "title": "Soft max LTI FTB + HM",
+    "description": "Varies the first-time buyer and home-mover soft LTI thresholds together.",
+    "type": "number",
+    "baselineValue": 4.5,
+    "baselineValuesByKey": {
+      "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4.5,
+      "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4.5
+    },
+    "min": 4,
+    "max": 5,
+    "sampleCount": 5
+  },
+  "warnings": [],
+  "warningSummary": {
+    "byPoint": {
+      "point-4": [],
+      "point-4.25": [],
+      "point-4.5": [],
+      "point-4.75": [],
+      "point-5": []
+    }
+  },
+  "sampledPoints": [
+    {
+      "pointId": "point-4",
+      "value": 4,
+      "label": "4",
+      "valuesByKey": {
+        "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4,
+        "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4
+      },
+      "slotLabels": [
+        "sample_1",
+        "min"
+      ],
+      "isBaseline": false
+    },
+    {
+      "pointId": "point-4.25",
+      "value": 4.25,
+      "label": "4.25",
+      "valuesByKey": {
+        "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4.25,
+        "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4.25
+      },
+      "slotLabels": [
+        "sample_2"
+      ],
+      "isBaseline": false
+    },
+    {
+      "pointId": "point-4.5",
+      "value": 4.5,
+      "label": "4.5",
+      "valuesByKey": {
+        "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4.5,
+        "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4.5
+      },
+      "slotLabels": [
+        "sample_3",
+        "baseline"
+      ],
+      "isBaseline": true
+    },
+    {
+      "pointId": "point-4.75",
+      "value": 4.75,
+      "label": "4.75",
+      "valuesByKey": {
+        "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4.75,
+        "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4.75
+      },
+      "slotLabels": [
+        "sample_4"
+      ],
+      "isBaseline": false
+    },
+    {
+      "pointId": "point-5",
+      "value": 5,
+      "label": "5",
+      "valuesByKey": {
+        "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 5,
+        "CENTRAL_BANK_LTI_SOFT_MAX_HM": 5
+      },
+      "slotLabels": [
+        "sample_5",
+        "max"
+      ],
+      "isBaseline": false
+    }
+  ],
+  "collapsedSlots": {
+    "sample_1": "point-4",
+    "min": "point-4",
+    "sample_2": "point-4.25",
+    "sample_3": "point-4.5",
+    "sample_4": "point-4.75",
+    "sample_5": "point-5",
+    "max": "point-5",
+    "baseline": "point-4.5"
+  },
+  "runCommand": {
+    "mode": "maven",
+    "mavenBin": "./mvnw",
+    "javaExe": "java",
+    "commandTemplate": "./mvnw -q -DskipTests compile && java -cp <prepared-classpath> housing.Model -configFile <path> -outputFolder <path> -dev"
+  },
+  "startedAt": "2026-09-21T21:52:11.758Z",
+  "endedAt": "2026-09-21T21:54:45.674Z"
+}

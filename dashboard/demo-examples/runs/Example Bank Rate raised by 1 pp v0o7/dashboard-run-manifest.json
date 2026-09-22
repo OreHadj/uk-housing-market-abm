@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "manifestType": "manual-run",
+  "generatedAt": "2026-09-21T21:49:59.363Z",
+  "updatedAt": "2026-09-21T21:50:50.782Z",
+  "environment": {
+    "appVersion": "0.8.3",
+    "releaseChannel": "development",
+    "buildCommitSha": "e0f702c1fe29f4025a97f3302cbe070269e90d97"
+  },
+  "launcher": {
+    "mode": "maven",
+    "commandTemplate": "./mvnw -q -DskipTests compile && java -cp <prepared-classpath> housing.Model -configFile <path> -outputFolder <path> -dev",
+    "mavenBin": "./mvnw",
+    "javaExe": "java"
+  },
+  "javaRuntime": {
+    "javaBin": "java",
+    "available": true,
+    "vendor": "OpenJDK",
+    "version": "openjdk version \"25.0.3\" 2026-04-21",
+    "majorVersion": 25,
+    "error": null
+  },
+  "modelArtifact": {
+    "path": null,
+    "sha256": null,
+    "available": false,
+    "error": "Maven launcher does not use a packaged model jar."
+  },
+  "inputData": {
+    "dataRoot": "input-data-versions",
+    "baselineSnapshot": "v0o7",
+    "baselineSnapshotHash": {
+      "algorithm": "sha256",
+      "value": "6c8f134ab131d4f064db8a9a3a12f1da94c7923eced281ff9273fe898b5e6a69",
+      "fileCount": 9
+    },
+    "dashboardHistoryHash": {
+      "algorithm": "sha256",
+      "value": "e5a3c7f9becc4d1f83d3134edecfb8c8bc6404eae025eb23354ffd3a127db700"
+    }
+  },
+  "run": {
+    "jobId": "job-20260921T214959Z-392b9b52",
+    "runId": "Example Bank Rate raised by 1 pp v0o7",
+    "title": "Example: Bank Rate raised by 1 pp",
+    "status": "succeeded",
+    "createdAt": "2026-09-21T21:49:59.363Z",
+    "startedAt": "2026-09-21T21:49:59.365Z",
+    "endedAt": "2026-09-21T21:50:50.403Z",
+    "outputPath": "Results/Example Bank Rate raised by 1 pp v0o7",
+    "configPath": "tmp/dashboard-model-runs/job-20260921T214959Z-392b9b52/config.properties",
+    "generatedConfigHash": {
+      "algorithm": "sha256",
+      "value": "d73bb48937e8ab294b3c21721a37c4a3fa29c287995192e174d563bf23ca4c55"
+    },
+    "seed": null,
+    "seedsPerPoint": 8,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "basePolicy": "2024",
+    "maxWorkers": 8,
+    "overriddenParameters": {
+      "CENTRAL_BANK_INITIAL_BASE_RATE": 0.0610833333,
+      "CENTRAL_BANK_LTV_HARD_MAX_FTB": 0.95,
+      "CENTRAL_BANK_LTV_HARD_MAX_HM": 0.95,
+      "CENTRAL_BANK_LTV_HARD_MAX_BTL": 0.85,
+      "CENTRAL_BANK_LTI_SOFT_MAX_FTB": 4.5,
+      "CENTRAL_BANK_LTI_SOFT_MAX_HM": 4.5,
+      "CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_FTB": 0.15,
+      "CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_HM": 0.15,
+      "CENTRAL_BANK_LTI_MONTHS_TO_CHECK": 12,
+      "CENTRAL_BANK_AFFORDABILITY_HARD_MAX": 0.9999,
+      "CENTRAL_BANK_ICR_HARD_MIN": 0,
+      "recordTransactions": false,
+      "recordNBidUpFrequency": false,
+      "recordCoreIndicators": true,
+      "recordQualityBandPrice": false,
+      "recordHouseholdID": false,
+      "recordEmploymentIncome": false,
+      "recordRentalIncome": false,
+      "recordBankBalance": false,
+      "recordHousingWealth": false,
+      "recordTotalDebt": false,
+      "recordHousingStatus": false,
+      "recordConsumption": false,
+      "recordNHousesOwned": false,
+      "recordAge": false,
+      "recordSavingRate": false,
+      "N_STEPS": 3500,
+      "N_SIMS": 8,
+      "TIME_TO_START_RECORDING_TRANSACTIONS": 500,
+      "CUMULATIVE_WEIGHT_BEYOND_YEAR": 0.14,
+      "SEED": 1
+    },
+    "outputHash": {
+      "algorithm": "sha256",
+      "value": "6eeeebbca6b5bc881bf3b965083f2a7c9df07d179ebf2132cf94bd8acf82d8ac",
+      "fileCount": 153
+    },
+    "exitCode": 0,
+    "signal": null
+  }
+}

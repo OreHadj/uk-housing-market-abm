@@ -1,0 +1,195 @@
+.policy-report-context {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--rule);
+}
+
+.policy-report-context h3,
+.policy-report-heading h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: -0.025em;
+}
+
+.policy-report-context p {
+  margin: 0.4rem 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.policy-report-context .policy-report-eyebrow {
+  color: var(--accent);
+  font-size: 0.65rem;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.policy-report-policy-changes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.5rem;
+  margin: 0.75rem 0 0;
+  font-size: 0.75rem;
+}
+
+.policy-report-policy-changes dt {
+  color: var(--muted);
+}
+
+.policy-report-policy-changes dd {
+  margin: 0.2rem 0 0;
+}
+
+.policy-report-policy-changes dd span {
+  color: var(--muted);
+}
+
+.policy-report-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.policy-report-heading p,
+.policy-report-reading-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.policy-report-heading p {
+  margin: 0.3rem 0 0;
+}
+
+.policy-report-monthly-label {
+  font-size: 0.65rem;
+  color: var(--accent);
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.3rem;
+}
+
+.policy-report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.policy-report-card {
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: 0.65rem;
+  background: var(--panel);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.policy-report-card h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.015em;
+}
+
+.policy-report-card .policy-report-description {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+  margin: 0.45rem 0 0;
+  min-height: 3.15em;
+}
+
+.policy-report-values {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.65rem;
+  margin: 1rem 0 0.65rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.policy-report-values dt {
+  color: var(--muted);
+  font-size: 0.65rem;
+}
+
+.policy-report-values dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.policy-report-primary-value dd {
+  font-weight: 650;
+}
+
+.policy-report-difference {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--rule);
+}
+
+.policy-report-difference dd {
+  font-size: 0.75rem;
+}
+
+.policy-report-chart {
+  width: 100%;
+  height: 280px;
+}
+
+.policy-report-coverage {
+  border-top: 1px solid var(--rule);
+  margin-top: auto;
+  padding-top: 0.45rem;
+}
+
+.policy-report-coverage p,
+.policy-report-method p {
+  margin: 0.25rem 0;
+  font-size: 0.65rem;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.policy-report-method {
+  margin-top: 1rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--rule-strong);
+}
+
+.policy-report-empty {
+  padding: 1rem 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.6;
+}
+
+.policy-report-loading-card {
+  min-height: 390px;
+}
+
+@media (max-width: 1050px) {
+  .policy-report-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .policy-report-card {
+    padding: 0.65rem;
+  }
+
+  .policy-report-values dd {
+    font-size: 1.05rem;
+  }
+}

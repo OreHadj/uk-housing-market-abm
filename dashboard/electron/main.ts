@@ -84,11 +84,14 @@ function createDesktopPaths(resourcesRoot: string): RuntimePaths {
     electronUserDataRoot: app.getPath('userData'),
     repoRoot
   });
+  const configuredExamplesRoot = configuredPath('DASHBOARD_DEMO_EXAMPLES_ROOT');
+  if (configuredExamplesRoot) paths.demoExamplesRoot = configuredExamplesRoot;
 
   if (!app.isPackaged && !configuredResourcesRoot && !configuredPath('DASHBOARD_DATA_ROOT')) {
     return {
       ...paths,
-      dataRoot: path.join(repoRoot, 'input-data-versions')
+      dataRoot: path.join(repoRoot, 'input-data-versions'),
+      demoExamplesRoot: configuredExamplesRoot ?? path.join(repoRoot, 'dashboard', 'demo-examples')
     };
   }
 
@@ -146,6 +149,10 @@ function assertTrustedDesktopIpcEvent(event: IpcMainInvokeEvent): void {
 }
 
 function registerDesktopIpc(): void {
+  ipcMain.handle('uk-housing-desktop:get-app-version', (event: IpcMainInvokeEvent) => {
+    assertTrustedDesktopIpcEvent(event);
+    return app.getVersion();
+  });
   ipcMain.handle('uk-housing-desktop:get-api-auth-token', (event: IpcMainInvokeEvent) => {
     assertTrustedDesktopIpcEvent(event);
     return desktopAuthToken;

@@ -8,6 +8,7 @@ export interface RuntimePaths {
   repoRoot: string;
   dataRoot: string;
   resultsRoot: string;
+  demoExamplesRoot: string;
   tempRoot: string;
   logsRoot: string;
   appResourcesRoot?: string;
@@ -40,6 +41,7 @@ function applyRootOverrides(paths: RuntimePaths): RuntimePaths {
     ...paths,
     dataRoot: resolveRoot(envValue('DASHBOARD_DATA_ROOT') ?? paths.dataRoot),
     resultsRoot: resolveRoot(envValue('DASHBOARD_RESULTS_ROOT') ?? paths.resultsRoot),
+    demoExamplesRoot: resolveRoot(envValue('DASHBOARD_DEMO_EXAMPLES_ROOT') ?? paths.demoExamplesRoot),
     tempRoot: resolveRoot(envValue('DASHBOARD_TEMP_ROOT') ?? paths.tempRoot),
     logsRoot: resolveRoot(envValue('DASHBOARD_LOGS_ROOT') ?? paths.logsRoot)
   };
@@ -57,6 +59,7 @@ export function createDevelopmentRuntimePaths(repoRoot: string): RuntimePaths {
     repoRoot: normalizedRepoRoot,
     dataRoot: path.join(normalizedRepoRoot, 'input-data-versions'),
     resultsRoot: path.join(normalizedRepoRoot, 'Results'),
+    demoExamplesRoot: path.join(normalizedRepoRoot, 'dashboard', 'demo-examples'),
     tempRoot: path.join(normalizedRepoRoot, 'tmp'),
     logsRoot: path.join(normalizedRepoRoot, 'tmp', 'dashboard-logs')
   };
@@ -88,6 +91,7 @@ export function createDesktopRuntimePaths(options: DesktopRuntimePathOptions): R
     repoRoot: resolveRoot(options.repoRoot ?? appResourcesRoot),
     dataRoot: path.join(appResourcesRoot, 'release-data', 'input-data-versions'),
     resultsRoot: path.join(electronUserDataRoot, 'Results'),
+    demoExamplesRoot: path.join(appResourcesRoot, 'release-data', 'demo-examples'),
     tempRoot: path.join(electronUserDataRoot, 'tmp'),
     logsRoot: path.join(electronUserDataRoot, 'logs'),
     appResourcesRoot,

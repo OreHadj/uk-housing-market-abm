@@ -5,12 +5,14 @@ import { SensitivityRunSetupPanel } from './run/SensitivityRunSetupPanel';
 import type { ExperimentRunController } from './run/useExperimentRunController';
 import { ManualResultsView } from './view/ManualResultsView';
 import { SensitivityResultsView } from './view/SensitivityResultsView';
+import type { ExperimentDemoCoordinator } from '../../lib/guidedDemos/creation';
 
 export interface ExperimentRunRendererProps {
   controller: ExperimentRunController;
   runActionsDisabled: boolean;
   initialScenarioStep?: number;
   initialSensitivityStep?: number;
+  experimentDemo?: ExperimentDemoCoordinator;
 }
 
 export interface ExperimentViewRendererProps {

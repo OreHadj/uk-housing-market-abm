@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   BasePolicyId,
@@ -17,11 +17,21 @@ import {
 } from '../../lib/manualScenarioPolicy';
 import { formatExperimentModelOption, orderExperimentModelOptions } from '../../lib/experimentVersionOptions';
 import { getModelAnchor } from '../../lib/modelAnchors';
+import { readScenarioDraft, updateScenarioDraftStep } from '../../lib/scenarioDraft';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
+import { ExperimentHeaderStartButton } from '../../components/ExperimentHeaderStartButton';
 import { CentralBankPolicyInput } from './CentralBankPolicyInput';
 import { GeneralModelControl, isRecordSetting } from './GeneralModelControl';
 import { InfoLabel } from './InfoLabel';
 import { SETTING_HELP } from './settingHelp';
+import {
+  POLICY_EXPERIMENT_DEMO_TARGETS,
+  PolicyExperimentDemo,
+  policyExperimentDemoWizardStep,
+  type PolicyExperimentDemoStepId,
+  type PolicyExperimentDemoContext
+} from '../../components/PolicyExperimentDemo';
+import { committedExperimentDemoText, type CreationDemoStep } from '../../lib/guidedDemos/creation';
 
 type FormValue = string | boolean;
 
@@ -54,6 +64,7 @@ interface ManualRunSetupCardProps {
   manualSubmissionLockedBySensitivity: boolean;
   lockMessage: string | null;
   onSubmit: (confirmWarnings: boolean) => void;
+  policyDemo?: PolicyExperimentDemoContext;
 }
 
 function numericValue(value: FormValue | undefined): number | null {
@@ -94,7 +105,7 @@ function reviewParameterValue(parameter: ModelRunParameterDefinition, value: For
 export function ManualRunSetupCard({
   draftId = '',
   draftNotice = '',
-  initialStep = 0,
+  initialStep,
   formDisabled,
   submissionDisabled,
   submissionDisabledReason,
@@ -119,10 +130,46 @@ export function ManualRunSetupCard({
   isSubmitting,
   manualSubmissionLockedBySensitivity,
   lockMessage,
-  onSubmit
+  onSubmit,
+  policyDemo
 }: ManualRunSetupCardProps) {
-  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4, initialStep)));
-  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4,
+    (policyDemo?.active && policyDemo.paused ? readScenarioDraft(draftId)?.currentStep : undefined)
+      ?? initialStep
+      ?? (policyDemo?.active ? policyExperimentDemoWizardStep(policyDemo.savedStepId) : readScenarioDraft(draftId)?.currentStep)
+      ?? 0
+  )));
+  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>(
+    policyDemo?.active && policyDemo.savedStepId === 'policy-change-bank-rate' ? ['bankRate'] : []
+  ));
+  const [additionalExportsOpen, setAdditionalExportsOpen] = useState(
+    policyDemo?.active === true && policyDemo.savedStepId === 'policy-exports'
+  );
+  const [recordingOpen, setRecordingOpen] = useState(false);
+  const stepperRef = useRef<HTMLElement>(null);
+  const demoNameEditedRef = useRef(false);
+  const demoBankRateEditedRef = useRef(false);
+  const isPolicyDemoActive = policyDemo?.active === true;
+  const isPolicyGuideActive = isPolicyDemoActive && !policyDemo?.paused;
+  const policyPracticeSubmissionBlocked = isPolicyDemoActive && (
+    !isPolicyGuideActive || policyDemo?.savedStepId !== 'policy-submit' ||
+    policyDemo?.allowPolicySubmission !== true || Boolean(policyDemo?.policyRun)
+  );
+  useEffect(() => {
+    if (!isPolicyGuideActive && !isLoadingOptions) updateScenarioDraftStep(draftId, activeStep);
+  }, [activeStep, draftId, isLoadingOptions, isPolicyGuideActive]);
+  useEffect(() => {
+    const strip = stepperRef.current;
+    const current = strip?.querySelector<HTMLElement>('[aria-current="step"]');
+    if (!strip || !current) return;
+    const stripBounds = strip.getBoundingClientRect();
+    const currentBounds = current.getBoundingClientRect();
+    // Reveal the active section on narrow screens without moving the page or its spotlight.
+    const offset = currentBounds.left < stripBounds.left
+      ? currentBounds.left - stripBounds.left
+      : Math.max(0, currentBounds.right - stripBounds.right);
+    if (offset) strip.scrollBy({ left: offset, behavior: 'instant' });
+  }, [activeStep, isLoadingOptions, policyDemo?.savedStepId]);
   const steps = [
     { id: 'scenario-details', label: 'Scenario name' },
     { id: 'model-evidence', label: 'Model version' },
@@ -173,26 +220,91 @@ export function ManualRunSetupCard({
     onBasePolicyChange(nextBasePolicy);
   };
 
+  const commitDemoName = (value: string) => {
+    if (!isPolicyDemoActive) return;
+    const committedName = committedExperimentDemoText(value, demoNameEditedRef.current);
+    demoNameEditedRef.current = false;
+    if (!committedName) return;
+    policyDemo?.onCommit('name', committedName);
+  };
+
+  const commitDemoBankRate = (value: string) => {
+    if (!isPolicyDemoActive || !demoBankRateEditedRef.current) return;
+    demoBankRateEditedRef.current = false;
+    const parsed = Number(value);
+    if (!value.trim() || !Number.isFinite(parsed) || parsed < 0) return;
+    policyDemo?.onCommit('bankRate', value);
+  };
+
+  const restorePolicyDemoStep = useCallback((step: CreationDemoStep<PolicyExperimentDemoStepId>) => {
+    setActiveStep(step.wizardStep);
+    if (step.id === 'policy-exports') setAdditionalExportsOpen(true);
+    if (step.id === 'policy-change-bank-rate') {
+      setOpenPolicyGroups((current) => {
+        if (current.has('bankRate')) return current;
+        return new Set([...current, 'bankRate']);
+      });
+    }
+  }, []);
+
+  const requiresOverwriteConfirmation = warnings.some((warning) => warning.code === 'output_folder_exists');
+  const confirmOverwrite = requiresOverwriteConfirmation && !isPolicyDemoActive;
+
   return (
     <article className="scenario-builder-surface">
+      <ExperimentHeaderStartButton
+        disabled={isLoadingOptions || policyPracticeSubmissionBlocked || formDisabled || submissionDisabled || manualSubmissionLockedBySensitivity}
+        isSubmitting={isSubmitting}
+        requiresOverwriteConfirmation={confirmOverwrite}
+        onStart={() => onSubmit(confirmOverwrite)}
+      />
       {manualSubmissionLockedBySensitivity && lockMessage && <p className="info-banner">{lockMessage}</p>}
+      {!isLoadingOptions && warnings.length > 0 && (
+        <div className="run-warning-card" role="alert">
+          <h4>{requiresOverwriteConfirmation ? 'Existing results would be replaced' : 'Run information'}</h4>
+          {requiresOverwriteConfirmation && <p>Choose a different scenario name to keep both runs, or replace the existing results.</p>}
+          <ul>
+            {warnings.map((warning) => (
+              <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-      {isLoadingOptions ? (
-        <p className="loading-banner">Loading scenario options...</p>
-      ) : (
+      {(!isLoadingOptions || !isPolicyDemoActive) && (
         <>
           <div className="scenario-builder-heading">
             <h2>Create a new policy scenario</h2>
-            <p>Name the scenario, choose a model, set the policy and review everything before starting.</p>
+            <p>Name the scenario, choose a model and set the policy. Start from any step when the setup is ready.</p>
           </div>
           {draftNotice && <p className="info-banner">{draftNotice}</p>}
-          <nav className="scenario-stepper policy-stepper" aria-label="Scenario sections">
+          <nav
+            ref={stepperRef}
+            className="scenario-stepper policy-stepper"
+            aria-label="Scenario sections"
+            tabIndex={isPolicyDemoActive ? 0 : undefined}
+            data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.stepper : undefined}
+          >
             {steps.map((step, index) => (
-              <button key={step.id} type="button" onClick={() => setActiveStep(index)} aria-current={activeStep === index ? 'step' : undefined}>
+              <button
+                key={step.id}
+                type="button"
+                disabled={isLoadingOptions || isPolicyGuideActive}
+                onClick={() => setActiveStep(index)}
+                aria-current={activeStep === index ? 'step' : undefined}
+              >
                 <span>{index + 1}</span>{step.label}
               </button>
             ))}
           </nav>
+        </>
+      )}
+      {isLoadingOptions ? (
+        <div className="scenario-builder-loading" role="status">
+          <p className="loading-banner">Loading scenario options...</p>
+        </div>
+      ) : (
+        <>
           <div className="scenario-builder-grid">
             <div className="scenario-builder-form">
               <section hidden={activeStep !== 0} id="scenario-details" className="scenario-section scenario-step-page" aria-labelledby="scenario-details-heading">
@@ -203,7 +315,20 @@ export function ManualRunSetupCard({
                     type="text"
                     value={title}
                     disabled={formDisabled}
-                    onChange={(event) => onTitleChange(event.target.value)}
+                    data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.name : undefined}
+                    onChange={(event) => {
+                      if (isPolicyDemoActive) {
+                        demoNameEditedRef.current = true;
+                        policyDemo?.onCommit('name', event.target.value.trim());
+                      }
+                      onTitleChange(event.target.value);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      commitDemoName(event.currentTarget.value);
+                    }}
+                    onBlur={(event) => commitDemoName(event.currentTarget.value)}
                     maxLength={120}
                     placeholder="For example, Lower LTV limits for first-time buyers"
                   />
@@ -216,41 +341,53 @@ export function ManualRunSetupCard({
                   Choose the calibrated model used to run this scenario. Each version combines UK housing and household
                   inputs with behavioural parameters adjusted using observed UK housing statistics and survey data.
                 </p>
-                  <label className="scenario-field">
-                    <InfoLabel label="Model version" info={SETTING_HELP.calibrationParameterVersion} />
-                    <select
-                      value={selectedBaseline}
-                      disabled={formDisabled}
-                      onChange={(event) => onBaselineChange(event.target.value)}
-                    >
-                      {orderedSnapshots.map((snapshot) => (
-                        <option key={snapshot.version} value={snapshot.version}>
-                          {formatExperimentModelOption(snapshot)}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedSnapshot && (
-                      <p className="scenario-evidence-note">
-                        {selectedModelAnchor
-                          ? `${selectedModelAnchor.dataYear} UK housing and household inputs · Behavioural parameters calibrated using ${selectedModelAnchor.fitYear} UK observations`
-                          : `Saved model configuration ${selectedSnapshot.version}`}
-                      </p>
-                    )}
+                  <div
+                    className="scenario-model-selection"
+                    tabIndex={isPolicyDemoActive ? -1 : undefined}
+                    data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.model : undefined}
+                  >
+                    <label className="scenario-field">
+                      <InfoLabel label="Model version" info={SETTING_HELP.calibrationParameterVersion} />
+                      <select
+                        value={selectedBaseline}
+                        disabled={formDisabled}
+                        onChange={(event) => onBaselineChange(event.target.value)}
+                      >
+                        {orderedSnapshots.map((snapshot) => (
+                          <option key={snapshot.version} value={snapshot.version}>
+                            {formatExperimentModelOption(snapshot)}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedSnapshot && (
+                        <p className="scenario-evidence-note">
+                          {selectedModelAnchor
+                            ? `${selectedModelAnchor.dataYear} UK housing and household inputs · Behavioural parameters calibrated using ${selectedModelAnchor.fitYear} UK observations`
+                            : `Saved model configuration ${selectedSnapshot.version}`}
+                        </p>
+                      )}
+                    </label>
                     <p className="scenario-field-links">
                       <Link
                         className="summary-link-inline"
                         to={`/calibration?mode=single&version=${encodeURIComponent(selectedBaseline)}&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`}
+                        aria-disabled={isPolicyDemoActive ? 'true' : undefined}
+                        tabIndex={isPolicyDemoActive ? -1 : undefined}
+                        onClick={isPolicyDemoActive ? (event) => event.preventDefault() : undefined}
                       >
                         Check the model&rsquo;s assumptions
                       </Link>
                       <Link
                         className="summary-link-inline"
                         to={`/validation?version=${encodeURIComponent(selectedBaseline)}&evidenceYear=${selectedSnapshot?.evidenceYear ?? 2024}&from=scenario&draft=${encodeURIComponent(draftId)}&scenarioStep=model-version`}
+                        aria-disabled={isPolicyDemoActive ? 'true' : undefined}
+                        tabIndex={isPolicyDemoActive ? -1 : undefined}
+                        onClick={isPolicyDemoActive ? (event) => event.preventDefault() : undefined}
                       >
                         Check how well the model matches UK data
                       </Link>
                     </p>
-                  </label>
+                  </div>
               </section>
 
               <section hidden={activeStep !== 2} id="policy-settings" className="scenario-section scenario-step-page scenario-policy-settings-page" aria-labelledby="policy-settings-heading">
@@ -258,14 +395,22 @@ export function ManualRunSetupCard({
                 <p className="scenario-section-intro">
                   Choose a reference policy year, then edit any settings you want to test. Settings left unchanged will retain that year&rsquo;s values.
                 </p>
-                <label className="scenario-field scenario-reference-policy-field">
+                <label
+                  className="scenario-field scenario-reference-policy-field"
+                  data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.referencePolicy : undefined}
+                >
                   <InfoLabel label="Reference policy year" info={SETTING_HELP.basePolicy} />
                   <select value={basePolicy} disabled={formDisabled} onChange={(event) => handleReferencePolicyChange(event.target.value as BasePolicyId)}>
                     {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.id} policy</option>)}
                   </select>
                 </label>
 
-                <p className={`scenario-policy-status ${changedPolicyKeys.size > 0 ? 'has-changes' : ''}`} aria-live="polite">
+                <p
+                  className={`scenario-policy-status ${changedPolicyKeys.size > 0 ? 'has-changes' : ''}`}
+                  aria-live="polite"
+                  tabIndex={isPolicyDemoActive ? -1 : undefined}
+                  data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.changedFeedback : undefined}
+                >
                   {changedPolicyKeys.size === 0
                     ? `No changes yet — this scenario will use the ${basePolicy} reference policy.`
                     : `${changedPolicyKeys.size} ${changedPolicyKeys.size === 1 ? 'setting' : 'settings'} changed from the ${basePolicy} reference policy.`}
@@ -288,11 +433,32 @@ export function ManualRunSetupCard({
                       }}
                       className="scenario-policy-accordion"
                     >
-                      <summary>
+                      <summary data-experiment-demo-target={isPolicyDemoActive
+                        ? group.id === 'bankRate'
+                          ? POLICY_EXPERIMENT_DEMO_TARGETS.bankRateToggle
+                          : group.id === 'ltv'
+                            ? POLICY_EXPERIMENT_DEMO_TARGETS.ltvToggle
+                            : group.id === 'lti'
+                              ? POLICY_EXPERIMENT_DEMO_TARGETS.ltiToggle
+                              : POLICY_EXPERIMENT_DEMO_TARGETS.affordabilityToggle
+                        : undefined}
+                      >
                         <span>{group.heading}</span>
                         {groupChangedCount > 0 && <span className="scenario-accordion-change-count">{groupChangedCount} changed</span>}
                       </summary>
-                      <div className="scenario-policy-accordion-content">
+                      <div
+                        className="scenario-policy-accordion-content"
+                        tabIndex={isPolicyDemoActive ? -1 : undefined}
+                        data-experiment-demo-target={isPolicyDemoActive
+                          ? group.id === 'bankRate'
+                            ? POLICY_EXPERIMENT_DEMO_TARGETS.bankRateContent
+                            : group.id === 'ltv'
+                              ? POLICY_EXPERIMENT_DEMO_TARGETS.ltvContent
+                              : group.id === 'lti'
+                                ? POLICY_EXPERIMENT_DEMO_TARGETS.ltiContent
+                                : POLICY_EXPERIMENT_DEMO_TARGETS.affordabilityContent
+                          : undefined}
+                      >
                         <p className="scenario-section-intro">{group.intro}</p>
                         <div className="scenario-fields-grid">
                       {group.keys.map((key) => {
@@ -311,6 +477,18 @@ export function ManualRunSetupCard({
                               executionDisabled={formDisabled}
                               mode="manual"
                               onChange={onFormValueChange}
+                              demoTarget={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
+                                ? POLICY_EXPERIMENT_DEMO_TARGETS.bankRateInput
+                                : undefined}
+                              onDemoEdit={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
+                                ? () => {
+                                  demoBankRateEditedRef.current = true;
+                                  policyDemo?.onCommit('bankRate', '');
+                                }
+                                : undefined}
+                              onDemoCommit={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
+                                ? commitDemoBankRate
+                                : undefined}
                             />
                             <p className="scenario-policy-baseline-note">
                               {isChanged ? (
@@ -339,7 +517,12 @@ export function ManualRunSetupCard({
                       Advanced run settings control execution and output only. Your model and policy choices remain unchanged.
                     </p>
                   </div>
-                  <div id="scenario-advanced-panel" className="scenario-advanced-panel scenario-advanced-panel--inline">
+                  <div
+                    id="scenario-advanced-panel"
+                    className="scenario-advanced-panel scenario-advanced-panel--inline"
+                    tabIndex={isPolicyDemoActive ? -1 : undefined}
+                    data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.technicalSettings : undefined}
+                  >
                     <div className="scenario-advanced-content">
                       <GeneralModelControl
                         mode="manual"
@@ -354,6 +537,10 @@ export function ManualRunSetupCard({
                         maxWorkersHint={SETTING_HELP.maxWorkers}
                         includeFixedControls
                         embedded
+                        recordSettingsOpen={additionalExportsOpen}
+                        onRecordSettingsOpenChange={setAdditionalExportsOpen}
+                        recordSettingsDemoTarget={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.additionalExportsToggle : undefined}
+                        recordSettingsContentDemoTarget={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.additionalExportsContent : undefined}
                       />
                     </div>
                   </div>
@@ -364,14 +551,22 @@ export function ManualRunSetupCard({
                 <h3 id="scenario-review-heading">Review and start</h3>
                 <p className="scenario-section-intro">Check the complete scenario specification before starting the model run.</p>
 
-                <dl className="sensitivity-review-list scenario-review-overview">
+                <dl
+                  className="sensitivity-review-list scenario-review-overview"
+                  tabIndex={isPolicyDemoActive ? -1 : undefined}
+                  data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.reviewOverview : undefined}
+                >
                   <div><dt>Scenario name</dt><dd>{title.trim() || 'Not set'}</dd></div>
                   <div><dt>Model</dt><dd>{selectedSnapshot ? formatExperimentModelOption(selectedSnapshot) : selectedBaseline || 'Not set'}</dd></div>
                   <div><dt>Reference policy</dt><dd>{selectedBasePolicy?.title ?? 'Not set'}</dd></div>
                   <div><dt>Policy changes</dt><dd>{changedPolicyKeys.size === 0 ? 'No settings changed' : `${changedPolicyKeys.size} ${changedPolicyKeys.size === 1 ? 'setting' : 'settings'} changed`}</dd></div>
                 </dl>
 
-                <div className="scenario-policy-review">
+                <div
+                  className="scenario-policy-review"
+                  tabIndex={isPolicyDemoActive ? -1 : undefined}
+                  data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.policyAudit : undefined}
+                >
                   <div className="scenario-policy-review-heading">
                     <h4>Policy settings</h4>
                     <p>Every policy control is shown below. Values matching the reference policy are marked Unchanged.</p>
@@ -423,6 +618,10 @@ export function ManualRunSetupCard({
                   summary={`${reviewRecordingParameters.length} settings`}
                   className="scenario-review-recording-settings"
                   defaultOpen={false}
+                  open={recordingOpen}
+                  onOpenChange={setRecordingOpen}
+                  experimentDemoTarget={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.recordingToggle : undefined}
+                  experimentDemoContentTarget={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.recordingContent : undefined}
                 >
                   <dl className="sensitivity-review-list">
                     {reviewRecordingParameters.map((parameter) => (
@@ -434,40 +633,31 @@ export function ManualRunSetupCard({
                   </dl>
                 </CollapsibleSection>
 
-                {warnings.length > 0 && (
-                  <div className="run-warning-card">
-                    <h4>Warnings detected</h4>
-                    <p>Confirm to start anyway.</p>
-                    <ul>
-                      {warnings.map((warning) => (
-                        <li key={`${warning.code}-${warning.message}`}>{warning.message}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
               </section>
 
               <div className="scenario-page-navigation" aria-label="Scenario page navigation">
                 <div className="scenario-page-movement">
                   <button
                     type="button"
-                    className="secondary-button scenario-wizard-arrow-button"
-                    disabled={activeStep === 0}
+                    className="secondary-button"
+                    disabled={activeStep === 0 || isPolicyGuideActive}
                     aria-label="Back to previous step"
                     title="Back to previous step"
                     onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
                   >
-                    <span aria-hidden="true">&larr;</span>
+                    Back
                   </button>
                   {activeStep < steps.length - 1 && (
                     <button
                       type="button"
-                      className="secondary-button scenario-wizard-arrow-button"
+                      className="secondary-button"
+                      disabled={isPolicyGuideActive}
+                      data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.continueButton : undefined}
                       aria-label="Continue to next step"
                       title="Continue to next step"
                       onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}
                     >
-                      <span aria-hidden="true">&rarr;</span>
+                      Next
                     </button>
                   )}
                 </div>
@@ -476,25 +666,32 @@ export function ManualRunSetupCard({
                     <button
                       type="button"
                       className="primary-button scenario-create-button"
-                      disabled={isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
-                      onClick={() => onSubmit(warnings.length > 0)}
+                      style={{ background: '#237a36' }}
+                      disabled={isLoadingOptions || policyPracticeSubmissionBlocked || formDisabled || isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
+                      data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.startBoundary : undefined}
+                      onClick={() => onSubmit(confirmOverwrite)}
                     >
                       {isSubmitting
                         ? 'Starting...'
-                        : warnings.length > 0
-                          ? 'Confirm and start'
+                        : confirmOverwrite
+                          ? 'Replace results and start'
                           : 'Start policy scenario'}
                     </button>
                   )}
                 </div>
               </div>
-              <p className="scenario-matched-baseline-note">Results compare the edited policy settings with the unchanged reference policy using the same calibrated model and run settings.</p>
-              {submissionDisabled && !manualSubmissionLockedBySensitivity && (
-                <p className="scenario-submission-note">Run policy scenario is unavailable: {submissionDisabledReason}</p>
+              <p className="scenario-matched-baseline-note">Results compare your scenario with a saved unchanged-reference run using the same model and run settings, if one exists. The reference run is not created automatically.</p>
+              {submissionDisabled && !manualSubmissionLockedBySensitivity && !isPolicyDemoActive && (
+                <p className="scenario-submission-note">Run policy scenario is unavailable. {submissionDisabledReason}</p>
               )}
             </div>
 
-            <aside className="scenario-summary" aria-labelledby="scenario-summary-heading">
+            <aside
+              className="scenario-summary"
+              aria-labelledby="scenario-summary-heading"
+              tabIndex={isPolicyDemoActive ? -1 : undefined}
+              data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.liveSummary : undefined}
+            >
               <p className="eyebrow">Live summary</p>
               <h3 id="scenario-summary-heading">{title.trim() || 'Untitled policy scenario'}</h3>
               <p>{scenarioSentence}</p>
@@ -519,7 +716,7 @@ export function ManualRunSetupCard({
                         <dt>{policyLabel(key)} intervention delta</dt>
                         <dd>
                           {formatPolicyFieldValue(key, selectedBasePolicy?.values[key] === undefined ? undefined : String(selectedBasePolicy.values[key]))}
-                          {' → '}{formatPolicyFieldValue(key, formValues[key])}
+                          {' to '}{formatPolicyFieldValue(key, formValues[key])}
                         </dd>
                       </div>
                     ))
@@ -533,6 +730,26 @@ export function ManualRunSetupCard({
             </aside>
           </div>
         </>
+      )}
+      {policyDemo && (
+        <PolicyExperimentDemo
+          {...policyDemo}
+          currentName={title}
+          currentBankRate={typeof formValues.CENTRAL_BANK_INITIAL_BASE_RATE === 'string'
+            ? formValues.CENTRAL_BANK_INITIAL_BASE_RATE
+            : ''}
+          referenceBankRate={selectedBasePolicy?.values.CENTRAL_BANK_INITIAL_BASE_RATE}
+          selectedModel={selectedBaseline}
+          selectedReferencePolicy={basePolicy}
+          runMonths={typeof formValues.N_STEPS === 'string' ? formValues.N_STEPS : ''}
+          seedCount={typeof formValues.N_SIMS === 'string' ? formValues.N_SIMS : ''}
+          householdCount={typeof formValues.TARGET_POPULATION === 'string' ? formValues.TARGET_POPULATION : ''}
+          recordingStartMonth={typeof formValues.TIME_TO_START_RECORDING_TRANSACTIONS === 'string'
+            ? formValues.TIME_TO_START_RECORDING_TRANSACTIONS
+            : ''}
+          recordTransactions={formValues.recordTransactions === true}
+          onRestoreStep={restorePolicyDemoStep}
+        />
       )}
     </article>
   );

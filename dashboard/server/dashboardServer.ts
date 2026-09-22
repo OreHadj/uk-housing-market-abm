@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { checkRuntimeDependencies, type RuntimeDependencyStatus } from './lib/runtimeDeps';
 import { createRuntimePathsFromEnv, type RuntimePaths } from './lib/runtimePaths';
+import { seedDemoExamples } from './lib/demoExamples';
 import type { ModelLauncher } from './lib/modelLauncher';
 import {
   createRemoteExecutionConfigFromEnv,
@@ -525,6 +526,7 @@ export async function startDashboardServer(options: StartDashboardServerOptions 
   const isDevRuntime = options.isDevRuntime ?? (envValue('NODE_ENV').toLowerCase() !== 'production');
   const memoryLoggingEnabled = options.memoryLoggingEnabled ?? (envValue('DASHBOARD_LOG_MEMORY').toLowerCase() === 'true');
   const loggers = createPersistentLoggers(runtimePaths.logsRoot, options.logRotation);
+  seedDemoExamples(runtimePaths, (message) => logInfo(message, loggers.server));
   loggers.app.writeLine(`[lifecycle] dashboard server starting mode=${runtimePaths.mode}`);
   const startupRuntimeDependencies = checkRuntimeDependencies({
     runtimePaths,

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   KpiMetricSummary,
   LendingDistributionPayload,
@@ -63,6 +63,15 @@ import {
 } from '../../../lib/manualOverlayChartOption';
 import { NewLendingCard, unavailableMessage, type LendingView } from './NewLendingCard';
 import { FullRunDetailsDialog } from './FullRunDetailsDialog';
+import { PolicyReportContext, PolicyReportView } from './PolicyReportView';
+import { PolicyDetailedHeader } from '../../report2/PolicyDetailedHeader';
+import { POLICY_REPORT_INDICATORS } from '../../../lib/policyReport';
+import { ResultsQueue } from './ResultsQueue';
+import { manualResultsQueueItem } from '../../../lib/resultsQueue';
+import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
+import { useResultsTopNavigation } from './useResultsTopNavigation';
+import { useRunHistoryDeletion } from './useRunHistoryDeletion';
+import { RunHistoryCheckbox, RunHistorySelectionToolbar } from './RunHistorySelection';
 import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName, formatModelOptionLabel } from '../../../lib/modelAnchors';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
@@ -80,6 +89,7 @@ const SHOW_DWELLINGS_PER_HOUSEHOLD = false;
 const SHOW_NEW_LENDING_SECTION = false;
 const SHOW_LENDING_DERIVED_INDICATORS = false;
 const ANALYSIS_CUTOFF_OPTIONS = [0, 500, 1_000, 1_500, 2_000] as const;
+const POLICY_REPORT_INDICATOR_IDS = POLICY_REPORT_INDICATORS.map((indicator) => indicator.id);
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
@@ -266,6 +276,8 @@ function formatRunActionLabel(run: ResultsRunSummary): string {
 }
 
 interface ManualResultsViewProps {
+  presentation?: 'report' | 'detailed';
+  presentationControls?: ReactNode;
   canWrite: boolean;
   canDownloadResults: boolean;
   canDeleteResults: boolean;
@@ -273,6 +285,7 @@ interface ManualResultsViewProps {
   authEnabled: boolean;
   requestedBaselineRunId: string;
   requestedComparisonRunId: string;
+  requestedJobRef?: string;
   queueInitiallyExpanded?: boolean;
   onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string }) => void;
   sidebarSubtitle: string;
@@ -340,6 +353,8 @@ function coverageClass(status: ResultsFileManifestEntry['coverageStatus']): stri
 }
 
 export function ManualResultsView({
+  presentation = 'detailed',
+  presentationControls,
   canWrite,
   canDownloadResults,
   canDeleteResults,
@@ -347,14 +362,22 @@ export function ManualResultsView({
   authEnabled,
   requestedBaselineRunId,
   requestedComparisonRunId,
+  requestedJobRef = '',
   queueInitiallyExpanded = false,
   onManualSelectionChange,
   sidebarSubtitle
 }: ManualResultsViewProps) {
   const navigate = useNavigate();
+  const [pageSearch, setPageSearch] = useSearchParams();
+  const isGuidedPolicy = pageSearch.get('demo') === 'policy-results';
+  const guidedTrendId = isGuidedPolicy ? pageSearch.get('policyTrend') ?? '' : '';
+  const guidedHistoryOpen = isGuidedPolicy && pageSearch.get('runHistory') === 'open';
+  const guidedPolicyResultsOpen = isGuidedPolicy && pageSearch.get('policyResults') === 'open';
+  const isAlignedDetailed = presentation === 'detailed' && Boolean(presentationControls);
+  const { selectionRef, requestScrollToTop } = useResultsTopNavigation();
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
-  const [baselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
-  const [comparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
+  const [loadedBaselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
+  const [loadedComparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
   // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
   // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
   const [previewRunId, setPreviewRunId] = useState<string>('');
@@ -363,16 +386,19 @@ export function ManualResultsView({
   const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
-  const [activeIndicatorId, setActiveIndicatorId] = useState<string>('');
+  const [activeIndicatorId, setActiveIndicatorId] = useState<string>(guidedTrendId);
   const [isTrendModalOpen, setIsTrendModalOpen] = useState<boolean>(false);
   const [runDetailsTarget, setRunDetailsTarget] = useState<ManifestTarget | null>(null);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
-  const [comparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
+  const [loadedComparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
   const [analysisCutoffMonths, setAnalysisCutoffMonths] = useState<number>(500);
   const compareWindow: CompareWindow = analysisCutoffMonths === 0
     ? 'full'
     : `post${analysisCutoffMonths}` as CompareWindow;
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
+  // Report means and lines use the same recorded monthly data. Keep Detailed's smoothing choice.
+  const effectiveSmoothWindow = presentation === 'report' ? 0 : smoothWindow;
+  const requestedIndicatorIds = presentation === 'report' ? POLICY_REPORT_INDICATOR_IDS : selectedIndicatorIds;
   const [showBaselineTrend, setShowBaselineTrend] = useState<boolean>(true);
   const [showComparisonTrend, setShowComparisonTrend] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string>('');
@@ -381,7 +407,6 @@ export function ManualResultsView({
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(false);
   const [isLoadingCompare, setIsLoadingCompare] = useState<boolean>(false);
   const [isLoadingManifest, setIsLoadingManifest] = useState<boolean>(false);
-  const [isDeletingRunId, setIsDeletingRunId] = useState<string>('');
   const [isDownloadingRunId, setIsDownloadingRunId] = useState<string>('');
   const [manifestTarget, setManifestTarget] = useState<ManifestTarget>('baseline');
   const [versions, setVersions] = useState<string[]>([]);
@@ -393,34 +418,64 @@ export function ManualResultsView({
   const [lendingError, setLendingError] = useState<string>('');
   const [lendingView, setLendingView] = useState<LendingView>('distribution');
   const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
-  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(false);
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(guidedHistoryOpen);
+  const [isPolicyResultsExpanded, setIsPolicyResultsExpanded] = useState<boolean>(guidedPolicyResultsOpen);
   const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
   // Clearing the comparison is an explicit user choice for this primary run. Keep that choice
   // locally so the URL's absent comparison id is not immediately reinterpreted as "choose default".
   const [comparisonDefaultOptOutRunId, setComparisonDefaultOptOutRunId] = useState<string>('');
+  const requestedJobId = requestedJobRef.startsWith('manual:') ? requestedJobRef.slice('manual:'.length) : '';
+  const removedJobIds = useRef(new Set<string>());
+  const removedRunIds = useRef(new Set<string>());
+  const stopDeletion = useStopAndDeleteExperiment({
+    canWrite, canDeleteResults, deleteKeyRequired,
+    onDeleted: ({ jobRef, id, runId }) => {
+      removedJobIds.current.add(id);
+      if (runId) removedRunIds.current.add(runId);
+      setRunJobs((current) => current.filter((job) => job.jobId !== id));
+      setRuns((current) => current.filter((run) => run.runId !== runId));
+      if (jobRef === requestedJobRef || runId === requestedBaselineRunId || runId === requestedComparisonRunId) {
+        onManualSelectionChange({
+          baselineRunId: requestedBaselineRunId === runId ? '' : requestedBaselineRunId,
+          comparisonRunId: requestedComparisonRunId === runId ? '' : requestedComparisonRunId
+        });
+      }
+    }
+  });
+  const requestedJob = runJobs.find((job) => job.jobId === requestedJobId);
+  const requestedJobPending = Boolean(requestedJobId) &&
+    (!requestedJob || requestedJob.status === 'queued' || requestedJob.status === 'running');
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
   // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
   // belong in the Queue until they finish — so History only shows runs that actually completed.
   const activeRunIds = useMemo(
-    () =>
-      new Set(
+    () => {
+      const ids = new Set(
         runJobs
-          .filter((job) => job.status === 'queued' || job.status === 'running')
+          .filter((job) => job.status === 'queued' || job.status === 'running' || stopDeletion.pending?.jobRef === `manual:${job.jobId}`)
           .map((job) => job.runId)
           .filter(Boolean)
-      ),
-    [runJobs]
+      );
+      // The results directory may arrive before the first jobs response. Preserve the submitted
+      // run's queued identity instead of treating its empty directory as completed output.
+      if (requestedJobPending && requestedBaselineRunId) ids.add(requestedBaselineRunId);
+      return ids;
+    },
+    [requestedBaselineRunId, requestedJobPending, runJobs, stopDeletion.pending?.jobRef]
   );
   const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
+  const awaitingRequestedResult = requestedJob?.status === 'succeeded' &&
+    !historyRuns.some((run) => run.runId === requestedBaselineRunId);
 
   const resolvedSelection = useMemo(
-    () =>
-      resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId, {
+    () => isGuidedPolicy
+      ? { baselineRunId: requestedBaselineRunId, comparisonRunId: requestedComparisonRunId }
+      : resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId, {
         defaultToMatchedBaseline: comparisonDefaultOptOutRunId !== requestedBaselineRunId
       }),
-    [comparisonDefaultOptOutRunId, historyRuns, requestedBaselineRunId, requestedComparisonRunId]
+    [comparisonDefaultOptOutRunId, historyRuns, isGuidedPolicy, requestedBaselineRunId, requestedComparisonRunId]
   );
   const baselineRunId = resolvedSelection.baselineRunId;
   const comparisonRunId = resolvedSelection.comparisonRunId;
@@ -429,6 +484,15 @@ export function ManualResultsView({
     () => (baselineRunId ? (comparisonRunId ? [baselineRunId, comparisonRunId] : [baselineRunId]) : []),
     [baselineRunId, comparisonRunId]
   );
+  // Never label the previous run's cached details or chart as the newly selected run.
+  const baselineDetail = loadedBaselineDetail?.runId === baselineRunId ? loadedBaselineDetail : null;
+  const comparisonDetail = loadedComparisonDetail?.runId === comparisonRunId ? loadedComparisonDetail : null;
+  const comparePayload = loadedComparePayload?.runIds.length === selectedRunIds.length &&
+    loadedComparePayload.runIds.every((runId, index) => runId === selectedRunIds[index]) &&
+    loadedComparePayload.window === compareWindow &&
+    loadedComparePayload.smoothWindow === effectiveSmoothWindow &&
+    requestedIndicatorIds.every((id) => loadedComparePayload.indicatorIds.includes(id))
+    ? loadedComparePayload : null;
   const manifestRunId = manifestTarget === 'comparison' && comparisonRunId ? comparisonRunId : baselineRunId;
   const manifestTargetLabel = manifestTarget === 'comparison' && comparisonRunId
     ? COMPARISON_RUN_LABEL
@@ -446,14 +510,15 @@ export function ManualResultsView({
     // loading, `runs` is empty and resolveManualRunSelection() returns an empty selection, which
     // would strip a requested baselineRunId out of the URL and bounce the user straight back out
     // of the results view — the "View results" button appears to do nothing. Once runs have
-    // loaded, a genuinely-missing id falls back to a default run instead of an empty one, so it is
-    // safe to write the resolved selection back.
-    if (isLoadingRuns) {
+    // loaded, a genuinely-missing id falls back to a default run instead of an empty one. An
+    // accepted job keeps its requested result id until the job and its finished output arrive.
+    if (isLoadingRuns || requestedJobPending || awaitingRequestedResult) {
       return;
     }
     if (
       requestedBaselineRunId === baselineRunId &&
-      requestedComparisonRunId === comparisonRunId
+      requestedComparisonRunId === comparisonRunId &&
+      requestedJob?.status !== 'succeeded'
     ) {
       return;
     }
@@ -466,6 +531,9 @@ export function ManualResultsView({
     baselineRunId,
     comparisonRunId,
     isLoadingRuns,
+    requestedJobPending,
+    requestedJob?.status,
+    awaitingRequestedResult,
     onManualSelectionChange,
     requestedBaselineRunId,
     requestedComparisonRunId
@@ -476,12 +544,46 @@ export function ManualResultsView({
     setIsLoadingRuns(true);
 
     try {
-      const runsPayload = await fetchResultsRuns();
+      const runsPayload = (await fetchResultsRuns()).filter((run) => !removedRunIds.current.has(run.runId));
       setRuns(runsPayload);
+      return runsPayload;
     } finally {
       setIsLoadingRuns(false);
     }
   }, []);
+
+  const deletableHistoryItems = useMemo(
+    () => historyRuns
+      .filter((run) => !run.isExample && !isProtectedResultsRun(run.runId))
+      .map((run) => ({ id: run.runId, label: getRunPrimaryLabel(run) })),
+    [historyRuns]
+  );
+  const historyDeletion = useRunHistoryDeletion({
+    items: deletableHistoryItems,
+    canDelete: canDeleteResults,
+    deleteKeyRequired,
+    deleteItem: deleteResultsRun,
+    onDeleted: async (deletedRunIds) => {
+      const deletedIds = new Set(deletedRunIds);
+      for (const runId of deletedIds) removedRunIds.current.add(runId);
+      setRuns((current) => current.filter((run) => !deletedIds.has(run.runId)));
+      setPreviewRunId((current) => deletedIds.has(current) ? '' : current);
+      setRenamingRunId((current) => deletedIds.has(current) ? '' : current);
+
+      if (deletedIds.has(baselineRunId) || deletedIds.has(comparisonRunId)) {
+        const nextSelection = resolveManualRunSelection(
+          historyRuns.filter((run) => !deletedIds.has(run.runId)),
+          baselineRunId,
+          comparisonRunId,
+          { defaultToMatchedBaseline: false }
+        );
+        // Deleting a selected comparison leaves it cleared, including after the refresh.
+        setComparisonDefaultOptOutRunId(nextSelection.comparisonRunId ? '' : nextSelection.baselineRunId);
+        onManualSelectionChange(nextSelection);
+      }
+      await loadRuns();
+    }
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -517,22 +619,36 @@ export function ManualResultsView({
   useEffect(() => {
     let cancelled = false;
     let previousActive = false;
+    let previousRequestedStatus: ModelRunJobStatus | undefined;
+    let polling = false;
 
     const pollActiveRuns = async () => {
+      if (polling) return;
+      polling = true;
       try {
-        const jobs = await fetchModelRunJobs();
+        const jobs = (await fetchModelRunJobs()).filter((job) => !removedJobIds.current.has(job.jobId));
         if (cancelled) {
           return;
         }
         setRunJobs(jobs);
         const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
-        if (previousActive && !active) {
-          // A run just finished — refresh the completed-runs list so it appears in the picker.
-          void loadRuns();
+        const submittedJob = jobs.find((job) => job.jobId === requestedJobId);
+        const requestedStatus = submittedJob?.status;
+        if ((previousActive && !active) || (requestedStatus === 'succeeded' && previousRequestedStatus !== 'succeeded')) {
+          // The submitted run can finish while another job remains active. Refresh its output
+          // immediately so the preserved requested selection becomes available in the picker.
+          const refreshedRuns = await loadRuns();
+          if (requestedStatus === 'succeeded' && !refreshedRuns.some((run) => run.runId === submittedJob?.runId)) {
+            // Output listing can lag job completion; retry on the next poll without losing focus.
+            return;
+          }
         }
         previousActive = active;
+        previousRequestedStatus = requestedStatus;
       } catch {
         // Model runs may be unavailable (e.g. cloud/preview); ignore polling errors.
+      } finally {
+        polling = false;
       }
     };
 
@@ -545,7 +661,7 @@ export function ManualResultsView({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [loadRuns]);
+  }, [loadRuns, requestedJobId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -700,7 +816,7 @@ export function ManualResultsView({
     setIsLoadingCompare(true);
     setCompareError('');
 
-    void fetchResultsCompare(selectedRunIds, selectedIndicatorIds, compareWindow, smoothWindow)
+    void fetchResultsCompare(selectedRunIds, requestedIndicatorIds, compareWindow, effectiveSmoothWindow)
       .then((payload) => {
         if (!cancelled) {
           setComparePayload(payload);
@@ -721,9 +837,10 @@ export function ManualResultsView({
     return () => {
       cancelled = true;
     };
-  }, [compareWindow, selectedIndicatorIds, selectedRunIds, smoothWindow]);
+  }, [compareWindow, requestedIndicatorIds, selectedRunIds, effectiveSmoothWindow]);
 
   useEffect(() => {
+    if (!SHOW_NEW_LENDING_SECTION && !SHOW_LENDING_DERIVED_INDICATORS) return;
     if (selectedRunIds.length === 0) {
       setLendingBaseline(null);
       setLendingComparison(null);
@@ -807,6 +924,9 @@ export function ManualResultsView({
   };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
+  const selectedRunName = baselineDetail ? getRunPrimaryLabel(baselineDetail) : baselineSummary ? getRunPrimaryLabel(baselineSummary) : baselineRunId || requestedBaselineRunId || 'Select a policy run';
+  const comparisonRunName = comparisonDetail ? getRunPrimaryLabel(comparisonDetail) : comparisonSummary ? getRunPrimaryLabel(comparisonSummary) : comparisonRunId;
+  const detailedTitle = comparisonRunId ? `${selectedRunName} vs ${comparisonRunName}` : selectedRunName;
   const matchedBaselineSummary = useMemo(
     () => (baselineRunId ? findMatchedManualBaselineRun(historyRuns, baselineRunId) : null),
     [baselineRunId, historyRuns]
@@ -997,6 +1117,15 @@ export function ManualResultsView({
     setActiveIndicatorId((current) => resolveActiveIndicatorId(selectedIndicatorIds, overlayIndicators, current));
   }, [overlayIndicators, selectedIndicatorIds]);
 
+  const closeTrendModal = useCallback(() => {
+    setIsTrendModalOpen(false);
+    if (isGuidedPolicy) setPageSearch((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('policyTrend');
+      return next;
+    }, { replace: true });
+  }, [isGuidedPolicy, setPageSearch]);
+
   useEffect(() => {
     if (!isTrendModalOpen) {
       return;
@@ -1004,7 +1133,7 @@ export function ManualResultsView({
 
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setIsTrendModalOpen(false);
+        closeTrendModal();
       }
     };
     const previousOverflow = document.body.style.overflow;
@@ -1014,7 +1143,7 @@ export function ManualResultsView({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', closeOnEscape);
     };
-  }, [isTrendModalOpen]);
+  }, [closeTrendModal, isTrendModalOpen]);
 
   useEffect(() => {
     if (!runDetailsTarget) return;
@@ -1033,6 +1162,25 @@ export function ManualResultsView({
   useEffect(() => {
     setRunDetailsTarget(null);
   }, [baselineRunId, comparisonRunId]);
+
+  useEffect(() => {
+    setIsTrendModalOpen(false);
+  }, [presentation]);
+
+  useEffect(() => {
+    if (!isGuidedPolicy) return;
+    setIsHistoryExpanded(guidedHistoryOpen);
+    setIsPolicyResultsExpanded(guidedPolicyResultsOpen);
+  }, [guidedHistoryOpen, guidedPolicyResultsOpen, isGuidedPolicy]);
+
+  useEffect(() => {
+    if (!isGuidedPolicy || presentation !== 'detailed') return;
+    if (!guidedTrendId) { setIsTrendModalOpen(false); return; }
+    if (!baselineDetail?.indicators.some((indicator) => indicator.id === guidedTrendId)) return;
+    setSelectedIndicatorIds((current) => current.includes(guidedTrendId) ? current : [...current, guidedTrendId]);
+    setActiveIndicatorId(guidedTrendId);
+    setIsTrendModalOpen(true);
+  }, [baselineDetail, guidedTrendId, isGuidedPolicy, presentation]);
 
   const updateSelection = useCallback(
     (nextBaselineRunId: string, nextComparisonRunId: string) => {
@@ -1058,6 +1206,12 @@ export function ManualResultsView({
     // comparisons, and collapsing the list would throw away the user's place in it.
     setComparisonDefaultOptOutRunId('');
     updateSelection(runId, '');
+  };
+
+  const viewRunResults = (runId: string) => {
+    // Returning to the current primary run must preserve an explicitly selected comparison.
+    if (runId !== baselineRunId) setBaselineSelection(runId);
+    requestScrollToTop();
   };
 
   const openMatchingBaselineBuilder = () => {
@@ -1119,36 +1273,11 @@ export function ManualResultsView({
     setShowBaselineTrend(true);
     setShowComparisonTrend(true);
     setIsTrendModalOpen(true);
-  };
-
-  const deleteRun = async (runId: string) => {
-    if (!canDeleteResults) {
-      return;
-    }
-    if (isProtectedResultsRun(runId)) {
-      setLoadError(`Run "${runId}" is protected and cannot be deleted from experiments.`);
-      return;
-    }
-    const confirmed = window.confirm(`Delete run "${runId}"? This permanently removes its Results folder.`);
-    if (!confirmed) {
-      return;
-    }
-
-    const deleteKey = deleteKeyRequired ? window.prompt('Enter the private delete key to delete remote experiment results.') : undefined;
-    if (deleteKeyRequired && !deleteKey) {
-      return;
-    }
-
-    setLoadError('');
-    setIsDeletingRunId(runId);
-    try {
-      await deleteResultsRun(runId, deleteKey ?? undefined);
-      await loadRuns();
-    } catch (error) {
-      setLoadError((error as Error).message);
-    } finally {
-      setIsDeletingRunId('');
-    }
+    if (isGuidedPolicy) setPageSearch((current) => {
+      const next = new URLSearchParams(current);
+      next.set('policyTrend', indicatorId);
+      return next;
+    }, { replace: true });
   };
 
   const downloadRun = async (runId: string) => {
@@ -1210,71 +1339,100 @@ export function ManualResultsView({
 
   // Queue = pending work only (queued/running). Run History = every finished run: the completed
   // runs on disk plus failed/cancelled jobs from this session (which have no saved results).
-  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running');
-  const failedHistoryJobs = runJobs.filter((job) => job.status === 'failed' || job.status === 'canceled');
-  const queuePreviewJob = queueItems.find((job) => job.status === 'running') ?? queueItems[0] ?? null;
-  const remainingQueueItems = queuePreviewJob
-    ? queueItems.filter((job) => job.jobId !== queuePreviewJob.jobId)
-    : queueItems;
+  const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running' || stopDeletion.pending?.jobRef === `manual:${job.jobId}`);
+  const failedHistoryJobs = runJobs.filter((job) =>
+    (job.status === 'failed' || job.status === 'canceled') && stopDeletion.pending?.jobRef !== `manual:${job.jobId}`
+  );
+  const loadingRequestedJob = Boolean(requestedJobId) && !requestedJob;
   const historyPreviewRun = baselineSummary ?? historyRuns[0] ?? null;
   const finishedRunCount = historyRuns.length + failedHistoryJobs.length;
+  const runPickers = (
+    <div className="comparison-run-pickers results-run-pickers">
+      <label>
+      <span>{isAlignedDetailed ? 'Selected policy run' : 'Primary run'}</span>
+      <select
+        aria-label={isAlignedDetailed ? "Selected policy run" : undefined}
+        ref={selectionRef}
+        value={baselineRunId}
+        disabled={historyRuns.length === 0}
+        onChange={(event) => setBaselineSelection(event.target.value)}
+      >
+        {historyRuns.map((run) => (
+          <option key={run.runId} value={run.runId}>
+            {formatRunOptionLabel(run)}
+          </option>
+        ))}
+      </select>
+      {!isAlignedDetailed && baselineSummary && (
+        <>
+          <ManualSelectionStatusPills
+            status={baselineSummary.status}
+            versionLabelState={baselineVersionLabelState}
+          />
+          <RunProvenancePills provenance={baselineSummary.provenance} />
+        </>
+      )}
+      </label>
+      <label>
+      <span>{isAlignedDetailed ? 'Comparison baseline' : 'Comparison run'}</span>
+      <select
+        aria-label={isAlignedDetailed ? "Comparison baseline" : undefined}
+        value={comparisonRunId}
+        disabled={!baselineRunId || historyRuns.length < 2}
+        onChange={(event) => setComparisonSelection(event.target.value)}
+      >
+        <option value="">No comparison run</option>
+        {historyRuns
+          .filter((run) => run.runId !== baselineRunId)
+          .map((run) => {
+            const annotation = baselineSummary
+              ? formatManualComparisonOptionAnnotation(
+                  getManualComparisonFieldDifferences(baselineSummary, run)
+                )
+              : '';
+            return (
+              <option key={run.runId} value={run.runId}>
+                {formatRunOptionLabel(run)}
+                {annotation ? ` — ${annotation}` : ''}
+              </option>
+            );
+          })}
+      </select>
+      {!isAlignedDetailed && (comparisonSummary ? (
+        <>
+          <ManualSelectionStatusPills
+            status={comparisonSummary.status}
+            versionLabelState={comparisonVersionLabelState}
+          />
+          <RunProvenancePills
+            provenance={comparisonSummary.provenance}
+            differsFrom={baselineSummary?.provenance ?? null}
+          />
+        </>
+      ) : (
+        <small>Select a run to compare values and graph lines.</small>
+      ))}
+      </label>
+    </div>
+  );
 
   return (
-    <section className="results-layout manual-results-layout">
+    <section className={`results-layout manual-results-layout${isAlignedDetailed ? ' policy-detailed-layout' : ''}`}>
+      {isAlignedDetailed && <PolicyDetailedHeader
+        title={detailedTitle}
+        runPickers={runPickers}
+        presentationControls={presentationControls}
+        printDisabled={isLoadingRuns || isLoadingDetail || isLoadingCompare || !baselineDetail}
+        analysisWindowControl={<label><span>Analysis window</span><select aria-label="Analysis window" value={analysisCutoffMonths} onChange={(event) => setAnalysisCutoffMonths(Number.parseInt(event.target.value, 10))}>{ANALYSIS_CUTOFF_OPTIONS.map((months) => <option key={months} value={months}>{months === 0 ? 'Full run' : `After month ${months.toLocaleString('en-GB')}`}</option>)}</select></label>}
+      />}
       {loadError && <p className="error-banner">{loadError}</p>}
       <div className="results-main results-main-full">
-          {queueItems.length > 0 && (
-          <article className="results-card run-queue-card">
-            <div className="disclosure-preview-head">
-              <div className="disclosure-preview-title">
-                <h3>Queue</h3>
-                <p>
-                  {remainingQueueItems.length} {remainingQueueItems.length === 1 ? 'run' : 'runs'} waiting
-                </p>
-              </div>
-              <button
-                type="button"
-                className="disclosure-preview-toggle"
-                aria-expanded={isQueueExpanded}
-                onClick={() => setIsQueueExpanded((current) => !current)}
-                disabled={remainingQueueItems.length === 0}
-              >
-                {isQueueExpanded ? '▾ Hide' : '▸ Queue'}
-              </button>
-            </div>
-
-            {queuePreviewJob ? (
-              <div className="run-preview-card is-static">
-                <span className="run-preview-title">
-                  {queuePreviewJob.title || queuePreviewJob.runId || queuePreviewJob.jobId}
-                </span>
-                <span className="run-preview-meta">
-                  <span className={QUEUE_STATUS_META[queuePreviewJob.status].className}>
-                    {QUEUE_STATUS_META[queuePreviewJob.status].label}
-                  </span>
-                  <span>{formatQueueTimestamp(queuePreviewJob.createdAt)}</span>
-                </span>
-              </div>
-            ) : (
-              <p className="info-banner">No runs in progress.</p>
-            )}
-
-            {isQueueExpanded && remainingQueueItems.length > 0 && (
-              <ul className="job-list run-queue-list">
-                {remainingQueueItems.map((job) => (
-                  <li key={job.jobId} className="job-item">
-                    <strong>{job.title || job.runId || job.jobId}</strong>
-                    <p>
-                      <span className={QUEUE_STATUS_META[job.status].className}>{QUEUE_STATUS_META[job.status].label}</span>
-                    </p>
-                    {job.baseline && <p>Model {job.baseline}</p>}
-                    <p>{formatQueueTimestamp(job.createdAt)}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </article>
-          )}
+          <ResultsQueue
+            items={queueItems.map(manualResultsQueueItem)}
+            expanded={isQueueExpanded} onExpandedChange={setIsQueueExpanded}
+            canCancel={canWrite && canDeleteResults} stopDeletion={stopDeletion}
+            loadingSubmitted={loadingRequestedJob}
+          />
 
           <article className="results-card manual-results-summary-card">
             <div
@@ -1287,70 +1445,11 @@ export function ManualResultsView({
                   : ''
               }`}
             >
-              <div className="comparison-run-pickers">
-                <label>
-                <span>Primary run</span>
-                <select
-                  value={baselineRunId}
-                  disabled={historyRuns.length === 0}
-                  onChange={(event) => setBaselineSelection(event.target.value)}
-                >
-                  {historyRuns.map((run) => (
-                    <option key={run.runId} value={run.runId}>
-                      {formatRunOptionLabel(run)}
-                    </option>
-                  ))}
-                </select>
-                {baselineSummary && (
-                  <>
-                    <ManualSelectionStatusPills
-                      status={baselineSummary.status}
-                      versionLabelState={baselineVersionLabelState}
-                    />
-                    <RunProvenancePills provenance={baselineSummary.provenance} />
-                  </>
-                )}
-                </label>
-                <label>
-                <span>Comparison run</span>
-                <select
-                  value={comparisonRunId}
-                  disabled={!baselineRunId || historyRuns.length < 2}
-                  onChange={(event) => setComparisonSelection(event.target.value)}
-                >
-                  <option value="">No comparison run</option>
-                  {historyRuns
-                    .filter((run) => run.runId !== baselineRunId)
-                    .map((run) => {
-                      const annotation = baselineSummary
-                        ? formatManualComparisonOptionAnnotation(
-                            getManualComparisonFieldDifferences(baselineSummary, run)
-                          )
-                        : '';
-                      return (
-                        <option key={run.runId} value={run.runId}>
-                          {formatRunOptionLabel(run)}
-                          {annotation ? ` — ${annotation}` : ''}
-                        </option>
-                      );
-                    })}
-                </select>
-                {comparisonSummary ? (
-                  <>
-                    <ManualSelectionStatusPills
-                      status={comparisonSummary.status}
-                      versionLabelState={comparisonVersionLabelState}
-                    />
-                    <RunProvenancePills
-                      provenance={comparisonSummary.provenance}
-                      differsFrom={baselineSummary?.provenance ?? null}
-                    />
-                  </>
-                ) : (
-                  <small>Select a run to compare values and graph lines.</small>
-                )}
-                </label>
-              </div>
+              {!isAlignedDetailed && runPickers}
+              {isAlignedDetailed && <div className="policy-detailed-provenance">
+                {baselineSummary && <div><strong>Selected policy run</strong><ManualSelectionStatusPills status={baselineSummary.status} versionLabelState={baselineVersionLabelState} /><RunProvenancePills provenance={baselineSummary.provenance} /></div>}
+                {comparisonSummary && <div><strong>Comparison baseline</strong><ManualSelectionStatusPills status={comparisonSummary.status} versionLabelState={comparisonVersionLabelState} /><RunProvenancePills provenance={comparisonSummary.provenance} differsFrom={baselineSummary?.provenance ?? null} /></div>}
+              </div>}
 
               {(comparisonCalibrationNotice ||
                 comparisonMismatchWarning ||
@@ -1411,7 +1510,11 @@ export function ManualResultsView({
               )}
             </div>
 
-            {baselineDetail && policySettings.length > 0 && (
+            {presentation === 'report' && baselineDetail && (
+              <PolicyReportContext primary={baselineDetail} comparison={comparisonDetail} comparisonRunId={comparisonRunId} />
+            )}
+
+            {presentation === 'detailed' && baselineDetail && policySettings.length > 0 && (
               <section className="run-policy-details">
                 <div className="run-policy-details-head">
                   <h3>Policy settings used</h3>
@@ -1504,7 +1607,7 @@ export function ManualResultsView({
               {comparisonRunId && renderDownloadAction(comparisonRunId, 'Download comparison run raw files')}
             </div>
 
-            {scalingConvention && <p className="results-scaling-convention">{scalingConvention}</p>}
+            {presentation === 'detailed' && scalingConvention && <p className="results-scaling-convention">{scalingConvention}</p>}
 
             <div className="results-analysis-window">
               <p
@@ -1514,7 +1617,7 @@ export function ManualResultsView({
                 <strong>Warm-up period</strong> — we suggest discarding at least the first 500 months, since the model starts from an artificial state and takes time to settle. In the paper, 2,000 months are discarded when 10,000 steps are used.
               </p>
               <div className="results-analysis-window-control">
-                <label>
+                {!isAlignedDetailed && <label>
                   <span>Discard the first</span>
                   <select
                     value={analysisCutoffMonths}
@@ -1527,18 +1630,41 @@ export function ManualResultsView({
                     ))}
                   </select>
                   <span>months</span>
-                </label>
-                <span aria-live="polite">· {formatWholeNumber(remainingAnalysisMonths)} months remain</span>
+                </label>}
+                {isAlignedDetailed && <span>{compareWindowLabel(compareWindow)}</span>}
+                {presentation === 'detailed' && <span aria-live="polite">· {formatWholeNumber(remainingAnalysisMonths)} months remain</span>}
                 <span>· applies to this page</span>
               </div>
             </div>
           </article>
 
+          {presentation === 'report' ? (
+            <PolicyReportView
+              payload={comparePayload}
+              primary={baselineDetail}
+              comparison={comparisonDetail}
+              primaryRunId={baselineRunId}
+              comparisonRunId={comparisonRunId}
+              windowLabel={compareWindowLabel(compareWindow)}
+              isLoading={isLoadingRuns || isLoadingDetail || isLoadingCompare || Boolean(baselineRunId && !comparePayload && !compareError)}
+              error={compareError}
+            />
+          ) : (
           <CollapsibleSection
             className="results-card manual-results-aggregate-card"
             title="Policy results"
             description="Monthly means over the selected analysis window. Open any series to inspect its path through time."
             defaultOpen={false}
+            open={isGuidedPolicy ? guidedPolicyResultsOpen : isPolicyResultsExpanded}
+            onOpenChange={(open) => {
+              setIsPolicyResultsExpanded(open);
+              if (isGuidedPolicy) setPageSearch((current) => {
+                const next = new URLSearchParams(current);
+                if (open) next.set('policyResults', 'open');
+                else next.delete('policyResults');
+                return next;
+              }, { replace: true });
+            }}
           >
             {showKpiRefreshing && (
               <LoadingSkeleton
@@ -1683,6 +1809,7 @@ export function ManualResultsView({
                                           <button
                                             type="button"
                                             className="policy-trend-link"
+                                            data-guided-target={kpi.indicatorId === 'core_mortgageApprovals' ? 'policy-mortgage-approvals-trend' : undefined}
                                             onClick={() => viewIndicatorTrend(kpi.indicatorId)}
                                           >
                                             View trend
@@ -1712,19 +1839,21 @@ export function ManualResultsView({
               </div>
             )}
           </CollapsibleSection>
+          )}
 
-          {isTrendModalOpen && (
+          {presentation === 'detailed' && isTrendModalOpen && (
             <div
-              className="trend-modal-backdrop"
+              className={`trend-modal-backdrop${isGuidedPolicy ? ' is-guided' : ''}`}
               role="presentation"
               onMouseDown={(event) => {
                 if (event.target === event.currentTarget) {
-                  setIsTrendModalOpen(false);
+                  closeTrendModal();
                 }
               }}
             >
               <section
                 className="trend-modal"
+                data-indicator-id={activeIndicatorId}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="trend-modal-title"
@@ -1740,7 +1869,7 @@ export function ManualResultsView({
                     type="button"
                     className="trend-modal-close"
                     aria-label="Close trend chart"
-                    onClick={() => setIsTrendModalOpen(false)}
+                    onClick={closeTrendModal}
                   >
                     ×
                   </button>
@@ -1825,19 +1954,27 @@ export function ManualResultsView({
             description={sidebarSubtitle}
             summary={`${finishedRunCount} finished ${finishedRunCount === 1 ? 'run' : 'runs'}`}
             open={isHistoryExpanded}
-            onOpenChange={setIsHistoryExpanded}
+            onOpenChange={(open) => {
+              setIsHistoryExpanded(open);
+              if (isGuidedPolicy) setPageSearch((current) => {
+                const next = new URLSearchParams(current);
+                if (open) next.set('runHistory', 'open');
+                else next.delete('runHistory');
+                return next;
+              }, { replace: true });
+            }}
           >
             {historyPreviewRun ? (
               <button
                 type="button"
                 className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
-                onClick={() => setBaselineSelection(historyPreviewRun.runId)}
+                onClick={() => viewRunResults(historyPreviewRun.runId)}
               >
                 <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
                 <span className="run-preview-meta">
                   <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
                   <span className="run-preview-action">
-                    {historyPreviewRun.runId === baselineRunId ? 'Viewing' : 'View'}
+                    View results
                   </span>
                 </span>
               </button>
@@ -1846,6 +1983,8 @@ export function ManualResultsView({
             )}
 
             <div className="disclosure-expanded-list">
+                {canDeleteResults && <RunHistorySelectionToolbar selection={historyDeletion} />}
+                {historyDeletion.error && <p className="error-banner" role="alert">{historyDeletion.error}</p>}
                 {showRunsRefreshing && (
                   <LoadingSkeleton
                     as="span"
@@ -1866,6 +2005,9 @@ export function ManualResultsView({
                     {historyRuns.map((run) => {
                       const isBaselineSelected = baselineRunId === run.runId;
                       const isComparisonSelected = comparisonRunId === run.runId;
+                      const deleteDisabledReason = run.isExample
+                        ? 'Example runs cannot be deleted.'
+                        : isProtectedResultsRun(run.runId) ? 'Protected runs cannot be deleted.' : undefined;
                       return (
                         <li
                           key={run.runId}
@@ -1881,6 +2023,15 @@ export function ManualResultsView({
                           onFocus={() => setPreviewRunId(run.runId)}
                         >
                           <div className="run-item-head">
+                            {canDeleteResults && (
+                              <RunHistoryCheckbox
+                                label={getRunPrimaryLabel(run)}
+                                checked={historyDeletion.selectedIds.has(run.runId)}
+                                disabled={historyDeletion.isDeleting || Boolean(deleteDisabledReason)}
+                                disabledReason={deleteDisabledReason}
+                                onChange={(checked) => historyDeletion.toggle(run.runId, checked)}
+                              />
+                            )}
                             <div className="run-item-name">
                               {renamingRunId === run.runId ? (
                                 <form
@@ -1929,9 +2080,9 @@ export function ManualResultsView({
                             <button
                               type="button"
                               className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
-                              onClick={() => setBaselineSelection(run.runId)}
+                              onClick={() => viewRunResults(run.runId)}
                             >
-                              {isBaselineSelected ? 'Primary run selected' : 'Set as primary run'}
+                              View results
                             </button>
                             <button
                               type="button"
@@ -1941,7 +2092,7 @@ export function ManualResultsView({
                             >
                               {isComparisonSelected ? 'Clear comparison run' : 'Set as comparison run'}
                             </button>
-                            {canWrite && renamingRunId !== run.runId && (
+                            {canWrite && !run.isExample && renamingRunId !== run.runId && (
                               <button
                                 type="button"
                                 className="table-toggle"
@@ -1958,21 +2109,6 @@ export function ManualResultsView({
                           <div className="run-meta">
                             <span className={statusClass(run.status)}>{run.status}</span>
                           </div>
-                          {canDeleteResults && (
-                            <button
-                              type="button"
-                              className="danger-button"
-                              disabled={isDeletingRunId === run.runId || isProtectedResultsRun(run.runId)}
-                              onClick={() => void deleteRun(run.runId)}
-                              title={isProtectedResultsRun(run.runId) ? 'Protected run cannot be deleted.' : undefined}
-                            >
-                              {isProtectedResultsRun(run.runId)
-                                ? 'Protected'
-                                : isDeletingRunId === run.runId
-                                  ? 'Deleting...'
-                                  : 'Delete'}
-                            </button>
-                          )}
                         </li>
                       );
                     })}

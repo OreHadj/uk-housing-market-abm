@@ -27,6 +27,7 @@ function usage() {
 
 Options:
   --check              Validate existing installer release metadata without rewriting it.
+  --config-only        Validate both installer configurations without building or reading artifacts.
   --signing-mode       Installer signing mode: signed or unsigned. Defaults to signed.
   --unsigned-reason    Reason to record when --signing-mode unsigned is used.
   --resources-root     Release resources root. Defaults to dashboard/release/windows/resources.
@@ -38,6 +39,7 @@ Options:
 function parseArgs(argv) {
   const options = {
     check: false,
+    configOnly: false,
     signingMode: 'signed',
     unsignedReason:
       process.env.INSTALLER_UNSIGNED_REASON?.trim() || 'Windows code-signing secrets were not configured for this run.',
@@ -53,6 +55,10 @@ function parseArgs(argv) {
     }
     if (arg === '--check') {
       options.check = true;
+      continue;
+    }
+    if (arg === '--config-only') {
+      options.configOnly = true;
       continue;
     }
     if (arg === '--signing-mode') {
@@ -191,8 +197,9 @@ function expectedInstallerPath(installerRoot, appVersion) {
 function validateBuilderConfigFile(configPath, requiredSnippets, forbiddenPatterns) {
   assertFile(configPath, 'Electron Builder config');
   const config = fs.readFileSync(configPath, 'utf-8');
+  const settings = new Set(config.split(/\r?\n/).map((line) => line.trim().replace(/^-\s+/, '')));
   for (const snippet of requiredSnippets) {
-    if (!config.includes(snippet)) {
+    if (!settings.has(snippet)) {
       fail(`Electron Builder config is missing required setting: ${snippet}`);
     }
   }
@@ -203,7 +210,7 @@ function validateBuilderConfigFile(configPath, requiredSnippets, forbiddenPatter
   }
 }
 
-function validateBuilderConfig(signingMode) {
+export function validateBuilderConfig(configRoot = electronRoot) {
   const sharedSnippets = [
     `appId: ${appId}`,
     `productName: ${productName}`,
@@ -218,23 +225,27 @@ function validateBuilderConfig(signingMode) {
     'from: ../release/windows/resources/release-data',
     'from: ../release/windows/resources/release-manifest.json',
     'target: nsis',
+    'oneClick: false',
+    'allowToChangeInstallationDirectory: true',
     'perMachine: false',
+    'selectPerMachineByDefault: false',
+    'allowElevation: true',
+    'include: installer.nsh',
     'deleteAppDataOnUninstall: false'
   ];
 
   validateBuilderConfigFile(
-    path.join(electronRoot, 'electron-builder.yml'),
+    path.join(configRoot, 'electron-builder.yml'),
     [...sharedSnippets, 'forceCodeSigning: true', 'signAndEditExecutable: true'],
     [/nsis-web/i, /forceCodeSigning:\s*false/i, /signAndEditExecutable:\s*false/i]
   );
 
-  if (signingMode === 'unsigned') {
-    validateBuilderConfigFile(
-      path.join(electronRoot, 'electron-builder-unsigned.yml'),
-      [...sharedSnippets, 'forceCodeSigning: false', 'signAndEditExecutable: false'],
-      [/nsis-web/i, /forceCodeSigning:\s*true/i, /signAndEditExecutable:\s*true/i]
-    );
-  }
+  validateBuilderConfigFile(
+    path.join(configRoot, 'electron-builder-unsigned.yml'),
+    [...sharedSnippets, 'forceCodeSigning: false', 'signAndEditExecutable: false'],
+    [/nsis-web/i, /forceCodeSigning:\s*true/i, /signAndEditExecutable:\s*true/i]
+  );
+  assertFile(path.join(configRoot, 'installer.nsh'), 'installer directory-retention hook');
 }
 
 function releaseDataManifestFilePaths(releaseDataRoot) {
@@ -556,7 +567,11 @@ function main() {
   options.resourcesRoot = path.resolve(options.resourcesRoot);
   options.installerRoot = path.resolve(options.installerRoot);
 
-  validateBuilderConfig(options.signingMode);
+  validateBuilderConfig();
+  if (options.configOnly) {
+    log('validated signed and unsigned installer configurations');
+    return;
+  }
   const dashboardPackage = readJson(path.join(dashboardRoot, 'package.json'));
   const resourceManifest = readAndValidateResourceManifest(options.resourcesRoot);
   const installerPath = expectedInstallerPath(options.installerRoot, dashboardPackage.version);
@@ -589,9 +604,11 @@ function main() {
   log(`validated installer release artifacts under ${options.installerRoot}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`[installer-release] ${(error instanceof Error ? error.message : String(error))}`);
-  process.exitCode = 1;
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`[installer-release] ${(error instanceof Error ? error.message : String(error))}`);
+    process.exitCode = 1;
+  }
 }

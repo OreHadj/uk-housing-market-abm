@@ -16,7 +16,11 @@ export interface ScenarioDraftV1 {
   calibratedModel: string;
   basePolicy: BasePolicyId;
   formValues: Record<string, FormValue>;
+  /** Marks drafts saved after transaction recording became the policy-run default. */
+  recordingDefaultsVersion?: 1;
   maxWorkers: string;
+  /** The last setup section visited, within the five-step policy builder. */
+  currentStep?: number;
   /** Builder fields fixed by the workflow that created this draft. Ordinary drafts omit it. */
   lockedParameterKeys?: string[];
 }
@@ -50,7 +54,11 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
       calibratedModel: parsed.calibratedModel,
       basePolicy: typeof parsed.basePolicy === 'string' ? parsed.basePolicy : '2024',
       formValues: parsed.formValues && typeof parsed.formValues === 'object' ? parsed.formValues : {},
+      ...(parsed.recordingDefaultsVersion === 1 ? { recordingDefaultsVersion: 1 as const } : {}),
       maxWorkers: typeof parsed.maxWorkers === 'string' ? parsed.maxWorkers : '1',
+      ...(typeof parsed.currentStep === 'number' && Number.isInteger(parsed.currentStep) && parsed.currentStep >= 0 && parsed.currentStep <= 4
+        ? { currentStep: parsed.currentStep }
+        : {}),
       ...(lockedParameterKeys.length > 0 ? { lockedParameterKeys } : {})
     };
   } catch {
@@ -60,6 +68,14 @@ export function readScenarioDraft(draftId: string): ScenarioDraftV1 | null {
 
 export function writeScenarioDraft(draftId: string, draft: ScenarioDraftV1): void {
   if (draftId) sessionStorage.setItem(scenarioDraftStorageKey(draftId), JSON.stringify(draft));
+}
+
+export function updateScenarioDraftStep(draftId: string, currentStep: number): boolean {
+  if (!Number.isInteger(currentStep) || currentStep < 0 || currentStep > 4) return false;
+  const draft = readScenarioDraft(draftId);
+  if (!draft) return false;
+  writeScenarioDraft(draftId, { ...draft, currentStep });
+  return true;
 }
 
 export function clearScenarioDraft(draftId: string): void {
@@ -136,6 +152,15 @@ export function restoreScenarioDraft(
   const lockedParameterKeys = (stored.lockedParameterKeys ?? []).filter((key) => parameterKeys.has(key));
   if (lockedParameterKeys.length !== (stored.lockedParameterKeys?.length ?? 0)) choicesChanged = true;
 
+  // Old drafts automatically saved the former false default without distinguishing
+  // an explicit choice. Adopt the current default once; subsequent opt-outs persist.
+  if (stored.recordingDefaultsVersion !== 1
+    && parameterKeys.has('recordTransactions')
+    && !lockedParameterKeys.includes('recordTransactions')
+    && typeof fallback.formValues.recordTransactions === 'boolean') {
+    formValues.recordTransactions = fallback.formValues.recordTransactions;
+  }
+
   return {
     choicesChanged,
     draft: {
@@ -143,6 +168,7 @@ export function restoreScenarioDraft(
       calibratedModel,
       basePolicy,
       formValues,
+      recordingDefaultsVersion: 1,
       maxWorkers,
       ...(lockedParameterKeys.length > 0 ? { lockedParameterKeys } : { lockedParameterKeys: undefined })
     }

@@ -594,6 +594,8 @@ export interface ResultsRunProvenance {
 
 export interface ResultsRunSummary {
   runId: string;
+  /** Bundled read-only example; optional for older remote payloads. */
+  isExample?: boolean;
   /** Scenario name given when the run was created; null for runs with no readable manifest. */
   title: string | null;
   path: string;
@@ -1041,6 +1043,7 @@ export interface ModelRunSubmitRequest {
   title?: string;
   overrides: Record<string, number | boolean>;
   maxWorkers?: number;
+  /** Authorises replacement of existing results; runtime warnings are always advisory. */
   confirmWarnings?: boolean;
 }
 
@@ -1112,11 +1115,14 @@ export interface SensitivityExperimentCreateRequest {
   sampleCount?: number;
   overrides?: Record<string, number | boolean>;
   maxWorkers?: number;
+  /** Retained for older clients. Sensitivity warnings no longer require confirmation. */
   confirmWarnings?: boolean;
 }
 
 export interface SensitivityExperimentSummary {
   experimentId: string;
+  /** Bundled read-only example; optional for older remote payloads. */
+  isExample?: boolean;
   title?: string;
   baseline: string;
   basePolicy?: BasePolicyId;

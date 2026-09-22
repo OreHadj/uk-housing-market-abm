@@ -14,6 +14,8 @@ dashboard/*
 !dashboard/server/**
 !dashboard/shared/
 !dashboard/shared/**
+!dashboard/demo-examples/
+!dashboard/demo-examples/**
 dashboard/release/
 dashboard/release/**
 

@@ -172,9 +172,9 @@ assert.equal(formatValidationScorecardValue('60%', '40%'), '60% vs 40%');
 assert.equal(formatValidationScorecardValue(5), '5');
 assert.ok(
   compareMarkup.includes(
-    '/model-evidence?view=calibration&amp;mode=compare&amp;left=v5o3&amp;right=v4.26'
+    '/model-evidence?view=calibration&amp;mode=compare&amp;left=v4.26&amp;right=v5o3'
   ),
-  'The permanent calibration link should carry both selected models when comparing'
+  'The permanent calibration link should preserve Validation Model 1 as Calibration Primary'
 );
 
 const v5o3Snapshot = JSON.parse(

@@ -185,6 +185,9 @@ import { FullRunDetailsDialog } from '../src/pages/experiments/view/FullRunDetai
 import { restoreScenarioDraft, type ScenarioDraftV1 } from '../src/lib/scenarioDraft.js';
 import { SensitivitySetupCard } from '../src/pages/run-experiments/SensitivitySetupCard.js';
 import { ExperimentsLandingPage } from '../src/pages/ExperimentsLandingPage.js';
+import { WorkspaceTypeNavigation } from '../src/components/WorkspaceTypeNavigation.js';
+import { ModelInformationNavigation } from '../src/components/ModelInformationNavigation.js';
+import { getActivePrimaryDestination, getResultsNavigationSearch, PRIMARY_DESTINATION_LABELS } from '../src/lib/workspaceNavigation.js';
 import { assertSettingHelpCopy } from '../src/pages/run-experiments/settingHelp.js';
 import {
   DEFAULT_EXPERIMENT_BASE_POLICY_ID,
@@ -6273,7 +6276,8 @@ try {
   );
   assert.ok(
     manualSetupText.includes('Additional data exports') &&
-      manualSetupText.includes('Optional transaction and household-level files for analysis outside the dashboard.'),
+      manualSetupText.includes('Record transactions enables the Lending risk charts in policy reports.') &&
+      manualSetupText.includes('Other optional exports support further analysis outside the dashboard.'),
     'Expected Technical details to offer the optional external exports'
   );
   // Core indicators are always on and cannot be turned off, so the setup form states no status for
@@ -6638,15 +6642,15 @@ try {
     'Expected the runtime warning above 50 seeds'
   );
 
-  const warningResponse = submitModelRun(modelRunFixtureRoot, {
+  const warningResponse = prepareModelRunSubmission(modelRunFixtureRoot, {
     baseline: 'v1.0',
     title: 'warning-check',
     overrides: { N_STEPS: 5001 },
     confirmWarnings: false
   });
-  assert.equal(warningResponse.accepted, false, 'Expected submit to request explicit warning confirmation');
-  assert.ok((warningResponse.warnings?.length ?? 0) > 0, 'Expected warning payload when confirmation is missing');
-  assert.equal(listModelRunJobs().length, 0, 'Expected warning-only submit not to enqueue a job');
+  assert.ok(warningResponse.accepted, 'Expected runtime warnings to allow starting without confirmation');
+  assert.ok(warningResponse.prepared.warnings.length > 0, 'Expected advisory warnings to remain available');
+  assert.equal(listModelRunJobs().length, 0, 'Preparing a submission must not enqueue a job');
 
   markSmokeStep('checking cross-era manual base-policy config');
   __resetModelRunManagerForTests();
@@ -6771,15 +6775,15 @@ try {
     'Expected successful run output folder to persist'
   );
 
-  const warningCoreIndicatorsOff = submitModelRun(modelRunFixtureRoot, {
+  const warningCoreIndicatorsOff = prepareModelRunSubmission(modelRunFixtureRoot, {
     baseline: 'v1.0',
     title: 'core-off-warning',
     overrides: { recordCoreIndicators: false },
     confirmWarnings: false
   });
-  assert.equal(warningCoreIndicatorsOff.accepted, false, 'Expected submit to block until warnings are confirmed');
+  assert.ok(warningCoreIndicatorsOff.accepted, 'Expected recording warnings to be advisory');
   assert.ok(
-    warningCoreIndicatorsOff.warnings.some((warning) => warning.code === 'core_indicators_disabled'),
+    warningCoreIndicatorsOff.prepared.warnings.some((warning) => warning.code === 'core_indicators_disabled'),
     'Expected warning when recordCoreIndicators is disabled'
   );
 
@@ -7594,7 +7598,7 @@ try {
     return process as never;
   });
 
-  const warningSubmit = submitSensitivityExperiment(sensitivityFixtureRoot, {
+  const warningSubmit = prepareSensitivityExperimentSubmission(sensitivityFixtureRoot, {
     baseline: 'v1.0',
     basePolicy: '2011',
     parameterKey: 'CENTRAL_BANK_INITIAL_BASE_RATE',
@@ -7603,8 +7607,8 @@ try {
     overrides: { TARGET_POPULATION: 20_000 },
     confirmWarnings: false
   });
-  assert.equal(warningSubmit.accepted, false, 'Expected sensitivity submit to require warning confirmation');
-  assert.ok((warningSubmit.warnings.length ?? 0) > 0, 'Expected warning payload for high target population points');
+  assert.ok(warningSubmit.accepted, 'Expected sensitivity runtime warnings to be advisory');
+  assert.ok(warningSubmit.prepared.warnings.length > 0, 'Expected warning payload for high target population points');
 
   const policyWarningCases = [
     {
@@ -7676,7 +7680,7 @@ try {
   ];
 
   for (const testCase of policyWarningCases) {
-    const response = submitSensitivityExperiment(sensitivityFixtureRoot, {
+    const response = prepareSensitivityExperimentSubmission(sensitivityFixtureRoot, {
       baseline: 'v1.0',
       basePolicy: '2011',
       parameterKey: testCase.parameterKey,
@@ -7685,9 +7689,9 @@ try {
       overrides: { N_SIMS: 1 },
       confirmWarnings: false
     });
-    assert.equal(response.accepted, false, `Expected ${testCase.parameterKey} to require warning confirmation`);
+    assert.ok(response.accepted, `Expected ${testCase.parameterKey} warnings to be advisory`);
     assert.ok(
-      response.warnings.some((warning) => warning.code === testCase.expectedCode),
+      response.prepared.warnings.some((warning) => warning.code === testCase.expectedCode),
       `Expected ${testCase.parameterKey} to emit ${testCase.expectedCode}`
     );
   }
@@ -9228,7 +9232,7 @@ assert.ok(
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
     manualResultsViewSource.includes("[baselineDetail, ...(comparisonDetail ? [comparisonDetail] : [])]") &&
     manualResultsViewSource.includes('Run ID:'),
-  'Manual result labels should show the experiment name alone and keep technical provenance in the policy details'
+  'Manual selectors should show the experiment name without a redundant Example tag while keeping technical provenance in policy details'
 );
 assert.ok(
   manualResultsViewSource.includes("Dotted lines show each selected run&apos;s mean."),
@@ -9258,8 +9262,8 @@ assert.equal(
 assert.ok(
   manualResultsViewSource.includes('<th scope="col">Primary vs comparison</th>') &&
     !manualResultsViewSource.includes('Delta: {PRIMARY_RUN_LABEL} − {COMPARISON_RUN_LABEL}') &&
-    manualResultsViewSource.includes('<span>Primary run</span>') &&
-    manualResultsViewSource.includes('<span>Comparison run</span>') &&
+    manualResultsViewSource.includes("<span>{isAlignedDetailed ? 'Selected policy run' : 'Primary run'}</span>") &&
+    manualResultsViewSource.includes("<span>{isAlignedDetailed ? 'Comparison baseline' : 'Comparison run'}</span>") &&
     !manualResultsViewSource.includes("'Baseline'") &&
     !manualResultsViewSource.includes('>Baseline<') &&
     manualResultsViewSource.includes('className="warning-banner comparison-mismatch-warning"') &&
@@ -9370,11 +9374,23 @@ assert.ok(
     ),
   'UK-scaled markers should explain their conversion in an accessible hover and focus tooltip'
 );
+const runHistoryDeletionHookSource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/experiments/view/useRunHistoryDeletion.ts'),
+  'utf-8'
+);
 assert.ok(
-  manualResultsViewSource.includes('window.confirm') &&
-    manualResultsViewSource.includes('window.prompt') &&
-    manualResultsViewSource.includes('deleteResultsRun(runId, deleteKey'),
-  'Manual results deletion should confirm and prompt for remote delete key before calling the delete API'
+  runHistoryDeletionHookSource.includes('await deleteRunHistorySelection({') &&
+    runHistoryDeletionHookSource.includes('confirm: (message) => window.confirm(message)') &&
+    runHistoryDeletionHookSource.includes('promptDeleteKey: () => window.prompt(') &&
+    runHistoryDeletionHookSource.includes('canDeleteItem: (id) => latest.current.canDelete'),
+  'Shared run history deletion should provide browser confirmation, a private-key prompt, and a current-access recheck'
+);
+assert.ok(
+  manualResultsViewSource.includes('useRunHistoryDeletion({') &&
+    manualResultsViewSource.includes('canDelete: canDeleteResults') &&
+    manualResultsViewSource.includes('deleteKeyRequired,') &&
+    manualResultsViewSource.includes('deleteItem: deleteResultsRun'),
+  'Policy run history should pass deletion access and remote-key requirements through the shared confirmation flow'
 );
 
 const sensitivityResultsViewSource = fs.readFileSync(
@@ -9403,10 +9419,11 @@ assert.ok(
   'Results chart containers, selectors, and modal headings should fit narrow viewports without clipping'
 );
 assert.ok(
-  sensitivityResultsViewSource.includes('window.confirm') &&
-    sensitivityResultsViewSource.includes('window.prompt') &&
-    sensitivityResultsViewSource.includes('deleteSensitivityExperiment'),
-  'Sensitivity results deletion should confirm and prompt for remote delete key before calling the delete API'
+  sensitivityResultsViewSource.includes('useRunHistoryDeletion({') &&
+    sensitivityResultsViewSource.includes('canDelete: canDeleteResults') &&
+    sensitivityResultsViewSource.includes('deleteKeyRequired,') &&
+    sensitivityResultsViewSource.includes('deleteItem: deleteSensitivityExperiment'),
+  'Sensitivity run history should pass deletion access and remote-key requirements through the shared confirmation flow'
 );
 assert.ok(
   manualResultsViewSource.includes('<h3>Policy settings used</h3>') &&
@@ -9490,7 +9507,7 @@ assert.ok(
 );
 assert.ok(
   appSource.includes('const modelEvidenceVisible = true;'),
-  'App should expose model evidence as a main page in the four-page structure'
+  'App should expose model evidence as a main page'
 );
 assert.ok(
   appSource.includes('VIEW_MODE_OPTIONS') &&
@@ -9514,8 +9531,10 @@ assert.ok(
   'App should redirect the retired /compare alias into the scenarios workspace rather than offering it as a destination'
 );
 assert.ok(
-  appSource.includes('to="/model-evidence"') && appSource.includes('Model Evidence'),
-  'App should expose one shared Model Evidence destination in the header'
+  appSource.includes('`/model-evidence${lastModelInformationSearch}`') &&
+    appSource.includes("PRIMARY_DESTINATION_LABELS['model-evidence']") &&
+    PRIMARY_DESTINATION_LABELS['model-evidence'] === 'Model information',
+  'App should label the existing evidence destination Model information'
 );
 assert.ok(
   !appSource.includes("activePrimaryDestination === 'calibration'") &&
@@ -9523,18 +9542,27 @@ assert.ok(
   'App should not expose calibration and validation as separate primary destinations'
 );
 assert.ok(
-  appSource.includes('to="/results"') && appSource.includes('Results') && !appSource.includes('Model information'),
-  'App should preserve the dedicated Results destination without introducing Model information'
+  appSource.includes('getResultsNavigationSearch(new URLSearchParams(location.search))') &&
+    appSource.includes('<WorkspaceTypeNavigation area="results" resultsSearch={lastResultsSearch} />') &&
+    getResultsNavigationSearch(new URLSearchParams('type=sensitivity&experimentId=a&presentation=detailed&demo=x&step=y')) === '?type=sensitivity&experimentId=a',
+  'App should preserve the current Results selection and expose its type choices in the sidebar'
 );
 assert.ok(
-  appSource.includes("pathname === '/scenarios/new'") &&
-    appSource.includes("pathname === '/sensitivity/new'") &&
-    appSource.includes("return 'experiments';"),
+  getActivePrimaryDestination('/scenarios/new') === 'experiments' &&
+    getActivePrimaryDestination('/sensitivity/new') === 'experiments' &&
+    appSource.includes('<WorkspaceTypeNavigation area="experiments" />'),
   'Creation routes should keep the shared Experiments destination active'
 );
 assert.ok(
+  appSource.includes('className="top workspace-header"') &&
+    appSource.includes('id="workspace-page-title"') &&
+    appSource.includes("aria-labelledby={activePrimaryDestination ? 'workspace-page-title' : undefined}") &&
+    !appSource.includes('workspace-page-header'),
+  'The shared title should sit in the top header and name the keyboard-accessible main workspace'
+);
+assert.ok(
   appSource.includes('<Route path="/experiments" element={<ExperimentsLandingPage />} />'),
-  'App should register the minimal Experiments landing page'
+  'App should register the Experiments type chooser'
 );
 assert.ok(
   appSource.includes('path="/scenarios/new"') && appSource.includes('path="/sensitivity/new"'),
@@ -9561,72 +9589,90 @@ const modelEvidencePageSource = fs.readFileSync(
   'utf-8'
 );
 assert.ok(
-  modelEvidencePageSource.includes("label: 'Calibration'") &&
-    modelEvidencePageSource.includes("label: 'Validation'") &&
-    modelEvidencePageSource.includes("activeView === 'calibration' ? <ComparePage /> : <ValidationPage />"),
-  'Model evidence should switch between the existing calibration and validation pages'
+  modelEvidencePageSource.includes("activeView === 'calibration' ? <ComparePage /> : <ValidationPage />"),
+  'Model evidence should coordinate but keep the existing Calibration and Validation pages separate'
 );
 assert.ok(
-  modelEvidencePageSource.includes('results-view-switcher') &&
-    modelEvidencePageSource.includes('results-type-toggle') &&
-    modelEvidencePageSource.includes('results-type-option') &&
-    modelEvidencePageSource.includes("searchParams.get('view')"),
-  'Model evidence should use the same wide URL-backed navigation pattern as Results'
+  !modelEvidencePageSource.includes('results-view-switcher') &&
+    !modelEvidencePageSource.includes('results-type-toggle') &&
+    modelEvidencePageSource.includes('getModelInformationView(searchParams)') &&
+    appSource.includes('<ModelInformationNavigation modelInformationSearch={lastModelInformationSearch} />') &&
+    appSource.includes('aria-controls="sidebar-model-information-sections"'),
+  'Model information should use URL-owned sidebar sections instead of top tabs'
 );
+const modelInformationNavigationMarkup = renderToStaticMarkup(createElement(
+  MemoryRouter,
+  { initialEntries: ['/model-evidence?view=validation&version=v5o3&draft=keep-draft'] },
+  createElement(ModelInformationNavigation)
+));
+assert.ok(modelInformationNavigationMarkup.includes('>Calibration</a>') && modelInformationNavigationMarkup.includes('>Validation</a>'));
+assert.match(modelInformationNavigationMarkup, /aria-current="page"[^>]*href="\/model-evidence\?view=validation&amp;version=v5o3&amp;draft=keep-draft"/);
 
 const experimentsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsPage.tsx'), 'utf-8');
 const resultsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/ResultsPage.tsx'), 'utf-8');
-const experimentsLandingPageSource = fs.readFileSync(
-  path.resolve(repoRoot, 'dashboard/src/pages/ExperimentsLandingPage.tsx'),
-  'utf-8'
-);
 const experimentsLandingMarkup = renderToStaticMarkup(
   createElement(MemoryRouter, null, createElement(ExperimentsLandingPage))
 );
+const experimentTypeNavigationMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, { initialEntries: ['/experiments'] }, createElement(WorkspaceTypeNavigation, { area: 'experiments' }))
+);
 assert.ok(
-  experimentsLandingPageSource.includes("to: '/scenarios/new'") &&
-    experimentsLandingPageSource.includes("to: '/sensitivity/new'") &&
-    experimentsLandingMarkup.includes('New policy scenario') &&
-    experimentsLandingMarkup.includes('New sensitivity analysis') &&
-    experimentsLandingMarkup.includes('Test a specific combination of policy settings and compare the results with a baseline.') &&
-    experimentsLandingMarkup.includes('Vary one policy instrument across a range to see how model outcomes respond.'),
-  'Experiments landing page should link to both creation flows'
+  experimentTypeNavigationMarkup.includes('href="/scenarios/new"') &&
+    experimentTypeNavigationMarkup.includes('href="/sensitivity/new"') &&
+    experimentTypeNavigationMarkup.includes('Policy scenarios') &&
+    experimentTypeNavigationMarkup.includes('Sensitivity analysis') &&
+    experimentsLandingMarkup.includes('href="/scenarios/new"') &&
+    experimentsLandingMarkup.includes('href="/sensitivity/new"') &&
+    experimentsLandingMarkup.includes('Test a specific combination of policy settings') &&
+    experimentsLandingMarkup.includes('Vary policy settings across a range'),
+  'The Experiments sidebar should link to both creation flows and the landing page should explain how to begin'
 );
 assert.equal(
-  experimentsLandingMarkup.match(/class="experiment-launch-action"/g)?.length ?? 0,
+  experimentTypeNavigationMarkup.match(/class="sidebar-type-link"/g)?.length ?? 0,
   2,
-  'Experiments landing page should visibly contain exactly two large actions'
+  'The Experiments sidebar should expose exactly two experiment-type choices'
 );
 assert.ok(
   experimentsPageSource.includes("navigate('/experiments')") &&
-    experimentsPageSource.includes('onClick={returnToExperiments}') &&
-    experimentsPageSource.includes('returnToExperiments();'),
-  'Closing, escaping, clicking outside, or discarding experiment creation should return to the Experiments hub'
+    experimentsPageSource.includes('!isExperimentDemo && (inlineSetup || effectiveDraftId)') &&
+    experimentsPageSource.includes('onClick={startOver}') &&
+    experimentsPageSource.includes('onClick={exitExperimentDemo}>Finish practice') &&
+    experimentsPageSource.includes('clearExperimentDemoState(demoProgress?.journeyId') &&
+    experimentsPageSource.includes("navigate('/')") &&
+    experimentsPageSource.includes('setSearchParams(new URLSearchParams({ draft: nextDraftId }), { replace: true })'),
+  'Starting over should replace the current draft in place, while ending a demo returns Home'
 );
 assert.ok(
-  experimentsPageSource.includes("initialView === 'create' && <ExperimentsLandingPage />") &&
+  !experimentsPageSource.includes('<ExperimentsLandingPage') &&
+    experimentsPageSource.includes("const inlineSetup = initialView === 'create';") &&
+    experimentsPageSource.includes("role={inlineSetup ? 'region' : 'dialog'}") &&
+    experimentsPageSource.includes("className={inlineSetup ? 'experiment-setup-workspace' : 'scenario-create-modal-backdrop'}") &&
     experimentsPageSource.includes("initialView !== 'create' && <article") &&
     experimentsPageSource.includes("initialView !== 'create' && (workspace === 'manual'"),
-  'Creation routes should keep the Experiments hub behind the modal instead of rendering result workspaces'
+  'Ordinary and practice creation routes should use the current inline setup without a duplicate type chooser or results workspace'
 );
 assert.ok(
-  experimentsPageSource.includes('onManualRunAccepted={(runId) => navigate(') &&
-    experimentsPageSource.includes('/results?type=manual&queue=open') &&
-    experimentsPageSource.includes('onSensitivityRunAccepted={(id) => navigate(') &&
-    experimentsPageSource.includes('/results?type=sensitivity&queue=open') &&
+  experimentsPageSource.includes('onManualRunAccepted={(runId, jobRef) => {') &&
+    experimentsPageSource.includes('buildPolicyPracticeResultsHref(runId, jobRef)') &&
+    experimentsPageSource.includes('/results?type=manual&presentation=report&queue=open') &&
+    experimentsPageSource.includes('onSensitivityRunAccepted={(id, jobRef) => {') &&
+    experimentsPageSource.includes('buildSensitivityPracticeResultsHref(id, jobRef)') &&
+    experimentsPageSource.includes('/results?type=sensitivity&presentation=report&queue=open') &&
     experimentsPageSource.includes('queueInitiallyExpanded={queueInitiallyExpanded}') &&
     resultsPageSource.includes("searchParams.get('queue') === 'open'") &&
-    (resultsPageSource.match(/queueInitiallyExpanded=\{queueInitiallyExpanded\}/g)?.length ?? 0) === 2 &&
+    (resultsPageSource.match(/queueInitiallyExpanded=\{queueInitiallyExpanded\}/g)?.length ?? 0) === 3 &&
     manualResultsViewSource.includes('useState<boolean>(queueInitiallyExpanded)') &&
-    sensitivityResultsViewSource.includes('title="Queue"') &&
-    sensitivityResultsViewSource.includes('defaultOpen={queueInitiallyExpanded}'),
-  'Accepted scenario and sensitivity submissions should move into Results with the queue expanded'
+    manualResultsViewSource.includes('<ResultsQueue') &&
+    sensitivityResultsViewSource.includes('<ResultsQueue') &&
+    sensitivityResultsViewSource.includes('useState<boolean>(queueInitiallyExpanded)'),
+  'Accepted scenario and sensitivity submissions should open Report with their job identity and retain the queue entry points'
 );
 assert.ok(
-  resultsPageSource.includes('className="results-view-switcher"') &&
-    resultsPageSource.includes('className="visually-hidden">Results</h2>') &&
+  resultsPageSource.includes('className="results-presentation-header"') &&
+    resultsPageSource.includes('aria-label="Results presentation"') &&
+    !resultsPageSource.includes('results-type-toggle') &&
     !resultsPageSource.includes('className="results-card workspace-heading"'),
-  'Results should use the full-width view switcher without the old boxed page heading'
+  'Results should retain its presentation control without a duplicate type switcher or page heading'
 );
 assert.ok(
   resultsPageSource.includes('sidebarSubtitle="Manage policy scenario runs"') &&
@@ -9658,12 +9704,18 @@ assert.ok(
     appSource.includes('void refreshAuthStatus();'),
   'App should initialise the Electron-provided auth token before refreshing auth status'
 );
+const settingsPageSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/src/pages/SettingsPage.tsx'), 'utf-8');
 assert.ok(
-  appSource.includes('desktopApi.openResultsFolder') &&
-    appSource.includes('desktopApi.openLogsFolder') &&
-    appSource.includes('desktopApiInput.exportSupportBundle') &&
-    appSource.includes('Support Bundle'),
-  'App should expose desktop results, logs, and support-bundle actions when Electron preload is available'
+  appSource.includes('to="/settings"') &&
+    appSource.includes('<Route path="/settings" element={<SettingsPage desktopApi={desktopApi} />} />') &&
+    appSource.includes("!authLoaded && activePrimaryDestination !== 'settings'") &&
+    !appSource.includes('desktop-folder-actions') &&
+    settingsPageSource.includes('desktopApi && (') &&
+    settingsPageSource.includes('desktopApi.openResultsFolder()') &&
+    settingsPageSource.includes('desktopApi.openLogsFolder()') &&
+    settingsPageSource.includes('desktopApi.exportSupportBundle()') &&
+    !resultsPageSource.includes('openResultsFolder'),
+  'Settings should own desktop support actions outside the shared header, Results workflow and access gate'
 );
 assert.ok(
   appSource.includes("const browserAuthControlsVisible = !isDesktopRuntime && viewMode !== 'preview_desktop';") &&
@@ -9975,9 +10027,10 @@ assert.ok(
     validationPageSource.includes('description="Overall validation results, strongest areas, and the largest gaps."') &&
     validationPageSource.includes('summary={comparisonSummary') &&
     validationPageSource.includes('`${summary.version} compared with ${comparisonSummary.version}`') &&
-    validationPageSource.includes('defaultOpen={false}') &&
+    validationPageSource.includes('open={isValidationSummaryOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsValidationSummaryOpen}') &&
     manualResultsStylesSource.includes('.validation-summary-card > .collapsible-section-toggle .collapsible-section-title'),
-  'The collapsed Summary card should show its model summary below the title and its description alongside'
+  'The controlled, initially collapsed Summary card should show its model summary below the title and its description alongside'
 );
 assert.ok(
   validationPageSource.includes('Models tested against 2024 UK evidence') &&
@@ -10083,8 +10136,9 @@ assert.ok(
     validationPageSource.includes('title="Validation methodology"') &&
     validationPageSource.includes('description="How the model is tested, which evidence is used, and how results are scored."') &&
     validationPageSource.includes('summary="Protocol, evidence, and loss calculation"') &&
-    validationPageSource.includes('defaultOpen={false}'),
-  'Collapsed Validation methodology should show its description below the title and its method summary at the row end'
+    validationPageSource.includes('open={isValidationMethodologyOpen}') &&
+    validationPageSource.includes('onOpenChange={setIsValidationMethodologyOpen}'),
+  'Controlled, initially collapsed Validation methodology should show its description below the title and its method summary at the row end'
 );
 assert.ok(
   validationPageSource.includes('<h3>How validation loss is calculated</h3>') &&
@@ -10108,6 +10162,7 @@ assert.ok(
   validationPageSource.includes('findValidationThemeId(metricId)') &&
     validationPageSource.includes('setIsOutcomeComparisonsOpen(true)') &&
     validationPageSource.includes('setOpenValidationThemeIds') &&
+    validationPageSource.includes('setOpenValidationMetricIds') &&
     validationPageSource.includes('setPendingMetricDiagnosticId(metricId)') &&
     validationPageSource.includes("row.querySelector<HTMLButtonElement>('[data-validation-detail-trigger]')") &&
     validationPageSource.includes("trigger.getAttribute('aria-expanded') !== 'true'") &&
@@ -10161,10 +10216,10 @@ const sharedTypesSource = fs.readFileSync(path.resolve(repoRoot, 'dashboard/shar
 assert.ok(
     comparePageSource.includes('className="results-card calibration-evidence-introduction"') &&
     comparePageSource.includes('className="validation-introduction-copy"') &&
-    comparePageSource.includes('<h2>Calibration</h2>') &&
+    comparePageSource.includes('<h2 id="calibration-page-heading" className="visually-hidden">Calibration</h2>') &&
     !comparePageSource.includes('Calibration assumptions') &&
     !comparePageSource.includes('calibration-assumptions-copy') &&
-    !comparePageSource.includes('calibration-page-head') &&
+    !comparePageSource.includes('className="calibration-page-head"') &&
     !comparePageSource.includes('summary-panel calibration-introduction calibration-description') &&
     comparePageSource.includes('className="assumption-reference assumption-reference-full"') &&
     !comparePageSource.includes('className="results-card assumption-reference assumption-reference-full"') &&
@@ -10239,8 +10294,10 @@ assert.ok(
 );
 assert.ok(
   comparePageSource.includes('export function FittedParameterRow') &&
-    comparePageSource.includes('<details className={`calibration-parameter-row calibration-parameter-row-${mode}`}>') &&
-    comparePageSource.includes('<summary className="calibration-parameter-summary">') &&
+    comparePageSource.includes('className={`calibration-parameter-row calibration-parameter-row-${mode}`}') &&
+    comparePageSource.includes('open={open}') &&
+    comparePageSource.includes('onToggle={(event) => {') &&
+    comparePageSource.includes('<summary className="calibration-parameter-summary"') &&
     comparePageSource.includes('className="calibration-parameter-indicator"') &&
     comparePageSource.includes('{parameter.name}') &&
     comparePageSource.includes('{parameter.key}') &&
@@ -10260,15 +10317,15 @@ assert.ok(
     /\.parameter-row-head code \{[\s\S]*?background: transparent;/.test(manualResultsStylesSource) &&
     manualResultsStylesSource.includes('.calibration-parameter-row[open] > .calibration-parameter-summary') &&
     manualResultsStylesSource.includes('.calibration-parameter-body') &&
-    manualResultsStylesSource.includes('@media (max-width: 980px)') &&
+    manualResultsStylesSource.includes('@media (max-width: 1210px)') &&
     manualResultsStylesSource.includes('.parameter-number-grid { grid-column: 2; }') &&
     manualResultsStylesSource.includes('@media (max-width: 480px)'),
   'Nested fitted-parameter disclosures should be compact, keyboard-visible, and stack their values beneath the name on narrow screens'
 );
 assert.ok(
   comparePageSource.includes('export function AssumptionGroupDisclosure') &&
-    comparePageSource.includes('<details className="assumption-group">') &&
-    comparePageSource.includes('<summary className="assumption-group-summary">') &&
+    comparePageSource.includes('className="assumption-group"') &&
+    comparePageSource.includes('<summary className="assumption-group-summary"') &&
     comparePageSource.includes('className="assumption-group-count"') &&
     comparePageSource.includes('assumptionCount={items.length}') &&
     comparePageSource.indexOf('className="assumption-table"') > comparePageSource.indexOf('</summary>') &&
@@ -10286,6 +10343,15 @@ assert.ok(
 );
 // Calibration visualizations moved from default-open cards to an inspection
 // modal in 1d51e71; the old default-open assertions were removed with it.
+assert.ok(
+  !comparePageSource.includes('DEFAULT_OPEN_COMPARE_CARD_IDS') &&
+    !comparePageSource.includes('DEFAULT_OPEN_COMPARE_GROUPS') &&
+    !comparePageSource.includes('defaultExpanded={DEFAULT_OPEN_COMPARE_CARD_IDS.has(item.id)}') &&
+    comparePageSource.includes('savedDemoProgress?.isFittedParametersOpen ?? true') &&
+    comparePageSource.includes('savedDemoProgress?.isOtherAssumptionsOpen ?? false') &&
+    comparePageSource.includes('open={openAssumptionGroupIds.has(groupId)}'),
+  'Calibration should preserve its fitted-section-open and assumption-disclosure-collapsed defaults while allowing real controlled tour state'
+);
 
 assert.ok(
   compareCardSource.includes('const [isMoreInfoOpen, setIsMoreInfoOpen] = useState<boolean>(false);'),
@@ -10320,7 +10386,7 @@ assert.ok(
   'Application heading should not require users to understand an unexplained acronym'
 );
 assert.ok(
-  ["title: 'Experiments'", "title: 'Results'", "title: 'Model evidence'", '<strong>Run demo</strong>'].every(
+  ["title: 'Experiments'", "title: 'Results'", "title: 'Model information'", '<strong>Run demo</strong>'].every(
     (fragment) => homePageSource.includes(fragment)
   ),
   'Home page should offer the four launcher actions'
@@ -10328,6 +10394,7 @@ assert.ok(
 assert.ok(
   !homePageSource.includes('submitModelRun') &&
     !homePageSource.includes('buildDefaultRunSubmitRequest') &&
+    !homePageSource.includes('homeDefaultRun') &&
     !homePageSource.includes('Run a demo simulation'),
   'Home page onboarding should not submit or advertise an opaque default run'
 );
@@ -10338,10 +10405,35 @@ assert.ok(
   'Home page launcher should route to the experiments hub, the results page, and model evidence'
 );
 assert.ok(
-  homePageSource.includes('home-action-inactive') &&
-    homePageSource.includes('disabled') &&
-    homePageSource.includes('Coming soon'),
-  'Run demo should stay an inert placeholder until the demo run itself is designed'
+  [
+    'Explore the dashboard',
+    'Create a policy scenario',
+    'Create a sensitivity analysis'
+  ].every((label) => homePageSource.includes(`label: '${label}'`)) &&
+    // Results walkthrough labels come from the guided-demo registry (checked in guided-demos.test.ts).
+    homePageSource.includes("GUIDED_DEMOS.filter((demo) => demo.id.endsWith('-results'))"),
+  'Chooser should expose the general overview, registered results walkthroughs and current creation walkthroughs'
+);
+assert.ok(
+  homePageSource.includes('aria-haspopup="dialog"') &&
+    homePageSource.includes('aria-expanded={isDemoChooserOpen}') &&
+    homePageSource.includes('aria-controls={DEMO_CHOOSER_ID}'),
+  'Run demo trigger should expose the chooser as a controlled dialog'
+);
+assert.ok(
+  !homePageSource.includes('to: null') &&
+    !homePageSource.includes('opensExperimentChooser') &&
+    !homePageSource.includes('EXPERIMENT_DEMO_COMBINED_LAUNCH_HREF') &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_POLICY_LAUNCH_HREF') &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_SENSITIVITY_LAUNCH_HREF') &&
+    homePageSource.includes('to: buildGuidedDemoHref(demo.id)') &&
+    homePageSource.includes('hasGuidedDemoExamples') &&
+    homePageSource.includes("disabled={Boolean(choice.unavailableReason) || (choice.requiresExamples && availability !== 'ready')}"),
+  'All demos launch directly; only the results guides depend on bundled-example availability'
+);
+assert.ok(
+  !homePageSource.includes('Coming soon') && !homePageSource.includes('home-action-inactive'),
+  'Run demo should no longer render the inactive placeholder treatment'
 );
 assert.ok(
   !homePageSource.includes('fetchHomePreview') &&
@@ -10799,7 +10891,7 @@ assert.ok(
 );
 assert.equal(
   electronMainSource.match(/assertTrustedDesktopIpcEvent\(event\);/g)?.length,
-  4,
+  5,
   'Every desktop IPC handler should validate the trusted sender before returning data or opening folders'
 );
 assert.ok(
@@ -10886,13 +10978,16 @@ assert.ok(
     !dockerfileSource.includes('maven') &&
     !dockerfileSource.includes('git') &&
     !dockerfileSource.includes('private-datasets') &&
-    !dockerfileSource.includes('Results'),
-  'Docker API image should stay Node-only and avoid model execution/private/generated payloads'
+    !/^COPY\s+.*\bResults\b/m.test(dockerfileSource) &&
+    dockerfileSource.includes('mkdir -p /app/tmp /app/Results') &&
+    dockerfileSource.includes('chown node:node /app/tmp /app/Results'),
+  'Docker API image should stay Node-only, omit generated Results payloads, and permit startup example seeding'
 );
 assert.ok(
   dockerignoreSource.includes('*') &&
     dockerignoreSource.includes('!dashboard/server/**') &&
     dockerignoreSource.includes('!dashboard/shared/**') &&
+    dockerignoreSource.includes('!dashboard/demo-examples/**') &&
     dockerignoreSource.includes('!input-data-versions/**') &&
     !dockerignoreSource.includes('!private-datasets') &&
     !dockerignoreSource.includes('!Results'),

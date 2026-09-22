@@ -1,0 +1,21 @@
+.report-info { display: inline-flex; flex: 0 0 auto; vertical-align: middle; }
+.report-info > .report-info-trigger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; min-width: 24px; padding: 0; margin: 0;
+  border: 0; border-radius: 3px; background: transparent; color: #7888a2;
+  font: 600 12px/1 'Avenir Next', 'Segoe UI', sans-serif;
+  cursor: help; box-shadow: none;
+}
+.report-info > .report-info-trigger > span { display: grid; place-items: center; width: 16px; height: 16px; }
+.report-info > .report-info-trigger:hover,
+.report-info > .report-info-trigger:focus-visible { color: #4568e8; background: transparent; }
+.report-info > .report-info-trigger:focus-visible { outline: 2px solid #7694ff; outline-offset: 2px; }
+.report-info-tooltip {
+  position: fixed; z-index: 3000; box-sizing: border-box; display: block;
+  padding: 11px 13px; border: 1px solid #dce3ef; border-radius: 8px;
+  background: #fff; color: #40516b; box-shadow: 0 5px 22px #22304a24;
+  font: 400 12.5px/1.55 'Avenir Next', 'Segoe UI', sans-serif;
+  text-align: left; letter-spacing: normal; text-transform: none;
+  max-height: calc(100dvh - 24px); overflow-y: auto; overflow-wrap: anywhere;
+}
+@media print { .report-info, .report-info-tooltip { display: none !important; } }

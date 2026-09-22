@@ -243,14 +243,13 @@ function resolveJavaExe(): string {
   return process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin', javaBin) : 'java';
 }
 
-const useUnicodePaths = process.platform !== 'win32';
-const tempRoot = fs.mkdtempSync(
-  path.join(os.tmpdir(), useUnicodePaths ? 'uk housing release modèle 用户-' : 'uk housing release path spaces-')
-);
-const dataRoot = path.join(tempRoot, 'release data', useUnicodePaths ? `${snapshot} données` : `${snapshot} data`);
-const configPath = path.join(tempRoot, useUnicodePaths ? 'config dir José' : 'config dir Jose', 'config.properties');
-const baselineOutput = path.join(tempRoot, useUnicodePaths ? 'classpath output Résultats' : 'classpath output Results');
-const packagedOutput = path.join(tempRoot, useUnicodePaths ? 'jar output 東京' : 'jar output Tokyo');
+// Keep Unicode coverage on Windows: custom installation directories can contain
+// these characters even when the release workspace itself uses an ASCII path.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'uk housing release modèle 用户-'));
+const dataRoot = path.join(tempRoot, 'release data', `${snapshot} données`);
+const configPath = path.join(tempRoot, 'config dir José', 'config.properties');
+const baselineOutput = path.join(tempRoot, 'classpath output Résultats');
+const packagedOutput = path.join(tempRoot, 'jar output 東京');
 
 try {
   copyPublicSnapshotCsvs(dataRoot);

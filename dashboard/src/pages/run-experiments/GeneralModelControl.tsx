@@ -1,4 +1,5 @@
 // Author: Max Stoddard
+import { useId } from 'react';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import type { ModelRunParameterDefinition } from '../../../shared/types';
 import { InfoLabel } from './InfoLabel';
@@ -23,6 +24,11 @@ interface GeneralModelControlProps {
   defaultOpen?: boolean;
   includeFixedControls?: boolean;
   embedded?: boolean;
+  recordSettingsOpen?: boolean;
+  onRecordSettingsOpenChange?: (open: boolean) => void;
+  recordSettingsDemoTarget?: string;
+  recordSettingsContentDemoTarget?: string;
+  fixedRecordingDemoTarget?: string;
 }
 
 export function isRecordSetting(parameter: ModelRunParameterDefinition): boolean {
@@ -72,12 +78,16 @@ interface ParameterInputProps {
 }
 
 export function ParameterInput({ parameter, value, executionDisabled, mode = 'manual', onChange }: ParameterInputProps) {
+  const recordingNoteId = useId();
+  const showRecordingNote = mode === 'manual' && parameter.key === 'recordTransactions';
   return (
     <label className="run-param-item">
       <InfoLabel label={parameter.title} info={getParameterHelp(parameter, mode)} />
       {parameter.type === 'boolean' ? (
         <input
           type="checkbox"
+          aria-label={showRecordingNote ? parameter.title : undefined}
+          aria-describedby={showRecordingNote ? recordingNoteId : undefined}
           checked={Boolean(value)}
           disabled={executionDisabled}
           onChange={(event) => onChange(parameter, event.target.checked)}
@@ -91,6 +101,7 @@ export function ParameterInput({ parameter, value, executionDisabled, mode = 'ma
           onChange={(event) => onChange(parameter, event.target.value)}
         />
       )}
+      {showRecordingNote && <small id={recordingNoteId}>Used by the policy Report’s “03 / Lending risk” section for High LTV and High LTI charts. Increases output file size.</small>}
     </label>
   );
 }
@@ -109,7 +120,12 @@ export function GeneralModelControl({
   showRecordSettings = true,
   defaultOpen = false,
   includeFixedControls = false,
-  embedded = false
+  embedded = false,
+  recordSettingsOpen,
+  onRecordSettingsOpenChange,
+  recordSettingsDemoTarget,
+  recordSettingsContentDemoTarget,
+  fixedRecordingDemoTarget
 }: GeneralModelControlProps) {
   const disabledKeys = new Set(disabledParameterKeys);
   const visibleParameters = parameters
@@ -180,6 +196,11 @@ export function GeneralModelControl({
           formValues={formValues}
           executionDisabled={executionDisabled}
           onFormValueChange={onFormValueChange}
+          open={recordSettingsOpen}
+          onOpenChange={onRecordSettingsOpenChange}
+          demoTarget={recordSettingsDemoTarget}
+          contentDemoTarget={recordSettingsContentDemoTarget}
+          fixedRecordingDemoTarget={fixedRecordingDemoTarget}
         />
       )}
     </>
@@ -207,6 +228,11 @@ interface RecordSettingsControlProps {
   formValues: Record<string, FormValue>;
   executionDisabled: boolean;
   onFormValueChange: (parameter: ModelRunParameterDefinition, value: FormValue) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  demoTarget?: string;
+  contentDemoTarget?: string;
+  fixedRecordingDemoTarget?: string;
 }
 
 export function RecordSettingsControl({
@@ -214,11 +240,21 @@ export function RecordSettingsControl({
   parameters,
   formValues,
   executionDisabled,
-  onFormValueChange
+  onFormValueChange,
+  open,
+  onOpenChange,
+  demoTarget,
+  contentDemoTarget,
+  fixedRecordingDemoTarget
 }: RecordSettingsControlProps) {
   if (mode === 'sensitivity') {
     return (
-      <section className="sensitivity-recording-settings" aria-labelledby="sensitivity-recording-settings-heading">
+      <section
+        className="sensitivity-recording-settings"
+        aria-labelledby="sensitivity-recording-settings-heading"
+        tabIndex={fixedRecordingDemoTarget ? -1 : undefined}
+        data-experiment-demo-target={fixedRecordingDemoTarget}
+      >
         <h4 id="sensitivity-recording-settings-heading">Recording settings</h4>
         <p className="sensitivity-recording-note">
           Transaction, bid-up, quality-band and household microdata files are unavailable for sensitivity analyses.
@@ -233,12 +269,16 @@ export function RecordSettingsControl({
       <CollapsibleSection
         title={mode === 'manual' ? 'Additional data exports' : 'Record settings'}
         defaultOpen={false}
+        open={open}
+        onOpenChange={onOpenChange}
         summary={mode === 'manual' ? 'Optional transaction and household-level files' : `${parameters.length} controls`}
         className="record-settings-control"
+        experimentDemoTarget={demoTarget}
+        experimentDemoContentTarget={contentDemoTarget}
       >
         {mode === 'manual' && (
           <p className="additional-data-exports-intro">
-            Optional transaction and household-level files for analysis outside the dashboard. These exports can substantially increase file size and do not add charts to the current Results page.
+            Record transactions enables the Lending risk charts in policy reports. Other optional exports support further analysis outside the dashboard. These files can substantially increase output size.
           </p>
         )}
         <div className="run-param-grid">

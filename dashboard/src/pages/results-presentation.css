@@ -1,0 +1,52 @@
+.results-presentation-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.7rem;
+  margin: 0.75rem 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.results-presentation-toggle {
+  display: inline-flex;
+  height: var(--results-control-height);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0.4rem;
+  padding: 0.15rem;
+  gap: 0.15rem;
+  background: var(--panel);
+}
+
+.results-presentation-toggle button {
+  border: 0;
+  border-radius: 0.25rem;
+  padding: 0.35rem 0.8rem;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.results-presentation-toggle button[aria-pressed='true'] {
+  background: var(--tint-accent);
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.results-presentation-toggle button:hover {
+  background: var(--hover);
+}
+
+.results-presentation-toggle button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 480px) {
+  .workspace-page > .results-view-switcher .results-type-option {
+    white-space: normal;
+    padding-inline: 6px;
+    font-size: 0.85rem;
+  }
+}
