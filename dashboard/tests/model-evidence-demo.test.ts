@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import {
   clearCombinedModelEvidenceDemoProgress,
   completeModelEvidenceCalibration,
@@ -37,17 +36,16 @@ assert.equal(
   '/model-evidence?view=calibration&demo=model-evidence&mode=single'
 );
 assert.equal(
-  DEMO_CHOICES.find((choice) => choice.label === 'Run model evidence demo')?.to,
-  MODEL_EVIDENCE_DEMO_LAUNCH_HREF
+  DEMO_CHOICES.some((choice) => choice.to?.includes('demo=model-evidence')),
+  false,
+  'Legacy long tours are retained for compatibility but no longer advertised on Home'
 );
 assert.equal(
-  DEMO_CHOICES.filter((choice) => choice.to === null && !choice.opensExperimentChooser).length,
-  2,
-  'Only Full and Results remain disabled; Experiment opens its in-place sub-chooser'
+  DEMO_CHOICES.filter((choice) => !choice.to).length,
+  0,
+  'Only implemented demos are advertised, each with a direct launch route'
 );
-for (const disabledChoice of ['Run full demo', 'Run results demo']) {
-  assert.equal(DEMO_CHOICES.find((choice) => choice.label === disabledChoice)?.to, null);
-}
+assert.ok(DEMO_CHOICES.find((choice) => choice.label === 'Explore policy results')?.to);
 
 assert.equal(
   isModelEvidenceDemoRequested(new URLSearchParams('view=calibration&demo=model-evidence')),
@@ -158,24 +156,5 @@ assert.equal(
   'Ordinary Calibration-to-Validation navigation should retain both selected models'
 );
 
-const homeSource = fs.readFileSync(new URL('../src/pages/HomePage.tsx', import.meta.url), 'utf8');
-const coordinatorSource = fs.readFileSync(new URL('../src/pages/ModelEvidencePage.tsx', import.meta.url), 'utf8');
-const validationPageSource = fs.readFileSync(new URL('../src/pages/ValidationPage.tsx', import.meta.url), 'utf8');
-const validationDemoSource = fs.readFileSync(new URL('../src/components/ValidationDemoPrototype.tsx', import.meta.url), 'utf8');
-assert.ok(homeSource.includes('MODEL_EVIDENCE_DEMO_LAUNCH_HREF'));
-assert.ok(coordinatorSource.includes('completeModelEvidenceCalibration'));
-assert.ok(coordinatorSource.includes('completeModelEvidenceValidation'));
-assert.ok(coordinatorSource.includes('clearModelEvidenceDemoChildProgress(MODEL_EVIDENCE_VALIDATION_SESSION_KEY)'));
-assert.ok(coordinatorSource.includes("phase: 'calibration-review' as const"));
-assert.ok(coordinatorSource.includes('onPurposeBack: returnToCalibrationReview'));
-assert.ok(validationPageSource.includes('Model evidence demo · Validation · Part 2 of 2'));
-assert.ok(validationPageSource.includes('Back to Calibration'));
-assert.ok(validationPageSource.includes('Finish and inspect Validation'));
-assert.ok(validationPageSource.includes('MODEL_EVIDENCE_VALIDATION_SESSION_KEY'));
-assert.ok(validationDemoSource.includes('progressStorageKey = VALIDATION_DEMO_SESSION_KEY'));
-assert.ok(validationDemoSource.includes('completionEventName = VALIDATION_DEMO_COMPLETION_EVENT'));
-assert.ok(validationPageSource.includes('left=${encodeURIComponent(comparisonVersion)}&right=${encodeURIComponent(selectedVersion)}'));
-assert.equal(validationPageSource.includes('left=${encodeURIComponent(selectedVersion)}&right=${encodeURIComponent(comparisonVersion)}'), false);
-
 void clearCombinedModelEvidenceDemoProgress;
-console.log('Combined Model evidence demo coordinator tests passed.');
+console.log('Legacy Model information progress compatibility and ordinary model navigation checks passed.');

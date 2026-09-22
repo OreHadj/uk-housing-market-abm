@@ -7,8 +7,8 @@ import { DEFAULT_EXPERIMENT_ROUTE_STATE, type ExperimentType } from '../types';
 import { experimentTypeRegistry } from '../registry';
 import { ExperimentLogCard } from '../../run-experiments/ExperimentLogCard';
 import { ExperimentQueueCard } from '../../run-experiments/ExperimentQueueCard';
-import { useExperimentRunController } from './useExperimentRunController';
-import type { ExperimentDemoCoordinator } from '../../../components/ExperimentDemoOverlay';
+import { isPolicyPracticeSubmissionAllowed, isSensitivityPracticeSubmissionAllowed, useExperimentRunController } from './useExperimentRunController';
+import type { ExperimentDemoCoordinator } from '../../../lib/guidedDemos/creation';
 
 interface ExperimentRunModeProps {
   activeType: ExperimentType;
@@ -62,6 +62,8 @@ export function ExperimentRunMode({
     followJobRef,
     draftId,
     experimentDemoActive: experimentDemo?.active === true,
+    experimentDemo,
+    canWrite,
     onManualRunAccepted,
     onSensitivityRunAccepted
   });
@@ -75,7 +77,9 @@ export function ExperimentRunMode({
     onSubmissionStateChange?.(isSubmitting);
   }, [isSubmitting, onSubmissionStateChange]);
 
-  const runActionsDisabled = controller.executionDisabled || !canWrite || experimentDemo?.active === true;
+  const policyPracticeMaySubmit = isPolicyPracticeSubmissionAllowed(activeType, draftId, experimentDemo);
+  const sensitivityPracticeMaySubmit = isSensitivityPracticeSubmissionAllowed(activeType, draftId, experimentDemo);
+  const runActionsDisabled = controller.executionDisabled || !canWrite || (experimentDemo?.active === true && !policyPracticeMaySubmit && !sensitivityPracticeMaySubmit);
   const RunSetupComponent = experimentTypeRegistry[activeType].RunSetupComponent;
   const workspaceJobs = controller.jobs.filter((job) => job.type === activeType);
 

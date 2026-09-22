@@ -235,9 +235,9 @@ assert.equal(stepperMarkup.includes('disabled'), false, 'Every numbered sensitiv
 assert.ok(
   firstStepMarkup.includes('aria-label="Back to previous step"') &&
     firstStepMarkup.includes('aria-label="Continue to next step"') &&
-    firstStepMarkup.includes('>←</span>') &&
-    firstStepMarkup.includes('>→</span>'),
-  'Back and Continue should render as accessible directional arrows'
+    firstStepMarkup.includes('>Back</button>') &&
+    firstStepMarkup.includes('>Next</button>'),
+  'Page navigation uses accessible Back and Next text'
 );
 assert.ok(
   firstStepMarkup.includes('from=sensitivity') &&

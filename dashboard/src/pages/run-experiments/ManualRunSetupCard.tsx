@@ -27,11 +27,11 @@ import { SETTING_HELP } from './settingHelp';
 import {
   POLICY_EXPERIMENT_DEMO_TARGETS,
   PolicyExperimentDemo,
-  committedExperimentDemoText,
+  policyExperimentDemoWizardStep,
   type PolicyExperimentDemoStepId,
   type PolicyExperimentDemoContext
 } from '../../components/PolicyExperimentDemo';
-import type { ExperimentDemoStep } from '../../components/ExperimentDemoOverlay';
+import { committedExperimentDemoText, type CreationDemoStep } from '../../lib/guidedDemos/creation';
 
 type FormValue = string | boolean;
 
@@ -134,23 +134,42 @@ export function ManualRunSetupCard({
   policyDemo
 }: ManualRunSetupCardProps) {
   const [activeStep, setActiveStep] = useState(() => Math.max(0, Math.min(4,
-    initialStep ?? (policyDemo?.active ? undefined : readScenarioDraft(draftId)?.currentStep) ?? 0
+    (policyDemo?.active && policyDemo.paused ? readScenarioDraft(draftId)?.currentStep : undefined)
+      ?? initialStep
+      ?? (policyDemo?.active ? policyExperimentDemoWizardStep(policyDemo.savedStepId) : readScenarioDraft(draftId)?.currentStep)
+      ?? 0
   )));
-  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>());
-  const [additionalExportsOpen, setAdditionalExportsOpen] = useState(false);
+  const [openPolicyGroups, setOpenPolicyGroups] = useState<ReadonlySet<string>>(() => new Set<string>(
+    policyDemo?.active && policyDemo.savedStepId === 'policy-change-bank-rate' ? ['bankRate'] : []
+  ));
+  const [additionalExportsOpen, setAdditionalExportsOpen] = useState(
+    policyDemo?.active === true && policyDemo.savedStepId === 'policy-exports'
+  );
   const [recordingOpen, setRecordingOpen] = useState(false);
-  const [committedDemoName, setCommittedDemoName] = useState('');
-  const [nameCommitRevision, setNameCommitRevision] = useState(0);
-  const [committedDemoFtbLtv, setCommittedDemoFtbLtv] = useState('');
-  const [ftbCommitRevision, setFtbCommitRevision] = useState(0);
-  const [modelSelectionPending, setModelSelectionPending] = useState(false);
+  const stepperRef = useRef<HTMLElement>(null);
   const demoNameEditedRef = useRef(false);
-  const demoFtbLtvEditedRef = useRef(false);
-  const pendingModelSelectionRef = useRef('');
+  const demoBankRateEditedRef = useRef(false);
   const isPolicyDemoActive = policyDemo?.active === true;
+  const isPolicyGuideActive = isPolicyDemoActive && !policyDemo?.paused;
+  const policyPracticeSubmissionBlocked = isPolicyDemoActive && (
+    !isPolicyGuideActive || policyDemo?.savedStepId !== 'policy-submit' ||
+    policyDemo?.allowPolicySubmission !== true || Boolean(policyDemo?.policyRun)
+  );
   useEffect(() => {
-    if (!isPolicyDemoActive && !isLoadingOptions) updateScenarioDraftStep(draftId, activeStep);
-  }, [activeStep, draftId, isLoadingOptions, isPolicyDemoActive]);
+    if (!isPolicyGuideActive && !isLoadingOptions) updateScenarioDraftStep(draftId, activeStep);
+  }, [activeStep, draftId, isLoadingOptions, isPolicyGuideActive]);
+  useEffect(() => {
+    const strip = stepperRef.current;
+    const current = strip?.querySelector<HTMLElement>('[aria-current="step"]');
+    if (!strip || !current) return;
+    const stripBounds = strip.getBoundingClientRect();
+    const currentBounds = current.getBoundingClientRect();
+    // Reveal the active section on narrow screens without moving the page or its spotlight.
+    const offset = currentBounds.left < stripBounds.left
+      ? currentBounds.left - stripBounds.left
+      : Math.max(0, currentBounds.right - stripBounds.right);
+    if (offset) strip.scrollBy({ left: offset, behavior: 'instant' });
+  }, [activeStep, isLoadingOptions, policyDemo?.savedStepId]);
   const steps = [
     { id: 'scenario-details', label: 'Scenario name' },
     { id: 'model-evidence', label: 'Model version' },
@@ -206,67 +225,38 @@ export function ManualRunSetupCard({
     const committedName = committedExperimentDemoText(value, demoNameEditedRef.current);
     demoNameEditedRef.current = false;
     if (!committedName) return;
-    setCommittedDemoName(committedName);
-    setNameCommitRevision((current) => current + 1);
+    policyDemo?.onCommit('name', committedName);
   };
 
-  const commitDemoFtbLtv = (value: string) => {
-    if (!isPolicyDemoActive || !demoFtbLtvEditedRef.current) return;
-    demoFtbLtvEditedRef.current = false;
-    const parsed = Number.parseFloat(value);
-    if (!Number.isFinite(parsed) || parsed < 0) return;
-    setCommittedDemoFtbLtv(value);
-    setFtbCommitRevision((current) => current + 1);
+  const commitDemoBankRate = (value: string) => {
+    if (!isPolicyDemoActive || !demoBankRateEditedRef.current) return;
+    demoBankRateEditedRef.current = false;
+    const parsed = Number(value);
+    if (!value.trim() || !Number.isFinite(parsed) || parsed < 0) return;
+    policyDemo?.onCommit('bankRate', value);
   };
 
-  const handleModelChange = (nextBaseline: string) => {
-    if (isPolicyDemoActive && nextBaseline && nextBaseline !== selectedBaseline) {
-      pendingModelSelectionRef.current = nextBaseline;
-      setModelSelectionPending(true);
-    }
-    onBaselineChange(nextBaseline);
-  };
-
-  useEffect(() => {
-    const pending = pendingModelSelectionRef.current;
-    if (!pending || isLoadingOptions || selectedBaseline !== pending) return;
-    pendingModelSelectionRef.current = '';
-    setModelSelectionPending(false);
-  }, [isLoadingOptions, selectedBaseline]);
-
-  const restorePolicyDemoStep = useCallback((step: ExperimentDemoStep<PolicyExperimentDemoStepId>) => {
+  const restorePolicyDemoStep = useCallback((step: CreationDemoStep<PolicyExperimentDemoStepId>) => {
     setActiveStep(step.wizardStep);
-    const groupForStep = (() => {
-      if (step.id === 'policy-inspect-bank-rate') return 'bankRate';
-      if (
-        step.id === 'policy-inspect-ltv' ||
-        step.id === 'policy-change-ftb-ltv' ||
-        step.id === 'policy-inspect-change' ||
-        step.id === 'policy-inspect-live-summary'
-      ) return 'ltv';
-      if (step.id === 'policy-inspect-lti') return 'lti';
-      if (step.id === 'policy-inspect-affordability') return 'affordability-and-btl';
-      return '';
-    })();
-    if (groupForStep) {
+    if (step.id === 'policy-exports') setAdditionalExportsOpen(true);
+    if (step.id === 'policy-change-bank-rate') {
       setOpenPolicyGroups((current) => {
-        if (current.has(groupForStep)) return current;
-        return new Set([...current, groupForStep]);
+        if (current.has('bankRate')) return current;
+        return new Set([...current, 'bankRate']);
       });
     }
-    if (step.id === 'policy-inspect-exports') setAdditionalExportsOpen(true);
-    if (step.id === 'policy-inspect-recording') setRecordingOpen(true);
   }, []);
 
   const requiresOverwriteConfirmation = warnings.some((warning) => warning.code === 'output_folder_exists');
+  const confirmOverwrite = requiresOverwriteConfirmation && !isPolicyDemoActive;
 
   return (
     <article className="scenario-builder-surface">
       <ExperimentHeaderStartButton
-        disabled={isLoadingOptions || isPolicyDemoActive || formDisabled || submissionDisabled || manualSubmissionLockedBySensitivity}
+        disabled={isLoadingOptions || policyPracticeSubmissionBlocked || formDisabled || submissionDisabled || manualSubmissionLockedBySensitivity}
         isSubmitting={isSubmitting}
-        requiresOverwriteConfirmation={requiresOverwriteConfirmation}
-        onStart={() => onSubmit(requiresOverwriteConfirmation)}
+        requiresOverwriteConfirmation={confirmOverwrite}
+        onStart={() => onSubmit(confirmOverwrite)}
       />
       {manualSubmissionLockedBySensitivity && lockMessage && <p className="info-banner">{lockMessage}</p>}
       {!isLoadingOptions && warnings.length > 0 && (
@@ -289,16 +279,17 @@ export function ManualRunSetupCard({
           </div>
           {draftNotice && <p className="info-banner">{draftNotice}</p>}
           <nav
+            ref={stepperRef}
             className="scenario-stepper policy-stepper"
             aria-label="Scenario sections"
-            tabIndex={isPolicyDemoActive ? -1 : undefined}
+            tabIndex={isPolicyDemoActive ? 0 : undefined}
             data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.stepper : undefined}
           >
             {steps.map((step, index) => (
               <button
                 key={step.id}
                 type="button"
-                disabled={isLoadingOptions || isPolicyDemoActive}
+                disabled={isLoadingOptions || isPolicyGuideActive}
                 onClick={() => setActiveStep(index)}
                 aria-current={activeStep === index ? 'step' : undefined}
               >
@@ -328,7 +319,7 @@ export function ManualRunSetupCard({
                     onChange={(event) => {
                       if (isPolicyDemoActive) {
                         demoNameEditedRef.current = true;
-                        setCommittedDemoName('');
+                        policyDemo?.onCommit('name', event.target.value.trim());
                       }
                       onTitleChange(event.target.value);
                     }}
@@ -360,7 +351,7 @@ export function ManualRunSetupCard({
                       <select
                         value={selectedBaseline}
                         disabled={formDisabled}
-                        onChange={(event) => handleModelChange(event.target.value)}
+                        onChange={(event) => onBaselineChange(event.target.value)}
                       >
                         {orderedSnapshots.map((snapshot) => (
                           <option key={snapshot.version} value={snapshot.version}>
@@ -486,17 +477,17 @@ export function ManualRunSetupCard({
                               executionDisabled={formDisabled}
                               mode="manual"
                               onChange={onFormValueChange}
-                              demoTarget={isPolicyDemoActive && key === 'CENTRAL_BANK_LTV_HARD_MAX_FTB'
-                                ? POLICY_EXPERIMENT_DEMO_TARGETS.ftbLtvInput
+                              demoTarget={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
+                                ? POLICY_EXPERIMENT_DEMO_TARGETS.bankRateInput
                                 : undefined}
-                              onDemoEdit={isPolicyDemoActive && key === 'CENTRAL_BANK_LTV_HARD_MAX_FTB'
+                              onDemoEdit={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
                                 ? () => {
-                                  demoFtbLtvEditedRef.current = true;
-                                  setCommittedDemoFtbLtv('');
+                                  demoBankRateEditedRef.current = true;
+                                  policyDemo?.onCommit('bankRate', '');
                                 }
                                 : undefined}
-                              onDemoCommit={isPolicyDemoActive && key === 'CENTRAL_BANK_LTV_HARD_MAX_FTB'
-                                ? commitDemoFtbLtv
+                              onDemoCommit={isPolicyDemoActive && key === 'CENTRAL_BANK_INITIAL_BASE_RATE'
+                                ? commitDemoBankRate
                                 : undefined}
                             />
                             <p className="scenario-policy-baseline-note">
@@ -648,24 +639,25 @@ export function ManualRunSetupCard({
                 <div className="scenario-page-movement">
                   <button
                     type="button"
-                    className="secondary-button scenario-wizard-arrow-button"
-                    disabled={activeStep === 0 || isPolicyDemoActive}
+                    className="secondary-button"
+                    disabled={activeStep === 0 || isPolicyGuideActive}
                     aria-label="Back to previous step"
                     title="Back to previous step"
                     onClick={() => setActiveStep((step) => Math.max(0, step - 1))}
                   >
-                    <span aria-hidden="true">&larr;</span>
+                    Back
                   </button>
                   {activeStep < steps.length - 1 && (
                     <button
                       type="button"
-                      className="secondary-button scenario-wizard-arrow-button"
+                      className="secondary-button"
+                      disabled={isPolicyGuideActive}
                       data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.continueButton : undefined}
                       aria-label="Continue to next step"
                       title="Continue to next step"
                       onClick={() => setActiveStep((step) => Math.min(steps.length - 1, step + 1))}
                     >
-                      <span aria-hidden="true">&rarr;</span>
+                      Next
                     </button>
                   )}
                 </div>
@@ -675,22 +667,22 @@ export function ManualRunSetupCard({
                       type="button"
                       className="primary-button scenario-create-button"
                       style={{ background: '#237a36' }}
-                      disabled={isPolicyDemoActive || isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
+                      disabled={isLoadingOptions || policyPracticeSubmissionBlocked || formDisabled || isSubmitting || submissionDisabled || manualSubmissionLockedBySensitivity}
                       data-experiment-demo-target={isPolicyDemoActive ? POLICY_EXPERIMENT_DEMO_TARGETS.startBoundary : undefined}
-                      onClick={() => onSubmit(requiresOverwriteConfirmation)}
+                      onClick={() => onSubmit(confirmOverwrite)}
                     >
                       {isSubmitting
                         ? 'Starting...'
-                        : requiresOverwriteConfirmation
+                        : confirmOverwrite
                           ? 'Replace results and start'
                           : 'Start policy scenario'}
                     </button>
                   )}
                 </div>
               </div>
-              <p className="scenario-matched-baseline-note">Results compare the edited policy settings with the unchanged reference policy using the same calibrated model and run settings.</p>
-              {submissionDisabled && !manualSubmissionLockedBySensitivity && (
-                <p className="scenario-submission-note">Run policy scenario is unavailable: {submissionDisabledReason}</p>
+              <p className="scenario-matched-baseline-note">Results compare your scenario with a saved unchanged-reference run using the same model and run settings, if one exists. The reference run is not created automatically.</p>
+              {submissionDisabled && !manualSubmissionLockedBySensitivity && !isPolicyDemoActive && (
+                <p className="scenario-submission-note">Run policy scenario is unavailable. {submissionDisabledReason}</p>
               )}
             </div>
 
@@ -724,7 +716,7 @@ export function ManualRunSetupCard({
                         <dt>{policyLabel(key)} intervention delta</dt>
                         <dd>
                           {formatPolicyFieldValue(key, selectedBasePolicy?.values[key] === undefined ? undefined : String(selectedBasePolicy.values[key]))}
-                          {' → '}{formatPolicyFieldValue(key, formValues[key])}
+                          {' to '}{formatPolicyFieldValue(key, formValues[key])}
                         </dd>
                       </div>
                     ))
@@ -742,22 +734,20 @@ export function ManualRunSetupCard({
       {policyDemo && (
         <PolicyExperimentDemo
           {...policyDemo}
-          currentWizardStep={activeStep}
           currentName={title}
-          committedName={committedDemoName}
-          nameCommitRevision={nameCommitRevision}
-          openPolicyGroups={openPolicyGroups}
-          currentFtbLtv={typeof formValues.CENTRAL_BANK_LTV_HARD_MAX_FTB === 'string'
-            ? formValues.CENTRAL_BANK_LTV_HARD_MAX_FTB
+          currentBankRate={typeof formValues.CENTRAL_BANK_INITIAL_BASE_RATE === 'string'
+            ? formValues.CENTRAL_BANK_INITIAL_BASE_RATE
             : ''}
-          referenceFtbLtv={selectedBasePolicy?.values.CENTRAL_BANK_LTV_HARD_MAX_FTB}
-          committedFtbLtv={committedDemoFtbLtv}
-          ftbCommitRevision={ftbCommitRevision}
-          additionalExportsOpen={additionalExportsOpen}
-          recordingOpen={recordingOpen}
-          modelSelectionPending={modelSelectionPending}
+          referenceBankRate={selectedBasePolicy?.values.CENTRAL_BANK_INITIAL_BASE_RATE}
           selectedModel={selectedBaseline}
           selectedReferencePolicy={basePolicy}
+          runMonths={typeof formValues.N_STEPS === 'string' ? formValues.N_STEPS : ''}
+          seedCount={typeof formValues.N_SIMS === 'string' ? formValues.N_SIMS : ''}
+          householdCount={typeof formValues.TARGET_POPULATION === 'string' ? formValues.TARGET_POPULATION : ''}
+          recordingStartMonth={typeof formValues.TIME_TO_START_RECORDING_TRANSACTIONS === 'string'
+            ? formValues.TIME_TO_START_RECORDING_TRANSACTIONS
+            : ''}
+          recordTransactions={formValues.recordTransactions === true}
           onRestoreStep={restorePolicyDemoStep}
         />
       )}

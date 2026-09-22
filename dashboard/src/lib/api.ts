@@ -302,8 +302,8 @@ export async function fetchCalibrationOverview(primary: string, comparison?: str
   return requestJson<CalibrationOverviewResponse>(`${buildApiUrl('/api/calibration-overview')}?${params.toString()}`, 'Failed to fetch calibration overview');
 }
 
-export async function fetchResultsRuns(): Promise<ResultsRunSummary[]> {
-  const payload = await requestJson<ResultsRunsResponse>(buildApiUrl('/api/results/runs'), 'Failed to fetch results runs');
+export async function fetchResultsRuns(examplesOnly = false): Promise<ResultsRunSummary[]> {
+  const payload = await requestJson<ResultsRunsResponse>(`${buildApiUrl('/api/results/runs')}${examplesOnly ? '?examplesOnly=true' : ''}`, 'Failed to fetch results runs');
   return payload.runs;
 }
 
@@ -489,9 +489,9 @@ export async function fetchModelRunLogs(jobId: string, cursor: number, limit = 2
   );
 }
 
-export async function fetchSensitivityExperiments(): Promise<SensitivityExperimentListPayload> {
+export async function fetchSensitivityExperiments(examplesOnly = false): Promise<SensitivityExperimentListPayload> {
   return requestJson<SensitivityExperimentListPayload>(
-    buildApiUrl('/api/experiments/sensitivity'),
+    `${buildApiUrl('/api/experiments/sensitivity')}${examplesOnly ? '?examplesOnly=true' : ''}`,
     'Failed to fetch sensitivity experiments'
   );
 }

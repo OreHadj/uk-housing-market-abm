@@ -594,6 +594,8 @@ export interface ResultsRunProvenance {
 
 export interface ResultsRunSummary {
   runId: string;
+  /** Bundled read-only example; optional for older remote payloads. */
+  isExample?: boolean;
   /** Scenario name given when the run was created; null for runs with no readable manifest. */
   title: string | null;
   path: string;
@@ -1119,6 +1121,8 @@ export interface SensitivityExperimentCreateRequest {
 
 export interface SensitivityExperimentSummary {
   experimentId: string;
+  /** Bundled read-only example; optional for older remote payloads. */
+  isExample?: boolean;
   title?: string;
   baseline: string;
   basePolicy?: BasePolicyId;

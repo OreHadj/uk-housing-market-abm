@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { assertDemoExampleMutable, assertDemoExampleTitleAvailable } from './demoExamples';
 import path from 'node:path';
 import type {
   ModelRunJob,
@@ -934,6 +935,7 @@ function createUnmanagedRunPathError(runId: string): Error {
 }
 
 function assertExistingRunPathIsDashboardManaged(runPath: string, runId: string): void {
+  assertDemoExampleMutable('run', runId);
   if (!isDashboardManagedRun(runPath, runId)) {
     throw createUnmanagedRunPathError(runId);
   }
@@ -1516,6 +1518,7 @@ export function prepareModelRunSubmission(
   payload: ModelRunSubmitRequest,
   options: PrepareModelRunSubmissionOptions = {}
 ): { accepted: false; warnings: ModelRunWarning[] } | { accepted: true; prepared: PreparedModelRunSubmission } {
+  assertDemoExampleTitleAvailable(payload.title);
   const paths = resolveRuntimePaths(pathsInput);
   const ignoreStorageCap = options.ignoreStorageCap === true;
   const baselineRaw = payload.baseline?.trim();
@@ -1565,6 +1568,7 @@ export function prepareModelRunSubmission(
   const trimmedTitle = payload.title?.trim();
   const title = trimmedTitle ? trimmedTitle.slice(0, 120) : undefined;
   const runId = buildRunId(now, title, baseline);
+  assertDemoExampleMutable('run', runId);
   if (hasActiveRunId(runId)) {
     throw new Error(`A queued or running job is already targeting output folder "${runId}".`);
   }

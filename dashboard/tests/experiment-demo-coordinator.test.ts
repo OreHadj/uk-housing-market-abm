@@ -5,6 +5,7 @@ import {
   buildExperimentDemoLaunchHref,
   clearExperimentDemoState,
   completeExperimentDemoChapter,
+  commitExperimentDemoValue,
   continueExperimentDemoToSensitivity,
   createExperimentDemoProgress,
   experimentDemoLaunchMode,
@@ -15,7 +16,10 @@ import {
   readExperimentDemoProgress,
   setExperimentDemoPaused,
   updateExperimentDemoStep,
+  updatePolicyPracticeRun,
+  buildPolicyPracticeResultsHref,
   writeExperimentDemoProgress,
+  persistPolicyPracticeProgress,
   type SessionStorageLike
 } from '../src/lib/experimentDemo.js';
 import { scenarioDraftStorageKey } from '../src/lib/scenarioDraft.js';
@@ -57,6 +61,10 @@ storage.setItem(scenarioDraftStorageKey(initial.policy.draftId), '{"demo":"polic
 storage.setItem(sensitivityDraftStorageKey(initial.sensitivity.draftId), '{"demo":"sensitivity"}');
 
 writeExperimentDemoProgress(initial, storage);
+persistPolicyPracticeProgress(initial, storage);
+assert.throws(() => persistPolicyPracticeProgress(initial, null), /could not be saved/);
+assert.throws(() => persistPolicyPracticeProgress(initial, { ...storage, getItem: () => null, setItem: () => {}, removeItem: () => {} }), /could not be saved/, 'Silently discarded storage cannot authorize a real request');
+assert.throws(() => persistPolicyPracticeProgress(initial, { ...storage, getItem: () => null, setItem: () => { throw new Error('blocked'); }, removeItem: () => {} }), /could not be saved/, 'Blocked storage must prevent submission');
 assert.deepEqual(readExperimentDemoProgress(storage), initial);
 assert.deepEqual(parseExperimentDemoProgress(JSON.stringify(initial)), initial);
 assert.equal(parseExperimentDemoProgress('{broken'), null);
@@ -137,6 +145,43 @@ const standaloneSensitivity = createExperimentDemoProgress(
   'experiment-demo-sensitivity-only'
 );
 assert.equal(standaloneSensitivity.phase, 'sensitivity');
+
+const commitEvent = { journeyId, chapter: 'policy' as const, draftId: initial.policy.draftId, field: 'name' as const, value: 'Bank Rate rise' };
+const committed = commitExperimentDemoValue(initial, commitEvent);
+assert.equal(committed.policy.committedValues?.name, 'Bank Rate rise');
+assert.equal(parseExperimentDemoProgress(JSON.stringify(committed))?.policy.committedValues?.name, 'Bank Rate rise', 'Refresh preserves actual commit evidence separately from typed draft values');
+assert.equal(commitExperimentDemoValue(committed, commitEvent), committed, 'Repeated commit is idempotent');
+assert.equal(commitExperimentDemoValue(committed, { ...commitEvent, journeyId: 'stale' }), committed);
+assert.equal(commitExperimentDemoValue(committed, { ...commitEvent, draftId: 'stale' }), committed);
+const bankCommitted = commitExperimentDemoValue(committed, { ...commitEvent, field: 'bankRate', value: '0.0610833333' });
+assert.equal(bankCommitted.policy.committedValues?.bankRate, '0.0610833333');
+const edited = commitExperimentDemoValue(bankCommitted, { ...commitEvent, field: 'bankRate', value: '' });
+assert.equal(edited.policy.committedValues?.bankRate, '', 'Editing invalidates acknowledgement until the next commit');
+assert.equal(edited.policy.committedValues?.name, 'Bank Rate rise');
+
+const runEvent = { journeyId, chapter: 'policy' as const, draftId: initial.policy.draftId };
+const pendingRun = { status: 'submitting' as const, title: 'Bank Rate rise practice unique' };
+const submitting = updatePolicyPracticeRun(bankCommitted, { ...runEvent, run: pendingRun });
+assert.deepEqual(parseExperimentDemoProgress(JSON.stringify(submitting))?.policy.submission, pendingRun, 'Refresh retains the pending identity and prevents blind repeat submission');
+assert.equal(updatePolicyPracticeRun(submitting, { ...runEvent, journeyId: 'stale', run: undefined }), submitting);
+assert.equal(updatePolicyPracticeRun(submitting, { ...runEvent, run: { ...pendingRun, title: 'Different attempt' } }), submitting);
+const acceptedRun = { ...pendingRun, status: 'submitted' as const, runId: 'saved practice v0o7', jobRef: 'manual:practice-job' };
+const accepted = updatePolicyPracticeRun(submitting, { ...runEvent, run: acceptedRun });
+assert.equal(accepted.policy.stepId, 'policy-complete');
+assert.equal(accepted.policy.draftId, initial.policy.draftId);
+assert.deepEqual(accepted.policy.committedValues, bankCommitted.policy.committedValues);
+assert.deepEqual(parseExperimentDemoProgress(JSON.stringify(accepted))?.policy.submission, acceptedRun);
+assert.equal(updatePolicyPracticeRun(accepted, { ...runEvent, run: undefined }), accepted, 'Accepted run identity cannot be cleared to resubmit');
+assert.equal(updatePolicyPracticeRun(submitting, { ...runEvent, run: undefined }).policy.submission, undefined, 'A definitive rejected request can return to its explicit Start action');
+const practiceResults = new URL(buildPolicyPracticeResultsHref(acceptedRun.runId, acceptedRun.jobRef), 'http://dashboard.local');
+assert.equal(practiceResults.pathname, '/results');
+assert.equal(practiceResults.searchParams.get('presentation'), 'report', 'A submitted practice run opens the default Report presentation');
+assert.equal(practiceResults.searchParams.get('baselineRunId'), acceptedRun.runId);
+assert.equal(practiceResults.searchParams.get('jobRef'), acceptedRun.jobRef);
+assert.equal(practiceResults.searchParams.has('practice'), false);
+assert.equal(practiceResults.searchParams.has('journey'), false);
+assert.equal(practiceResults.searchParams.get('resultsDemo'), 'policy-results');
+assert.equal(practiceResults.searchParams.has('demo'), false, 'Own results must not launch the bundled example guide');
 
 const combinedSensitivityUrl = new URL(
   buildExperimentDemoLaunchHref('both', journeyId, 'sensitivity'),

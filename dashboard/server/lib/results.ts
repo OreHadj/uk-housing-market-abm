@@ -33,6 +33,7 @@ import {
 import { isDashboardManagedRun } from './runOwnership';
 import { CENTRAL_BANK_POLICY_KEYS, isBasePolicyId } from '../../shared/policyCatalogue';
 import { RUN_MANIFEST_FILE_NAME } from './runManifest';
+import { assertDemoExampleMutable, assertDemoExampleTitleAvailable, isInstalledDemoExample } from './demoExamples';
 
 type CompareWindow = ResultsCompareWindow;
 type SmoothWindow = 0 | 3 | 12;
@@ -1555,6 +1556,7 @@ function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDi
 
   const summary: ResultsRunSummary = {
     runId,
+    isExample: isInstalledDemoExample(paths, 'run', runId),
     title,
     path: formatRuntimePath(paths, runPath),
     modifiedAt: toIsoTime(runStats.mtime),
@@ -1593,6 +1595,8 @@ export function renameResultsRun(
   runId: string,
   title: string
 ): { runId: string; title: string | null } {
+  assertDemoExampleMutable('run', runId);
+  assertDemoExampleTitleAvailable(title);
   const paths = resolveRuntimePaths(pathsInput);
   const resultsRoot = resolveResultsRoot(paths);
   const runPath = ensureRunExists(resultsRoot, runId);
@@ -1643,6 +1647,7 @@ export function getResultsRunFiles(pathsInput: RuntimePathInput, runId: string):
 }
 
 export function deleteResultsRun(pathsInput: RuntimePathInput, runId: string): { runId: string; deleted: boolean } {
+  assertDemoExampleMutable('run', runId);
   const resultsRoot = resolveResultsRoot(pathsInput);
   const normalizedRunId = runId.trim();
   if (PROTECTED_RESULTS_RUN_IDS.has(normalizedRunId)) {

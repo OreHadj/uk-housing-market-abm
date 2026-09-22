@@ -6,6 +6,7 @@ import {
   useRef,
   useState
 } from 'react';
+import { DemoShading } from './DemoShading';
 
 export const VALIDATION_DEMO_QUERY_VALUE = 'validation';
 export const VALIDATION_DEMO_SESSION_KEY = 'validation-demo-progress-v1';
@@ -1093,6 +1094,7 @@ export function ValidationDemoPrototype({
       className="validation-demo-layer"
       data-validation-demo-state={isWalkthroughComplete ? 'complete' : currentStep?.id}
     >
+      <DemoShading holes={targetState === 'ready' && spotlight ? [spotlight] : []} />
       {scrimStyles.map((style, index) => (
         <div
           className={`validation-demo-scrim is-${scrimKinds[index]}`}

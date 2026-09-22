@@ -1,0 +1,153 @@
+.sensitivity-report2 {
+  --sr2-ink: #22304a;
+  --sr2-muted: #6f7e95;
+  --sr2-blue: #4568e8;
+  --sr2-teal: #20ae9c;
+  width: 100%; min-width: 0; color: var(--sr2-ink);
+  font-family: inherit;
+  font-size: 14.95px;
+  line-height: 1.5;
+}
+.sensitivity-report2 *, .sensitivity-report2 *::before, .sensitivity-report2 *::after { box-sizing: border-box; }
+.sensitivity-report2 :is(h1, h2, p, dl, dd) { margin: 0; }
+.sensitivity-report2 :is(button, select) { font: inherit; }
+.sensitivity-report2 :is(button, select, a, summary):focus-visible { outline: 3px solid #7694ff; outline-offset: 3px; }
+.sr2-workspace-title { white-space: normal; }
+.sr2-workspace-title > span[aria-hidden="true"] { color: #728098; font-weight: 400; }
+.sensitivity-report2 .sr2-eyebrow { color: var(--sr2-muted); font-size: 10.35px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase; }
+.sensitivity-report2 .sr2-caption { color: var(--sr2-muted); font-size: 12.65px; line-height: 1.5; }
+.sensitivity-report2 .sr2-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 28px; margin: 15px 0 28px; }
+.sensitivity-report2 .sr2-toolbar > .results-presentation-header { min-width: 0; }
+.sensitivity-report2 label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sensitivity-report2 label > span { color: #67758c; font-size: 12.65px; font-weight: 600; }
+.sensitivity-report2 .sr2-experiment > span { display: flex; align-items: center; gap: 7px; }
+.sensitivity-report2 .sr2-experiment > span::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--sr2-blue); }
+.sensitivity-report2 select { width: 100%; min-width: 0; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; color: var(--sr2-ink); padding: 0 30px 0 10px; text-overflow: ellipsis; }
+.sensitivity-report2 .sr2-toolbar .results-presentation-bar { margin: 0; height: 44px; font-size: 14.95px; gap: 10px; }
+.sensitivity-report2 .sr2-toolbar .results-presentation-toggle { height: 44px; padding: 3px; gap: 3px; }
+.sensitivity-report2 .sr2-toolbar .results-presentation-toggle button { padding: 7px 12px; }
+.sensitivity-report2 .sr2-page-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.sensitivity-report2 .sr2-page-heading > div:first-child { min-width: 0; }
+.sensitivity-report2 h1 { font-size: 34.5px; font-weight: 650; letter-spacing: -1px; line-height: 1.6; overflow-wrap: anywhere; }
+.sensitivity-report2 .sr2-actions { display: flex; align-items: center; flex: 0 0 auto; }
+.sensitivity-report2 .sr2-actions button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; padding: 0 15px; color: #596982; cursor: pointer; }
+.sensitivity-report2 .sr2-actions button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.sensitivity-report2 .sr2-actions button:disabled { opacity: .5; cursor: default; }
+.sensitivity-report2 .sr2-dashboard { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; align-items: start; }
+.sensitivity-report2 .sr2-context { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; border: 1px solid #e8edf5; border-radius: 12px; padding: 20px 16px; background: white; box-shadow: 0 5px 12px #2b458008, 0 2px 3px #2b458005; }
+.sensitivity-report2 .sr2-context > div { --sr2-context-info-top: 0px; position: relative; min-width: 0; overflow-wrap: anywhere; }
+.sensitivity-report2 .sr2-context > div + div { --sr2-context-info-top: 18px; border-top: 1px solid #ecf0f7; padding-top: 18px; }
+.sensitivity-report2 .sr2-context h2 { font-size: 18px; font-weight: 650; line-height: 1.4; margin: 5px 0; }
+.sensitivity-report2 .sr2-context strong { display: block; font-size: 15px; font-weight: 600; line-height: 1.5; margin: 5px 0; }
+.sensitivity-report2 .sr2-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: stretch; min-width: 0; }
+.sensitivity-report2 .sr2-card { position: relative; background: #fff; border: 1px solid #e8edf5; border-radius: 12px; padding: 20px; min-width: 0; box-shadow: 0 5px 12px #2b458008, 0 2px 3px #2b458005; }
+.sensitivity-report2 .sr2-card-heading h2 { font-size: 26px; font-weight: 650; letter-spacing: -.3px; margin: 6px 0; line-height: 1.4; }
+.sensitivity-report2 .sr2-card-heading .sr2-eyebrow { font-size: 12px; padding-right: 28px; }
+.sensitivity-report2 .sr2-card .sr2-caption { font-size: 17px; line-height: 1.6; }
+.sensitivity-report2 :is(.sr2-heading-line, .sr2-context-label) { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.sensitivity-report2 .sr2-heading-line { align-items: flex-start; padding-right: 28px; }
+.sensitivity-report2 .sr2-heading-line > h2 { min-width: 0; }
+.sensitivity-report2 .sr2-card-heading > .sr2-heading-line > .report-info { position: absolute; top: 10px; right: 10px; margin: 0; }
+.sensitivity-report2 .sr2-context-label { min-height: 24px; padding-right: 32px; }
+.sensitivity-report2 .sr2-context > div > .sr2-context-label > .report-info { position: absolute; top: var(--sr2-context-info-top); right: 0; }
+.sensitivity-report2 .sr2-pairing > .sr2-context-label > .report-info { position: absolute; top: 10px; right: 10px; }
+.sensitivity-report2 .sr2-outcome, .sensitivity-report2 .sr2-setting { margin-top: 16px; }
+.sensitivity-report2 .sr2-response-chart { width: 100%; height: 285px; }
+.sensitivity-report2 .sr2-comparison-chart { width: 100%; height: 250px; }
+.sensitivity-report2 .sr2-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 14px; color: var(--sr2-muted); margin: 18px 0 8px; }
+.sensitivity-report2 .sr2-legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sensitivity-report2 .sr2-legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--sr2-blue); }
+.sensitivity-report2 .sr2-legend .sr2-baseline-dot { background: var(--sr2-teal); }
+.sensitivity-report2 .sr2-legend .sr2-partial-dot { background: #c08a34; border-radius: 0; transform: rotate(45deg); }
+.sensitivity-report2 .sr2-footnote { font-size: 15px; color: #74829a; margin-top: 18px; line-height: 1.6; }
+.sensitivity-report2 .sr2-response-notice { border-left: 2px solid #d4aa5a; background: #fff9ed; color: #806338; padding: 9px 12px; margin-top: 12px; font-size: 14px; line-height: 1.5; }
+.sensitivity-report2 .sr2-response-notice p + p { margin-top: 6px; }
+.sensitivity-report2 .sr2-table-wrap { min-width: 0; max-width: 100%; overflow-x: auto; margin-top: 10px; }
+.sensitivity-report2 .sr2-table { width: 100%; min-width: 430px; border-collapse: collapse; font-size: 16px; line-height: 1.5; font-variant-numeric: tabular-nums; }
+.sensitivity-report2 .sr2-table :is(th, td) { border-bottom: 1px solid #edf0f5; padding: 12px 7px; vertical-align: middle; text-align: right; }
+.sensitivity-report2 .sr2-table thead th { color: #7d8aa0; font-weight: 500; font-size: 14px; }
+.sensitivity-report2 .sr2-table-setting { display: block; color: #536581; font-size: 13px; font-weight: 600; line-height: 1.4; margin-top: 4px; overflow-wrap: anywhere; }
+.sensitivity-report2 .sr2-table th:first-child { text-align: left; width: 34%; min-width: 140px; }
+.sensitivity-report2 .sr2-table tbody th { color: #65738b; font-weight: 500; }
+.sensitivity-report2 .sr2-table td { font-weight: 550; white-space: normal; }
+.sensitivity-report2 .sr2-table td:last-child { color: #4e69a4; }
+.sensitivity-report2 .sr2-table small { display: block; color: #9a7434; font-size: 14px; margin-top: 3px; }
+.sensitivity-report2 .sr2-relative { display: block; color: #7a8eae; font-size: 14px; white-space: nowrap; }
+.sensitivity-report2 .sr2-pairing { position: relative; padding: 14px; border-radius: 7px; background: #f4f6fc; margin-top: 17px; }
+.sensitivity-report2 .sr2-pairing > strong { display: block; font-size: 17px; color: #435b90; font-weight: 600; margin: 6px 0; }
+.sensitivity-report2 .sr2-pairing .sr2-caption { font-size: 15px; }
+.sensitivity-report2 .sr2-pairing .sr2-eyebrow { font-size: 12px; letter-spacing: .7px; }
+.sensitivity-report2 .sr2-lower-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: stretch; min-width: 0; }
+.sensitivity-report2 .sr2-comparison-content { display: grid; min-width: 0; gap: 16px; align-items: center; }
+.sensitivity-report2 .sr2-comparison-content .sr2-table-wrap { margin-top: 0; }
+.sensitivity-report2 .sr2-method { color: #78869c; font-size: 11px; line-height: 1.75; margin: 18px 2px 0; }
+.sensitivity-report2 .sr2-method-overview { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 20px; }
+.sensitivity-report2 .sr2-method p + p { margin-top: 5px; }
+.sensitivity-report2 .sr2-method strong { font-weight: 650; color: #5a6c86; }
+.sensitivity-report2 .sr2-method a { color: #516eab; text-decoration: none; }
+.sensitivity-report2 .sr2-method a:hover { text-decoration: underline; }
+.sensitivity-report2 .sr2-coverage summary { color: #516eab; cursor: pointer; margin-top: 6px; }
+.sensitivity-report2 .sr2-coverage[open] summary { margin-bottom: 10px; }
+.sensitivity-report2 .sr2-warnings { margin: 12px 0; }
+.sensitivity-report2 .sr2-notice { color: #806338; background: #fff8e9; border: 1px solid #f0e5ca; border-radius: 8px; padding: 13px 16px; margin-bottom: 16px; font-size: 13px; }
+.sensitivity-report2 .sr2-notice button { background: white; color: #715c38; border: 1px solid #d1bb91; border-radius: 4px; padding: 4px 12px; margin: 5px 0 0 8px; cursor: pointer; }
+.sensitivity-report2 .sr2-loading, .sensitivity-report2 .sr2-empty { color: #7889a4; padding: 65px 20px; text-align: center; }
+@media screen and (min-width: 1001px) {
+  /* Share the natural heading, legend, comparison and note heights across the
+     paired cards, so wrapping text cannot shift one chart below the other. */
+  .sensitivity-report2 .sr2-lower-grid > .sr2-card { display: grid; grid-template-rows: subgrid; grid-row: span 4; row-gap: 0; }
+  .sensitivity-report2 .sr2-lower-grid .sr2-comparison-content { grid-template-rows: 250px auto; align-content: start; align-items: start; }
+}
+@media (max-width: 1150px) {
+  .sensitivity-report2 .sr2-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sensitivity-report2 .sr2-card { padding: 17px; }
+}
+@media (max-width: 1050px) {
+  .sensitivity-report2 .sr2-toolbar { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .sensitivity-report2 .sr2-dashboard { grid-template-columns: minmax(0, 1fr); }
+  .sensitivity-report2 .sr2-context { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 25px; }
+  .sensitivity-report2 .sr2-context > div + div { --sr2-context-info-top: 0px; border: 0; padding-top: 0; }
+}
+@media (max-width: 1000px) {
+  .sensitivity-report2 :is(.sr2-grid, .sr2-lower-grid) { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  .sensitivity-report2 .sr2-page-heading { flex-direction: column; align-items: start; gap: 13px; }
+  .sensitivity-report2 .sr2-context { grid-template-columns: minmax(0, 1fr); }
+  .sensitivity-report2 .sr2-context > div:not(:first-child) { --sr2-context-info-top: 12px; border-top: 1px solid #e6ebf2; padding-top: 12px; }
+  .sensitivity-report2 .sr2-toolbar .results-presentation-bar { flex-wrap: wrap; height: auto; min-height: 44px; }
+  .sensitivity-report2 .sr2-card { padding: 15px; }
+  .sensitivity-report2 .sr2-table :is(th, td) { padding: 9px 3px; }
+  .sensitivity-report2 .sr2-response-chart { height: 270px; }
+}
+@media print {
+  @page { size: A3 landscape; margin: 9mm; }
+  body:has(.sensitivity-report2) { background: white; }
+  body:has(.sensitivity-report2) .app-shell { display: block; }
+  body:has(.sensitivity-report2) :is(.app-sidebar, .workspace-header, .foot, .skip-to-workspace) { display: none !important; }
+  body:has(.sensitivity-report2) .app-main { padding: 0; }
+  .sensitivity-report2 { font-size: 11px; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .sensitivity-report2 :is(.sr2-toolbar, .sr2-actions button, .sr2-method a, .sr2-coverage) { display: none; }
+  .sensitivity-report2 .sr2-page-heading { margin-bottom: 10px; }
+  .sensitivity-report2 h1 { font-size: 28px; }
+  .sensitivity-report2 .sr2-dashboard { display: block; }
+  .sensitivity-report2 .sr2-context { grid-template-columns: 1.25fr 1fr 1fr 1fr; padding: 10px 0; margin-bottom: 12px; border: 0; box-shadow: none; }
+  .sensitivity-report2 .sr2-context > div + div { border: 0; padding: 0; }
+  .sensitivity-report2 .sr2-grid { grid-template-columns: 1.15fr 1fr; gap: 12px; }
+  .sensitivity-report2 .sr2-card { box-shadow: none; padding: 13px; break-inside: avoid; }
+  .sensitivity-report2 .sr2-card-heading h2 { font-size: 17px; }
+  .sensitivity-report2 .sr2-caption, .sensitivity-report2 .sr2-card .sr2-caption { font-size: 11px; }
+  .sensitivity-report2 select { appearance: none; border: 0; height: 25px; padding: 0; background: none; }
+  .sensitivity-report2 :is(.sr2-outcome, .sr2-setting) { margin-top: 9px; gap: 0; }
+  .sensitivity-report2 .sr2-response-chart { height: 205px; }
+  .sensitivity-report2 .sr2-comparison-chart { height: 130px; }
+  .sensitivity-report2 .sr2-chart > div, .sensitivity-report2 .sr2-chart canvas { max-width: 100%; }
+  .sensitivity-report2 .sr2-table { min-width: 0; font-size: 12px; }
+  .sensitivity-report2 .sr2-table :is(th, td) { padding: 5px; }
+  .sensitivity-report2 .sr2-table th:first-child { min-width: 0; }
+  .sensitivity-report2 :is(.sr2-table thead th, .sr2-table small, .sr2-table-setting, .sr2-relative, .sr2-legend) { font-size: 11px; }
+  .sensitivity-report2 .sr2-pairing { margin-top: 10px; padding: 10px; }
+  .sensitivity-report2 .sr2-response-notice { font-size: 10px; }
+  .sensitivity-report2 .sr2-footnote, .sensitivity-report2 .sr2-method { font-size: 9px; }
+  .sensitivity-report2 .sr2-lower-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; gap: 12px; }
+}

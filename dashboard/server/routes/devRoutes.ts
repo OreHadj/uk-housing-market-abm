@@ -1,4 +1,5 @@
 import type express from 'express';
+import type { LendingDistributionComparePayload, ResultsComparePayload } from '../../shared/types';
 import { pipeline } from 'node:stream/promises';
 import {
   createManualResultArchive,
@@ -17,7 +18,8 @@ import {
 } from '../lib/results';
 import {
   getLendingDistribution,
-  getLendingDistributionCompare
+  getLendingDistributionCompare,
+  normalizeLendingWindow
 } from '../lib/lendingDistribution';
 import {
   cancelModelRunJob,
@@ -43,6 +45,10 @@ import {
   submitSensitivityExperiment
 } from '../lib/sensitivityRuns';
 import type { RouteContext } from './routeContext';
+import {
+  assertDemoExampleJobMutable, assertDemoExampleMutable, assertDemoExampleTitleAvailable,
+  isDemoExampleRunId, isDemoExampleSensitivityId
+} from '../lib/demoExamples';
 
 const MODEL_RUNS_DISABLED_REASON_CONFIG =
   'Model execution is disabled in this environment.';
@@ -120,6 +126,24 @@ function resolveLocalResultsReadRunIds(
   return resolvedRunIds;
 }
 
+/** A remote scenario may compare against the bundled unchanged-reference run. */
+function mergeExampleComparisons(parts: ResultsComparePayload[]): ResultsComparePayload {
+  const first = parts[0];
+  return {
+    ...first,
+    runIds: parts.flatMap((part) => part.runIds),
+    kpiSummaryByRun: parts.flatMap((part) => part.kpiSummaryByRun),
+    indicators: first.indicators.map((indicator) => {
+      const series = parts.flatMap((part) => part.indicators.find((entry) => entry.indicator.id === indicator.indicator.id)?.seriesByRun ?? []);
+      const times = [...new Set(series.flatMap((entry) => entry.points.map((point) => point.modelTime)))].sort((a, b) => a - b);
+      return { ...indicator, seriesByRun: series.map((entry) => {
+        const values = new Map(entry.points.map((point) => [point.modelTime, point.value]));
+        return { ...entry, points: times.map((modelTime) => ({ modelTime, value: values.get(modelTime) ?? null })) };
+      }) };
+    })
+  };
+}
+
 export function registerDevRoutes(app: express.Express, context: RouteContext): void {
   app.post('/api/auth/login', (req, res) => {
     if (!context.requireExperimentsFeature(req, res)) {
@@ -156,8 +180,14 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
+      if (req.query.examplesOnly === 'true') {
+        res.json({ runs: getResultsRuns(context.runtimePaths).filter((run) => run.isExample) });
+        return;
+      }
       if (context.remoteExecution) {
-        res.json(await context.remoteExecution.listRemoteManualResultRuns());
+        const remote = await context.remoteExecution.listRemoteManualResultRuns();
+        const examples = getResultsRuns(context.runtimePaths).filter((run) => run.isExample);
+        res.json({ runs: [...remote.runs.filter((run) => !isDemoExampleRunId(run.runId)), ...examples] });
         return;
       }
       const runs = getResultsRuns(context.runtimePaths);
@@ -183,7 +213,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleRunId(String(req.params.runId ?? ''))) {
         res.json(await context.remoteExecution.getRemoteManualResultDetail(String(req.params.runId ?? '')));
         return;
       }
@@ -200,7 +230,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleRunId(String(req.params.runId ?? ''))) {
         res.json(await context.remoteExecution.getRemoteManualResultFiles(String(req.params.runId ?? '')));
         return;
       }
@@ -221,7 +251,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
     try {
       const runId = String(req.params.runId ?? '');
-      const archive = context.remoteExecution
+      const archive = context.remoteExecution && !isDemoExampleRunId(runId)
         ? await context.remoteExecution.getRemoteManualResultArchive(runId)
         : createManualResultArchive(context.runtimePaths, runId);
       await sendResultArchive(res, archive);
@@ -244,6 +274,8 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
 
     try {
       const title = typeof req.body?.title === 'string' ? req.body.title : '';
+      assertDemoExampleMutable('run', String(req.params.runId ?? ''));
+      assertDemoExampleTitleAvailable(title);
       if (context.remoteExecution) {
         res.status(501).json({ error: 'Renaming runs is not supported for remotely executed results.' });
         return;
@@ -263,6 +295,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleMutable('run', String(req.params.runId ?? ''));
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.deleteRemoteManualResultRun(String(req.params.runId ?? '')));
         return;
@@ -289,7 +322,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     const smoothWindow = Number.isFinite(rawSmoothWindow) ? rawSmoothWindow : 0;
 
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleRunId(runId)) {
         const payload = await context.remoteExecution.getRemoteManualResultSeries(runId, indicator, smoothWindow);
         res.json(payload);
         return;
@@ -313,7 +346,18 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     const smoothWindow = Number.isFinite(rawSmoothWindow) ? rawSmoothWindow : 0;
 
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && runIds.some(isDemoExampleRunId) && !runIds.every(isDemoExampleRunId)) {
+        if (runIds.length > 2) throw new Error('A maximum of 2 runIds can be compared at once.');
+        const parts: ResultsComparePayload[] = [];
+        for (const runId of [...new Set(runIds)]) {
+          parts.push(isDemoExampleRunId(runId)
+            ? getResultsCompare(context.runtimePaths, [runId], indicatorIds, window, smoothWindow)
+            : await context.remoteExecution.getRemoteManualResultCompare([runId], indicatorIds, window, smoothWindow));
+        }
+        res.json(mergeExampleComparisons(parts));
+        return;
+      }
+      if (context.remoteExecution && !runIds.some(isDemoExampleRunId)) {
         const payload = await context.remoteExecution.getRemoteManualResultCompare(runIds, indicatorIds, window, smoothWindow);
         res.json(payload);
         return;
@@ -334,7 +378,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     const window = String(req.query.window ?? 'full');
 
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleRunId(runId)) {
         res.json(await context.remoteExecution.getRemoteManualResultLending(runId, window));
         return;
       }
@@ -353,7 +397,19 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     const window = String(req.query.window ?? 'full');
 
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && runIds.some(isDemoExampleRunId) && !runIds.every(isDemoExampleRunId)) {
+        if (runIds.length > 2) throw new Error('A maximum of 2 runIds can be compared at once.');
+        const runs = [];
+        for (const runId of [...new Set(runIds)]) {
+          runs.push(isDemoExampleRunId(runId)
+            ? getLendingDistribution(context.runtimePaths, runId, window)
+            : await context.remoteExecution.getRemoteManualResultLending(runId, window));
+        }
+        const payload: LendingDistributionComparePayload = { runIds: runs.map((run) => run.runId), window: normalizeLendingWindow(window), runs };
+        res.json(payload);
+        return;
+      }
+      if (context.remoteExecution && !runIds.some(isDemoExampleRunId)) {
         res.json(await context.remoteExecution.getRemoteManualResultLendingCompare(runIds, window));
         return;
       }
@@ -400,6 +456,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleTitleAvailable(typeof req.body?.title === 'string' ? req.body.title : undefined);
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.submitModelRun(context.runtimePaths, req.body));
         return;
@@ -545,8 +602,14 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
+      if (req.query.examplesOnly === 'true') {
+        res.json({ experiments: listSensitivityExperiments(context.runtimePaths).experiments.filter((experiment) => experiment.isExample) });
+        return;
+      }
       if (context.remoteExecution) {
-        res.json(await context.remoteExecution.listSensitivityExperiments());
+        const remote = await context.remoteExecution.listSensitivityExperiments();
+        const examples = listSensitivityExperiments(context.runtimePaths).experiments.filter((experiment) => experiment.isExample);
+        res.json({ experiments: [...remote.experiments.filter((experiment) => !isDemoExampleSensitivityId(experiment.experimentId)), ...examples] });
         return;
       }
       res.json(listSensitivityExperiments(context.runtimePaths));
@@ -569,6 +632,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleTitleAvailable(typeof req.body?.title === 'string' ? req.body.title : undefined);
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.submitSensitivityExperiment(context.runtimePaths, req.body));
         return;
@@ -589,7 +653,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleSensitivityId(String(req.params.experimentId ?? ''))) {
         res.json(await context.remoteExecution.getSensitivityExperiment(String(req.params.experimentId ?? '')));
         return;
       }
@@ -608,6 +672,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleMutable('sensitivity', String(req.params.experimentId ?? ''));
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.deleteSensitivityExperiment(String(req.params.experimentId ?? '')));
         return;
@@ -623,7 +688,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleSensitivityId(String(req.params.experimentId ?? ''))) {
         res.json(await context.remoteExecution.getSensitivityExperimentResults(String(req.params.experimentId ?? '')));
         return;
       }
@@ -638,7 +703,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
       return;
     }
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleSensitivityId(String(req.params.experimentId ?? ''))) {
         res.json(await context.remoteExecution.getSensitivityExperimentCharts(String(req.params.experimentId ?? '')));
         return;
       }
@@ -657,7 +722,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
     try {
       const experimentId = String(req.params.experimentId ?? '');
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleSensitivityId(experimentId)) {
         await sendResultArchive(res, await context.remoteExecution.getSensitivityExperimentArchive(experimentId));
         return;
       }
@@ -685,7 +750,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     const limitRaw = Number.parseInt(String(req.query.limit ?? '200'), 10);
 
     try {
-      if (context.remoteExecution) {
+      if (context.remoteExecution && !isDemoExampleSensitivityId(String(req.params.experimentId ?? ''))) {
         res.json(await context.remoteExecution.getSensitivityExperimentLogs(
           String(req.params.experimentId ?? ''),
           Number.isFinite(cursorRaw) ? cursorRaw : undefined,
@@ -719,6 +784,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleMutable('sensitivity', String(req.params.experimentId ?? ''));
       if (context.remoteExecution) {
         const experimentId = String(req.params.experimentId ?? '');
         await context.remoteExecution.cancelExperimentJob(`sensitivity:${experimentId}`);
@@ -792,6 +858,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleJobMutable(String(req.params.jobRef ?? ''));
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.cancelExperimentJob(String(req.params.jobRef ?? '')));
         return;
@@ -811,6 +878,7 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
     }
 
     try {
+      assertDemoExampleJobMutable(String(req.params.jobRef ?? ''));
       if (context.remoteExecution) {
         res.json(await context.remoteExecution.deleteExperimentJob(String(req.params.jobRef ?? '')));
         return;

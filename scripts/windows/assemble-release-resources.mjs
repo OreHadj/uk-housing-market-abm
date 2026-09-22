@@ -329,7 +329,7 @@ function copyJsonFiles(sourceDir, destinationDir) {
   }
 }
 
-function assembleReleaseData(outputRoot) {
+export function assembleReleaseData(outputRoot) {
   const releaseDataRoot = path.join(outputRoot, 'release-data');
   const releaseInputRoot = path.join(releaseDataRoot, 'input-data-versions');
   ensureDir(releaseInputRoot);
@@ -388,6 +388,8 @@ function assembleReleaseData(outputRoot) {
     copyFile(sourcePath, path.join(releaseInputRoot, relativePath));
   }
 
+  copyDirectory(path.join(dashboardRoot, 'demo-examples'), path.join(releaseDataRoot, 'demo-examples'));
+
   return writeReleaseDataManifest(releaseDataRoot);
 }
 
@@ -433,6 +435,7 @@ function validateReleaseDataAllowlist(releaseDataRoot) {
   assertDirectory(inputVersionsRoot, 'release-data input-data-versions root');
   const allowedTopLevel = new Set([
     'input-data-versions',
+    'demo-examples',
     'release-data-manifest.json',
     'release-data.sha256'
   ]);
@@ -525,7 +528,7 @@ function validateReleaseDataManifest(releaseDataRoot) {
   return expected;
 }
 
-function validateReleaseData(releaseDataRoot) {
+export function validateReleaseData(releaseDataRoot) {
   validateReleaseDataAllowlist(releaseDataRoot);
   validateReleaseDataConfigs(releaseDataRoot);
   return validateReleaseDataManifest(releaseDataRoot);
@@ -834,9 +837,11 @@ function main() {
   log(`assembled release resources at ${options.outputRoot}`);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(`[release-resources] ${(error instanceof Error ? error.message : String(error))}`);
-  process.exitCode = 1;
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  try {
+    main();
+  } catch (error) {
+    console.error(`[release-resources] ${(error instanceof Error ? error.message : String(error))}`);
+    process.exitCode = 1;
+  }
 }

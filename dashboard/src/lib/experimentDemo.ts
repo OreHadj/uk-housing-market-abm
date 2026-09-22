@@ -1,5 +1,6 @@
 import { scenarioDraftStorageKey } from './scenarioDraft';
 import { sensitivityDraftStorageKey } from './sensitivityDraft';
+import type { PolicyPracticeRun } from './guidedDemos/creation';
 
 export const EXPERIMENT_DEMO_QUERY_VALUE = 'experiment';
 export const EXPERIMENT_DEMO_SESSION_KEY = 'experiment-demo-progress-v2';
@@ -15,6 +16,8 @@ export interface ExperimentDemoChapterProgress {
   draftId: string;
   stepId: string;
   fingerprint: string;
+  committedValues?: Partial<Record<'name' | 'bankRate', string>>;
+  submission?: PolicyPracticeRun;
 }
 
 export interface ExperimentDemoProgress {
@@ -115,7 +118,7 @@ export function createExperimentDemoProgress(
     },
     sensitivity: {
       draftId: createExperimentDemoDraftId('sensitivity'),
-      stepId: 'sensitivity-purpose',
+      stepId: 'sensitivity-name',
       fingerprint: ''
     }
   };
@@ -140,9 +143,66 @@ function parseChapterProgress(
   ) return null;
   return {
     draftId: candidate.draftId!,
-    stepId: candidate.stepId,
-    fingerprint: candidate.fingerprint
+    stepId: chapter === 'sensitivity'
+      ? ({ 'sensitivity-purpose': 'sensitivity-name', 'sensitivity-model-baseline': 'sensitivity-model', 'sensitivity-workload': 'sensitivity-run-recording' }[candidate.stepId] ??
+        (candidate.stepId === 'sensitivity-complete' && !candidate.submission ? 'sensitivity-review' : candidate.stepId))
+      : candidate.stepId,
+    fingerprint: candidate.fingerprint,
+    ...(parsePolicyPracticeRun(candidate.submission) ? { submission: parsePolicyPracticeRun(candidate.submission)! } : {}),
+    ...(candidate.committedValues && typeof candidate.committedValues === 'object' ? {
+      committedValues: Object.fromEntries(Object.entries(candidate.committedValues)
+        .filter(([key, value]) => ['name', 'bankRate'].includes(key) && typeof value === 'string' && value.length <= 1000))
+    } : {})
   };
+}
+
+function parsePolicyPracticeRun(value: unknown): PolicyPracticeRun | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const run = value as Partial<PolicyPracticeRun>;
+  if (!['submitting', 'submitted'].includes(run.status ?? '') || typeof run.title !== 'string' || !run.title.trim() || run.title.length > 120) return undefined;
+  if (run.status === 'submitted' && (typeof run.runId !== 'string' || !run.runId || typeof run.jobRef !== 'string' || !run.jobRef)) return undefined;
+  return { status: run.status!, title: run.title, ...(typeof run.runId === 'string' ? { runId: run.runId } : {}), ...(typeof run.jobRef === 'string' ? { jobRef: run.jobRef } : {}) };
+}
+
+/** Acceptance is persisted before routing; finishing practice never deletes its real result. */
+export function updatePolicyPracticeRun(
+  progress: ExperimentDemoProgress,
+  event: ExperimentDemoProgressEvent & { run: PolicyPracticeRun | undefined }
+): ExperimentDemoProgress {
+  if (progress.mode === 'sensitivity' || event.chapter !== 'policy' || event.journeyId !== progress.journeyId || event.draftId !== progress.policy.draftId) return progress;
+  if (progress.policy.submission?.status === 'submitted') return progress;
+  const run = parsePolicyPracticeRun(event.run);
+  if (event.run && !run) return progress;
+  if (run && progress.policy.submission && run.title !== progress.policy.submission.title) return progress;
+  return {
+    ...progress,
+    ...(run?.status === 'submitted' ? { phase: 'policy-transition' as const, paused: false } : {}),
+    policy: { ...progress.policy, submission: run, ...(run?.status === 'submitted' ? { stepId: 'policy-complete' } : {}) }
+  };
+}
+
+export function buildPolicyPracticeResultsHref(runId: string, jobRef: string): string {
+  return `/results?${new URLSearchParams({ type: 'manual', presentation: 'report', queue: 'open', baselineRunId: runId, jobRef, resultsDemo: 'policy-results' })}`;
+}
+
+export function updateSensitivityPracticeRun(
+  progress: ExperimentDemoProgress,
+  event: ExperimentDemoProgressEvent & { run: PolicyPracticeRun | undefined }
+): ExperimentDemoProgress {
+  if (progress.mode === 'policy' || event.chapter !== 'sensitivity' || event.journeyId !== progress.journeyId || event.draftId !== progress.sensitivity.draftId) return progress;
+  if (progress.sensitivity.submission?.status === 'submitted') return progress;
+  const run = parsePolicyPracticeRun(event.run);
+  if (event.run && !run) return progress;
+  if (run && progress.sensitivity.submission && run.title !== progress.sensitivity.submission.title) return progress;
+  return {
+    ...progress,
+    ...(run?.status === 'submitted' ? { phase: 'complete' as const, paused: false } : {}),
+    sensitivity: { ...progress.sensitivity, submission: run, ...(run?.status === 'submitted' ? { stepId: 'sensitivity-complete' } : {}) }
+  };
+}
+
+export function buildSensitivityPracticeResultsHref(experimentId: string, jobRef: string): string {
+  return `/results?${new URLSearchParams({ type: 'sensitivity', presentation: 'report', queue: 'open', experimentId, jobRef, resultsDemo: 'sensitivity-results' })}`;
 }
 
 function phaseMatchesMode(mode: ExperimentDemoLaunchMode, phase: ExperimentDemoPhase): boolean {
@@ -207,6 +267,21 @@ export function writeExperimentDemoProgress(
   }
 }
 
+/** A real submission needs a durable identity before the request can leave the browser. */
+export function persistPolicyPracticeProgress(
+  progress: ExperimentDemoProgress,
+  storage: SessionStorageLike | null = browserSessionStorage()
+): void {
+  const serialized = JSON.stringify(progress);
+  try {
+    if (!storage) throw new Error('Session storage unavailable');
+    storage.setItem(EXPERIMENT_DEMO_SESSION_KEY, serialized);
+    if (storage.getItem(EXPERIMENT_DEMO_SESSION_KEY) !== serialized) throw new Error('Session storage did not retain progress');
+  } catch {
+    throw new Error('Practice progress could not be saved. Allow session storage before starting this run.');
+  }
+}
+
 export function updateExperimentDemoStep(
   progress: ExperimentDemoProgress,
   event: ExperimentDemoStepProgressEvent
@@ -250,6 +325,18 @@ export function completeExperimentDemoChapter(
     return { ...progress, phase: 'complete' };
   }
   return progress;
+}
+
+/** Persist acknowledgements separately from drafts, which also save uncommitted typing. */
+export function commitExperimentDemoValue(
+  progress: ExperimentDemoProgress,
+  event: ExperimentDemoProgressEvent & { field: 'name' | 'bankRate'; value: string }
+): ExperimentDemoProgress {
+  const current = progress[event.chapter];
+  if (progress.journeyId !== event.journeyId || current.draftId !== event.draftId) return progress;
+  const value = event.value.trim().slice(0, 1000);
+  if ((current.committedValues?.[event.field] ?? '') === value) return progress;
+  return { ...progress, [event.chapter]: { ...current, committedValues: { ...current.committedValues, [event.field]: value } } };
 }
 
 export function continueExperimentDemoToSensitivity(

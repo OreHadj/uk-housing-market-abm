@@ -35,6 +35,11 @@ import {
   ValidationDemoPrototype
 } from '../components/ValidationDemoPrototype';
 import { BASELINE_COLOR, COMPARISON_COLOR } from '../lib/manualOverlayChartOption';
+import { readValidationMetricLink, validationMetricLinkKey } from '../lib/validationMetricLink';
+import {
+  matchesModelInformationValidationSelection,
+  selectModelInformationValidationMetric
+} from '../lib/guidedDemos/modelInformationValidation';
 import {
   MODEL_EVIDENCE_DEMO_COMPLETION_EVENT,
   MODEL_EVIDENCE_VALIDATION_SESSION_KEY
@@ -51,7 +56,7 @@ export interface ValidationModelEvidenceDemoContext {
 }
 
 const MODEL_EVIDENCE_VALIDATION_COMPLETION = {
-  title: 'Model evidence walkthrough complete',
+  title: 'Model information walkthrough complete',
   body: 'You traced how model configurations were calibrated, compared their assumptions, and then checked their simulated outcomes against independent UK evidence.'
 } as const;
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
@@ -710,12 +715,14 @@ export function ValidationMetricDetailsPanel({
   detail,
   onClose,
   demoMetricId,
+  modelInformationMetricId,
   sourceOpen = false,
   onSourceOpenChange
 }: {
   detail: ValidationMetricDetailState;
   onClose: () => void;
   demoMetricId?: string;
+  modelInformationMetricId?: string;
   sourceOpen?: boolean;
   onSourceOpenChange?: (open: boolean) => void;
 }) {
@@ -744,6 +751,8 @@ export function ValidationMetricDetailsPanel({
     const handlePointerDown = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node) || panelRef.current?.contains(target) || detail.trigger?.contains(target)) return;
+      // Back/Next changes the guide step; it must not dismiss the source panel underneath it.
+      if (modelInformationMetricId && target instanceof Element && target.closest('.guided-tour-coach')) return;
       // A different row's click replaces this panel; its click handler owns the new focus target.
       if (target instanceof Element && target.closest('[data-validation-detail-trigger]')) return;
       closeAndRestoreFocus();
@@ -773,6 +782,9 @@ export function ValidationMetricDetailsPanel({
       ref={panelRef}
       id={VALIDATION_METRIC_DETAILS_PANEL_ID}
       className="validation-metric-details-panel"
+      data-guided-target="validation-metric-details"
+      data-guided-metric={detail.metric.metricId}
+      data-model-information-target={detail.metric.metricId === modelInformationMetricId ? 'validation-sources' : undefined}
       role="dialog"
       aria-labelledby={headingId}
       tabIndex={-1}
@@ -800,7 +812,7 @@ export function ValidationMetricDetailsPanel({
             </dd>
           </div>
         </dl>
-        {onSourceOpenChange && demoMetricId ? (
+        {onSourceOpenChange && (demoMetricId || modelInformationMetricId) ? (
           <details
             className="validation-source-disclosure"
             open={sourceOpen}
@@ -808,7 +820,7 @@ export function ValidationMetricDetailsPanel({
               if (event.target === event.currentTarget) onSourceOpenChange(event.currentTarget.open);
             }}
           >
-            <summary data-validation-demo-target={validationDemoProvenanceTargetId(demoMetricId)}>
+            <summary data-validation-demo-target={demoMetricId ? validationDemoProvenanceTargetId(demoMetricId) : undefined}>
               Sources and provenance
             </summary>
             {sourcePanel}
@@ -831,6 +843,7 @@ export function ValidationMetricTable({
   comparisonMetrics,
   versionLabels,
   demoMetricId,
+  modelInformationMetricId,
   activeMetricId = null,
   onOpenDetails,
   onCloseDetails
@@ -840,6 +853,7 @@ export function ValidationMetricTable({
   comparisonMetrics?: ReadonlyMap<string, ValidationMetricSummary>;
   versionLabels?: { selected: string; comparison: string };
   demoMetricId?: string;
+  modelInformationMetricId?: string;
   activeMetricId?: string | null;
   onOpenDetails?: (metric: ValidationMetricSummary, trigger: HTMLButtonElement) => void;
   onCloseDetails?: () => void;
@@ -891,6 +905,8 @@ export function ValidationMetricTable({
                 key={metric.metricId}
                 id={`validation-metric-${metric.metricId}`}
                 className={`validation-metric-row validation-metric-${metric.status}`}
+                data-guided-target={`validation-metric-${metric.metricId}`}
+                data-model-information-target={metric.metricId === modelInformationMetricId ? 'validation-outcome' : undefined}
               >
                   <th scope="row" id={metricLabelId} className="validation-metric-name-cell">
                     <strong>{metric.label}</strong>
@@ -1003,6 +1019,10 @@ export function ValidationPage({
   const navigate = useNavigate();
   const requestedVersion = searchParams.get('version')?.trim() ?? '';
   const requestedEvidenceYear = Number(searchParams.get('evidenceYear'));
+  const requestedComparisonVersion = searchParams.get('comparisonVersion')?.trim() ?? '';
+  const isModelInformationDemo = searchParams.get('demo') === 'model-information';
+  const modelInformationRequestedYear = isModelInformationDemo ? requestedEvidenceYear : null;
+  const modelInformationStep = isModelInformationDemo ? searchParams.get('step') : null;
   const isStandaloneValidationDemo = isValidationDemoRequested(searchParams);
   const isCombinedValidationDemo = modelEvidenceDemo?.active === true;
   const isValidationDemoActive = isStandaloneValidationDemo || isCombinedValidationDemo;
@@ -1038,9 +1058,12 @@ export function ValidationPage({
   const [selectionNotice, setSelectionNotice] = useState('');
   // Comparison is a state of this view, not a separate page: picking a second model switches the
   // body into compare mode, exactly as `comparisonRunId` does on the scenario results view.
-  const [comparisonVersion, setComparisonVersion] = useState(
-    searchParams.get('comparisonVersion')?.trim() || savedDemoProgress?.comparisonVersion || ''
+  const [storedComparisonVersion, setComparisonVersion] = useState(
+    requestedComparisonVersion || savedDemoProgress?.comparisonVersion || ''
   );
+  // Demo navigation owns this query parameter. Reading it directly prevents a pending state
+  // synchronization effect from erasing a choice restored by Back or refresh.
+  const comparisonVersion = isModelInformationDemo ? requestedComparisonVersion : storedComparisonVersion;
   const [isComparisonPickerOpen, setIsComparisonPickerOpen] = useState(
     Boolean(comparisonVersion || savedDemoProgress?.isCompareChecked)
   );
@@ -1071,23 +1094,87 @@ export function ValidationPage({
   );
   const [validationReloadToken, setValidationReloadToken] = useState(0);
   const [pendingMetricDiagnosticId, setPendingMetricDiagnosticId] = useState<string | null>(null);
+  const [pendingMetricDiagnosticOpenDetails, setPendingMetricDiagnosticOpenDetails] = useState(true);
   const [activeValidationDetail, setActiveValidationDetail] = useState<ValidationMetricDetailState | null>(null);
   const restoredDemoMetricRef = useRef(false);
+  const appliedMetricLinkRef = useRef<string | null>(null);
+  const appliedModelInformationStepRef = useRef<string | null>(null);
+  const latestSearchParamsRef = useRef(searchParams);
+  latestSearchParamsRef.current = searchParams;
+  const latestSetSearchParamsRef = useRef(setSearchParams);
+  latestSetSearchParamsRef.current = setSearchParams;
+
+  useEffect(() => {
+    if (!isModelInformationDemo) return;
+    setSelectedVersion(requestedVersion);
+    if (Number.isFinite(requestedEvidenceYear) && requestedEvidenceYear > 0) {
+      setSelectedValidationTargetYear(requestedEvidenceYear);
+    }
+    setComparisonVersion(requestedComparisonVersion);
+    if (requestedComparisonVersion) setIsComparisonPickerOpen(true);
+  }, [isModelInformationDemo, requestedVersion, requestedEvidenceYear, requestedComparisonVersion]);
+
+  useEffect(() => {
+    if (!isModelInformationDemo || modelInformationStep !== 'validation-comparison') return;
+    setActiveValidationDetail(null);
+    setPendingMetricDiagnosticId(null);
+    setIsComparisonPickerOpen(true);
+  }, [isModelInformationDemo, modelInformationStep]);
 
   useEffect(() => {
     let cancelled = false;
     let retryTimer: number | undefined;
+    const clearUnavailableDemoComparison = (notice: string) => {
+      const current = latestSearchParamsRef.current;
+      if (cancelled || current.get('demo') !== 'model-information' ||
+        current.get('version')?.trim() !== selectedVersion ||
+        Number(current.get('evidenceYear')) !== selectedValidationTargetYear ||
+        current.get('comparisonVersion')?.trim() !== comparisonVersion) return;
+      const next = new URLSearchParams(current);
+      next.delete('comparisonVersion');
+      setSelectionNotice(notice);
+      setComparisonVersion('');
+      latestSetSearchParamsRef.current(next, { replace: true });
+    };
     const load = async () => {
       setIsLoading(true);
       setIsWaitingForApi(false);
       setError('');
       setCompletedComparisonRequestVersion('');
+      if (isModelInformationDemo) {
+        setOverview(null);
+        setActiveValidationDetail(null);
+        appliedModelInformationStepRef.current = null;
+        if (!selectedVersion || modelInformationRequestedYear === null || !Number.isFinite(modelInformationRequestedYear) || modelInformationRequestedYear <= 0) {
+          setError('This walkthrough needs a selected model and evidence year. Return to Calibration to choose them.');
+          setIsLoading(false);
+          return;
+        }
+      }
       try {
         const [response, versions] = await Promise.all([
           fetchValidationOverview(selectedVersion || undefined, selectedValidationTargetYear, comparisonVersion || undefined),
           fetchVersions()
         ]);
         if (cancelled) return;
+        if (isModelInformationDemo) {
+          setInProgressVersions(versions.inProgressVersions);
+          if (!matchesModelInformationValidationSelection(response, selectedVersion, selectedValidationTargetYear)) {
+            setError('Validation evidence is unavailable for this model and evidence year. Return to Calibration to choose an available combination.');
+            return;
+          }
+          if (!matchesModelInformationValidationSelection(response, selectedVersion, selectedValidationTargetYear, comparisonVersion)) {
+            if (comparisonVersion) {
+              clearUnavailableDemoComparison('That comparison has no matching evidence for this year. Continuing with the primary model; you can choose another comparison.');
+              return;
+            }
+            setError('The returned validation evidence included an unexpected comparison. Return to Calibration and try again.');
+            return;
+          }
+          setOverview(response);
+          setCompletedComparisonRequestVersion(comparisonVersion);
+          return;
+        }
         const requestedYearSelection = resolveValidationModelsForEvidenceYear(
           response,
           selectedVersion,
@@ -1133,6 +1220,14 @@ export function ValidationPage({
           retryTimer = window.setTimeout(() => void load(), API_RETRY_DELAY_MS);
           return;
         }
+        if (isModelInformationDemo) {
+          if (comparisonVersion) {
+            clearUnavailableDemoComparison('That comparison could not be loaded. Continuing with the primary model; you can choose another comparison.');
+            return;
+          }
+          setError((loadError as Error).message || 'Validation evidence is unavailable for the selected model and evidence year.');
+          return;
+        }
         if (comparisonVersion) {
           setError((loadError as Error).message);
           return;
@@ -1152,10 +1247,11 @@ export function ValidationPage({
       cancelled = true;
       if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
-  }, [selectedVersion, selectedValidationTargetYear, comparisonVersion, validationReloadToken]);
+  }, [selectedVersion, selectedValidationTargetYear, comparisonVersion, validationReloadToken, isModelInformationDemo, modelInformationRequestedYear]);
 
   useEffect(() => {
     if (!overview) return;
+    if (isModelInformationDemo) return;
     // Preserve params this page does not own (notably `from`, which drives the return-to-setup
     // bar) — rebuilding from scratch silently dropped them as soon as the overview loaded.
     const next = new URLSearchParams(searchParams);
@@ -1164,7 +1260,7 @@ export function ValidationPage({
     if (comparisonVersion) next.set('comparisonVersion', comparisonVersion);
     else next.delete('comparisonVersion');
     if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
-  }, [comparisonVersion, overview, searchParams, selectedValidationTargetYear, selectedVersion, setSearchParams]);
+  }, [comparisonVersion, overview, searchParams, selectedValidationTargetYear, selectedVersion, setSearchParams, isModelInformationDemo]);
 
   useEffect(() => {
     if (!pendingMetricDiagnosticId || !isOutcomeComparisonsOpen) return;
@@ -1177,10 +1273,18 @@ export function ValidationPage({
     if (!row) return;
     const trigger = row.querySelector<HTMLButtonElement>('[data-validation-detail-trigger]');
     if (!trigger) return;
-    if (trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (isModelInformationDemo && modelInformationStep === 'validation-sources') {
+      // The guide blocks page clicks on an informational stop, so restore Details directly.
+      const metric = overview?.selectedSummary?.metrics.find((item) => item.metricId === pendingMetricDiagnosticId);
+      if (metric) setActiveValidationDetail({ metric, trigger, showBandNote: !overview?.comparisonSummary });
+    } else if (pendingMetricDiagnosticOpenDetails && trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      row.scrollIntoView({ behavior: 'instant', block: 'center' });
+    } else {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     trigger.focus({ preventScroll: true });
-  }, [isOutcomeComparisonsOpen, openValidationMetricIds, openValidationThemeIds, pendingMetricDiagnosticId]);
+  }, [isOutcomeComparisonsOpen, openValidationMetricIds, openValidationThemeIds, pendingMetricDiagnosticId, pendingMetricDiagnosticOpenDetails, isModelInformationDemo, modelInformationStep, overview]);
 
   const summary = overview?.selectedSummary ?? null;
   const inProgressSet = useMemo(() => new Set(inProgressVersions), [inProgressVersions]);
@@ -1209,7 +1313,10 @@ export function ValidationPage({
   const scorecard = useMemo(() => buildValidationScorecard(summary?.metrics ?? []), [summary]);
   const decomposition = useMemo(() => buildValidationLossDecomposition(summary?.metrics ?? []), [summary]);
   // Both builders are pure functions of a metrics array, so the second model reuses them as-is.
-  const comparisonSummary = overview?.comparisonSummary ?? null;
+  const comparisonSummary = !isModelInformationDemo || (overview &&
+    matchesModelInformationValidationSelection(overview, requestedVersion, requestedEvidenceYear, requestedComparisonVersion))
+    ? overview?.comparisonSummary ?? null
+    : null;
   const comparisonScorecard = useMemo(
     () => buildValidationScorecard(comparisonSummary?.metrics ?? []),
     [comparisonSummary]
@@ -1274,6 +1381,20 @@ export function ValidationPage({
   const representativeThemeId = representativeMetricId
     ? findValidationThemeId(representativeMetricId) ?? ''
     : '';
+  const modelInformationMetric = useMemo(() => selectModelInformationValidationMetric(
+    (summary?.metrics ?? []).filter(hasMetricProvenance),
+    VALIDATION_POLICY_THEMES.flatMap((theme) => theme.metricIds)
+  ), [summary]);
+  const modelInformationMetricId = modelInformationMetric?.metricId ?? '';
+  const modelInformationNeedsMetric = modelInformationStep === 'validation-outcome' || modelInformationStep === 'validation-sources';
+  const modelInformationMessage = error || (!isLoading && summary && modelInformationNeedsMetric && !modelInformationMetric
+    ? 'No supported outcome with source evidence is available for this part of the walkthrough.'
+    : '');
+  const modelInformationValidationState = modelInformationMessage
+    ? 'unavailable'
+    : isLoading || !overview || !matchesModelInformationValidationSelection(overview, requestedVersion, requestedEvidenceYear, requestedComparisonVersion)
+      ? 'loading'
+      : 'ready';
 
   useEffect(() => {
     if (restoredDemoMetricRef.current || !isValidationDemoActive || !representativeMetricId) return;
@@ -1285,6 +1406,7 @@ export function ValidationPage({
         ? current
         : new Set(current).add(representativeThemeId));
     }
+    setPendingMetricDiagnosticOpenDetails(true);
     setPendingMetricDiagnosticId(representativeMetricId);
   }, [
     isValidationDemoActive,
@@ -1367,6 +1489,15 @@ export function ValidationPage({
     setSelectedVersion(version);
     setSelectedValidationTargetYear(year);
   };
+  const handleComparisonVersionChange = (version: string) => {
+    setComparisonVersion(version);
+    setSelectionNotice('');
+    if (!isModelInformationDemo) return;
+    const next = new URLSearchParams(searchParams);
+    if (version) next.set('comparisonVersion', version);
+    else next.delete('comparisonVersion');
+    setSearchParams(next, { replace: true });
+  };
   const handleVersionChange = (version: string) => {
     if (version === comparisonVersion) setComparisonVersion('');
     selectVersionAndValidationYear(version, selectedValidationTargetYear);
@@ -1387,14 +1518,62 @@ export function ValidationPage({
   //   const point = raw as { name?: string };
   //   if (point?.name) selectVersionAndValidationYear(point.name, year);
   // };
-  const openMetricDiagnostic = (metricId: string) => {
+  const openMetricDiagnostic = useCallback((metricId: string, options: { openDetails?: boolean } = {}) => {
     const themeId = findValidationThemeId(metricId);
     if (!themeId) return;
     setIsOutcomeComparisonsOpen(true);
     setOpenValidationThemeIds((current) => current.has(themeId) ? current : new Set(current).add(themeId));
     setOpenValidationMetricIds((current) => current.has(metricId) ? current : new Set(current).add(metricId));
+    setPendingMetricDiagnosticOpenDetails(options.openDetails ?? true);
     setPendingMetricDiagnosticId(metricId);
-  };
+  }, []);
+  const linkedMetricId = readValidationMetricLink(searchParams, summary?.metrics.map((metric) => metric.metricId) ?? []);
+  useEffect(() => {
+    if (isModelInformationDemo || !linkedMetricId) {
+      appliedMetricLinkRef.current = null;
+      return;
+    }
+    if (isLoading || !summary || summary.version !== selectedVersion || summary.validationTargetYear !== selectedValidationTargetYear) return;
+    const key = validationMetricLinkKey(linkedMetricId, selectedVersion, selectedValidationTargetYear);
+    if (appliedMetricLinkRef.current === key) return;
+    appliedMetricLinkRef.current = key;
+    setActiveValidationDetail(null);
+    // A deep link reveals the metric; opening Details remains an explicit user action.
+    openMetricDiagnostic(linkedMetricId, { openDetails: false });
+  }, [isLoading, linkedMetricId, openMetricDiagnostic, selectedValidationTargetYear, selectedVersion, summary, isModelInformationDemo]);
+  useEffect(() => {
+    if (!isModelInformationDemo) {
+      appliedModelInformationStepRef.current = null;
+      return;
+    }
+    if (modelInformationValidationState !== 'ready' || !modelInformationStep) return;
+    const identity = `${modelInformationStep}:${selectedVersion}:${selectedValidationTargetYear}:${comparisonVersion}:${modelInformationMetricId}`;
+    if (appliedModelInformationStepRef.current === identity) return;
+    appliedModelInformationStepRef.current = identity;
+    if (modelInformationStep === 'validation-summary') {
+      setActiveValidationDetail(null);
+      setIsValidationSummaryOpen(true);
+      return;
+    }
+    if (!modelInformationNeedsMetric || !modelInformationMetricId) return;
+    const openSources = modelInformationStep === 'validation-sources';
+    if (openSources) {
+      setOpenValidationProvenanceIds((current) => current.has(modelInformationMetricId)
+        ? current
+        : new Set(current).add(modelInformationMetricId));
+    }
+    openMetricDiagnostic(modelInformationMetricId, { openDetails: openSources });
+  }, [
+    isModelInformationDemo,
+    modelInformationStep,
+    modelInformationValidationState,
+    modelInformationMetricId,
+    modelInformationNeedsMetric,
+    selectedVersion,
+    selectedValidationTargetYear,
+    comparisonVersion,
+    openMetricDiagnostic
+  ]);
   const handleValidationThemeOpenChange = (themeId: string, open: boolean) => {
     setOpenValidationThemeIds((current) => {
       if (current.has(themeId) === open) return current;
@@ -1466,7 +1645,12 @@ export function ValidationPage({
   } : undefined, [modelEvidenceDemo]);
 
   return (
-    <section className="validation-layout">
+    <section
+      className="validation-layout"
+      data-model-information-validation-state={isModelInformationDemo ? modelInformationValidationState : undefined}
+      data-model-information-message={isModelInformationDemo ? modelInformationMessage : undefined}
+      data-model-information-evidence-year={isModelInformationDemo ? selectedValidationTargetYear : undefined}
+    >
       {selectedVersion && returnDestination && (
         <EvidenceReturnPanel
           className="validation-return-bar"
@@ -1484,7 +1668,7 @@ export function ValidationPage({
       <article className="results-card validation-introduction">
         <div className="validation-introduction-top">
           <div className="validation-introduction-copy">
-            <h2 id="validation-page-heading">Validation</h2>
+            <h2 id="validation-page-heading" className="visually-hidden">Validation</h2>
             <p>Compare the selected model with independent UK evidence, see which outcomes are credible or problematic, and check whether results hold across random seeds.</p>
             <p className="validation-protocol-note">
               {summary && <>This displayed validation snapshot uses {formatValidationSnapshotProtocol(summary)}. </>}
@@ -1500,31 +1684,30 @@ export function ValidationPage({
             </p>
           </div>
           <ValidationStatusLegend />
-        </div>
-
-        <div className="validation-model-picker-toolbar">
-          <label className="validation-selector validation-evidence-year-selector">
-            <span>Evidence year</span>
-            <select
-              value={selectedValidationTargetYear}
-              onChange={(event) => handleEvidenceYearChange(Number(event.target.value))}
+          <div className="validation-model-picker-toolbar">
+            <label className="validation-selector validation-evidence-year-selector">
+              <span>Evidence year</span>
+              <select
+                value={selectedValidationTargetYear}
+                onChange={(event) => handleEvidenceYearChange(Number(event.target.value))}
+              >
+                <option value={2024}>2024 evidence</option>
+                <option value={2011}>2011 reference evidence</option>
+              </select>
+            </label>
+            <label
+              className="validation-selector"
+              data-validation-demo-target={VALIDATION_DEMO_TARGETS.sortModels}
             >
-              <option value={2024}>2024 evidence</option>
-              <option value={2011}>2011 reference evidence</option>
-            </select>
-          </label>
-          <label
-            className="validation-selector"
-            data-validation-demo-target={VALIDATION_DEMO_TARGETS.sortModels}
-          >
-            <span>Sort models by</span>
-            <select value={sortMetricId} onChange={(event) => setSortMetricId(event.target.value)}>
-              <option value="">Version order</option>
-              {sortableMetrics.map((metric) => (
-                <option key={metric.metricId} value={metric.metricId}>{metric.label}</option>
-              ))}
-            </select>
-          </label>
+              <span>Sort models by</span>
+              <select value={sortMetricId} onChange={(event) => setSortMetricId(event.target.value)}>
+                <option value="">Version order</option>
+                {sortableMetrics.map((metric) => (
+                  <option key={metric.metricId} value={metric.metricId}>{metric.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className="validation-model-columns-scroll">
@@ -1553,6 +1736,7 @@ export function ValidationPage({
 
             <section
               className={`validation-model-column validation-model-column-comparison ${isComparisonPickerOpen ? 'is-enabled' : 'is-disabled'}`}
+              data-model-information-target="validation-comparison"
               aria-labelledby="validation-comparison-model-heading"
               aria-disabled={!isComparisonPickerOpen}
             >
@@ -1570,7 +1754,7 @@ export function ValidationPage({
                     checked={isComparisonPickerOpen}
                     onChange={(event) => {
                       setIsComparisonPickerOpen(event.target.checked);
-                      if (!event.target.checked) setComparisonVersion('');
+                      if (!event.target.checked) handleComparisonVersionChange('');
                     }}
                   />
                   <span>Compare</span>
@@ -1586,7 +1770,7 @@ export function ValidationPage({
                 disabled={!isComparisonPickerOpen}
                 unavailableVersion={selectedVersion}
                 inProgressVersions={inProgressSet}
-                onChange={setComparisonVersion}
+                onChange={handleComparisonVersionChange}
               />
               <small className="validation-selector-note">
                 {isComparisonPickerOpen
@@ -1634,7 +1818,7 @@ export function ValidationPage({
                 </p>
               </div>
             </div>
-            <div className="kpi-grid validation-scorecard-grid">
+            <div className="kpi-grid validation-scorecard-grid" data-model-information-target="validation-summary">
               <div className="kpi-card validation-composite-card">
                 <span>Comparative validation loss — lower is better</span>
                 <strong>
@@ -1822,6 +2006,7 @@ export function ValidationPage({
                       comparisonMetrics={comparisonMetricById}
                       versionLabels={comparisonSummary ? { selected: summary.version, comparison: comparisonSummary.version } : undefined}
                       demoMetricId={isValidationDemoActive ? representativeMetricId : undefined}
+                      modelInformationMetricId={modelInformationMetricId}
                       activeMetricId={activeValidationDetail?.metric.metricId}
                       onOpenDetails={openValidationDetails}
                       onCloseDetails={closeValidationDetails}
@@ -1855,8 +2040,10 @@ export function ValidationPage({
           demoMetricId={isValidationDemoActive && activeValidationDetail.metric.metricId === representativeMetricId
             ? representativeMetricId
             : undefined}
+          modelInformationMetricId={isModelInformationDemo ? modelInformationMetricId : undefined}
           sourceOpen={openValidationProvenanceIds.has(activeValidationDetail.metric.metricId)}
-          onSourceOpenChange={isValidationDemoActive && activeValidationDetail.metric.metricId === representativeMetricId
+          onSourceOpenChange={(isValidationDemoActive && activeValidationDetail.metric.metricId === representativeMetricId) ||
+            (isModelInformationDemo && activeValidationDetail.metric.metricId === modelInformationMetricId)
             ? (open) => handleValidationProvenanceOpenChange(activeValidationDetail.metric.metricId, open)
             : undefined}
         />
@@ -1867,10 +2054,10 @@ export function ValidationPage({
         progressStorageKey={validationDemoProgressKey}
         startComplete={isCombinedValidationDemo && modelEvidenceDemo?.showCompletion === true}
         progressLabel={isCombinedValidationDemo
-          ? 'Model evidence demo · Validation · Part 2 of 2'
+          ? 'Model information demo · Validation · Part 2 of 2'
           : undefined}
         announcementLabel={isCombinedValidationDemo
-          ? 'Model evidence demo, Validation, Part 2 of 2'
+          ? 'Model information demo, Validation, Part 2 of 2'
           : undefined}
         numberStepsInProgressLabel={isCombinedValidationDemo}
         completion={isCombinedValidationDemo ? MODEL_EVIDENCE_VALIDATION_COMPLETION : undefined}

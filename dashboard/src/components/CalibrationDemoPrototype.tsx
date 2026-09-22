@@ -11,6 +11,7 @@ import {
   MODEL_EVIDENCE_CALIBRATION_SESSION_KEY,
   MODEL_EVIDENCE_DEMO_QUERY_VALUE
 } from '../lib/modelEvidenceDemo';
+import { DemoShading } from './DemoShading';
 
 export const CALIBRATION_DEMO_TARGETS = {
   primaryModel: 'calibration-primary-model',
@@ -981,13 +982,14 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
   const announcement = walkthroughComplete
     ? CALIBRATION_DEMO_COMPLETION.title
     : currentStep
-      ? `Model evidence demo, Calibration, Part 1 of 2, step ${stepIndex + 1} of ${CALIBRATION_DEMO_STEPS.length}: ${currentStep.title}`
+      ? `Model information demo, Calibration, Part 1 of 2, step ${stepIndex + 1} of ${CALIBRATION_DEMO_STEPS.length}: ${currentStep.title}`
       : initialError ? 'Calibration walkthrough could not be loaded' : 'Loading Calibration walkthrough';
 
   return <div
     className="validation-demo-layer calibration-demo-layer"
     data-calibration-demo-state={walkthroughComplete ? 'complete' : currentStep?.id ?? 'loading'}
   >
+    <DemoShading holes={targetState === 'ready' && spotlight ? [spotlight] : []} />
     {scrimStyles.map((style, index) => <div
       className={`validation-demo-scrim is-${scrimKinds[index]}`}
       style={style}
@@ -1010,7 +1012,7 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
       aria-busy={initialLoading || initialWaiting || (currentStep?.id === 'comparison-model' && props.isComparisonLoading) ? 'true' : undefined}
     >
       {!ready && !walkthroughComplete ? <>
-        <p className="validation-demo-progress">Model evidence demo · Calibration · Part 1 of 2</p>
+        <p className="validation-demo-progress">Model information demo · Calibration · Part 1 of 2</p>
         <h2 id="calibration-demo-coach-title">
           {initialError ? 'Calibration could not be loaded' : 'Preparing the Calibration walkthrough'}
         </h2>
@@ -1027,7 +1029,7 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
           <button type="button" className="secondary-button" onClick={onExitToHome}>Exit to Home</button>
         </div>
       </> : targetState === 'missing' && currentStep ? <>
-        <p className="validation-demo-progress">Model evidence demo · Calibration · step unavailable</p>
+        <p className="validation-demo-progress">Model information demo · Calibration · step unavailable</p>
         <h2 id="calibration-demo-coach-title">This demo step isn’t ready</h2>
         <p id="calibration-demo-coach-body">The highlighted Calibration control could not be found. Retry after the page has finished loading.</p>
         <div className="validation-demo-actions">
@@ -1036,7 +1038,7 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
           <button type="button" className="secondary-button" onClick={onExitToHome}>Exit to Home</button>
         </div>
       </> : walkthroughComplete ? <>
-        <p className="validation-demo-progress">Model evidence demo · Calibration · Part 1 of 2</p>
+        <p className="validation-demo-progress">Model information demo · Calibration · Part 1 of 2</p>
         <h2 id="calibration-demo-coach-title">{CALIBRATION_DEMO_COMPLETION.title}</h2>
         <p id="calibration-demo-coach-body">{CALIBRATION_DEMO_COMPLETION.body}</p>
         <div className="validation-demo-actions">
@@ -1050,7 +1052,7 @@ export function CalibrationDemoPrototype(props: CalibrationDemoPrototypeProps) {
         </div>
       </> : currentStep ? <>
         <p className="validation-demo-progress">
-          Model evidence demo · Calibration · Part 1 of 2{isResumed ? ' · resumed' : ''} · step {stepIndex + 1} of {CALIBRATION_DEMO_STEPS.length}
+          Model information demo · Calibration · Part 1 of 2{isResumed ? ' · resumed' : ''} · step {stepIndex + 1} of {CALIBRATION_DEMO_STEPS.length}
         </p>
         <h2 id="calibration-demo-coach-title">{currentStep.title}</h2>
         <p id="calibration-demo-coach-body">{currentStep.body}</p>

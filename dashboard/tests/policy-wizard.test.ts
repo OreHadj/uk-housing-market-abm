@@ -7,6 +7,7 @@ import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../shared/policy
 import type { ModelRunParameterDefinition, ModelRunSnapshotOption } from '../shared/types.js';
 import { ManualRunSetupCard } from '../src/pages/run-experiments/ManualRunSetupCard.js';
 import { scenarioDraftStorageKey } from '../src/lib/scenarioDraft.js';
+import { applyPolicyRunBuilderDefaults, buildGeneralModelControlOverridesFromForm, normalizeManualScenarioFormValues, toInitialFormValues } from '../src/lib/experimentRunDefaults.js';
 
 const noop = () => {};
 const basePolicy = BASE_POLICY_OPTIONS.find((policy) => policy.id === '2024');
@@ -46,6 +47,26 @@ const generalParameters: ModelRunParameterDefinition[] = [
     group: 'General model control', type: 'boolean', defaultValue: false
   }
 ];
+
+const sharedDefaults = toInitialFormValues(generalParameters, basePolicy);
+const policyDefaults = applyPolicyRunBuilderDefaults(generalParameters, sharedDefaults);
+assert.equal(sharedDefaults.recordTransactions, false, 'Shared defaults must keep transaction exports off outside policy runs');
+assert.equal(policyDefaults.recordTransactions, true, 'New policy runs should retain the transactions needed by Lending risk');
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(generalParameters, policyDefaults).recordTransactions,
+  true,
+  'Policy submission should enable transaction recording even when the model config defaults it off'
+);
+const optedOut = normalizeManualScenarioFormValues({ ...policyDefaults, recordTransactions: false });
+assert.equal(optedOut.recordTransactions, false, 'Restored or edited policy settings must retain an explicit recording opt-out');
+const recordingOnParameters = generalParameters.map((parameter) => parameter.key === 'recordTransactions'
+  ? { ...parameter, defaultValue: true }
+  : parameter);
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(recordingOnParameters, optedOut).recordTransactions,
+  false,
+  'An explicit opt-out must override a model config that enables recording'
+);
 
 const baselineFormValues: Record<string, string | boolean> = {
   N_STEPS: '3500',

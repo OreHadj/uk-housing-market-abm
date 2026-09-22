@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import { assertDemoExampleMutable, assertDemoExampleTitleAvailable, isInstalledDemoExample } from './demoExamples';
 import path from 'node:path';
 import type {
   KpiMetricValues,
@@ -769,6 +770,7 @@ function emitRawLogLine(record: ExperimentRecord, streamName: 'stdout' | 'stderr
 function asSummary(metadata: SensitivityExperimentMetadata): SensitivityExperimentSummary {
   return {
     experimentId: metadata.experimentId,
+    isExample: metadata.isExample === true,
     title: metadata.title,
     baseline: metadata.baseline,
     basePolicy: metadata.basePolicy,
@@ -1393,6 +1395,7 @@ function ensureLoaded(pathsInput: RuntimePathInput): void {
       if (metadata.experimentId !== experimentId) {
         continue;
       }
+      metadata.isExample = isInstalledDemoExample(paths, 'sensitivity', experimentId);
 
       if (!isTerminal(metadata.status)) {
         metadata.status = 'failed';
@@ -1768,6 +1771,8 @@ export function prepareSensitivityExperimentSubmission(
 ):
   | { accepted: false; warnings: ModelRunWarning[]; warningSummary: SensitivityExperimentMetadata['warningSummary'] }
   | { accepted: true; prepared: PreparedSensitivityExperimentSubmission } {
+  assertDemoExampleTitleAvailable(payload.title);
+  if (options.forcedExperimentId) assertDemoExampleMutable('sensitivity', options.forcedExperimentId);
   const {
     baseline,
     basePolicy,
@@ -2345,6 +2350,7 @@ export function deleteSensitivityExperiment(
   pathsInput: RuntimePathInput,
   experimentId: string
 ): SensitivityExperimentDeleteResponse {
+  assertDemoExampleMutable('sensitivity', experimentId);
   ensureLoaded(pathsInput);
   const state = getRepoState(pathsInput);
   const normalized = experimentId.trim();
@@ -2555,6 +2561,7 @@ export function cancelSensitivityExperiment(
   pathsInput: RuntimePathInput,
   experimentId: string
 ): SensitivityExperimentDetailPayload {
+  assertDemoExampleMutable('sensitivity', experimentId);
   ensureLoaded(pathsInput);
   const state = getRepoState(pathsInput);
   const normalized = experimentId.trim();

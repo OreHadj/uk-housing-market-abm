@@ -13,9 +13,10 @@ import { CollapsibleSection } from '../components/CollapsibleSection';
 import { CompareCard } from '../components/CompareCard';
 import { LoadingSkeletonGroup } from '../components/LoadingSkeleton';
 import { EvidenceReturnPanel } from '../components/EvidenceReturnPanel';
-import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchVersions, isRetryableApiError } from '../lib/api';
+import { API_RETRY_DELAY_MS, fetchCalibrationOverview, fetchCatalog, fetchCompare, fetchValidationOverview, fetchVersions, isRetryableApiError } from '../lib/api';
 import { createCalibrationComparisonFormatter, formatCalibrationNumber } from '../lib/calibrationNumberFormat';
 import { chronologicalCalibrationPair, normalizeCalibrationComparison } from '../lib/calibrationComparison';
+import { loadModelInformationValidationContext, modelInformationCalibrationVersion } from '../lib/guidedDemos/modelInformationCalibration';
 import { buildModelOptions, getDefaultModelVersion } from '../lib/modelAnchors';
 import { readScenarioDraft, updateScenarioDraftModel } from '../lib/scenarioDraft';
 import { readSensitivityDraft, updateSensitivityDraftModel } from '../lib/sensitivityDraft';
@@ -526,6 +527,9 @@ export function ComparePage({
   modelEvidenceDemo?: CalibrationModelEvidenceDemoContext;
 } = {}) {
   const [params, setParams] = useSearchParams();
+  const isModelInformationDemo = params.get('demo') === 'model-information';
+  const modelInformationStep = params.get('step') ?? 'model-setup';
+  const modelInformationEvidenceYear = params.get('evidenceYear') ?? '';
   const savedDemoProgress = modelEvidenceDemo?.active ? readCalibrationDemoProgress() : null;
   const [versions, setVersions] = useState<string[]>([]);
   const [inProgress, setInProgress] = useState<string[]>([]);
@@ -542,6 +546,11 @@ export function ComparePage({
   const [completedPrimaryVersion, setCompletedPrimaryVersion] = useState('');
   const [completedComparisonVersion, setCompletedComparisonVersion] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
+  const [modelInformationValidationContext, setModelInformationValidationContext] = useState<{
+    version: string;
+    evidenceYear: number;
+  } | null>(null);
+  const [modelInformationValidationError, setModelInformationValidationError] = useState('');
   const [isBehaviouralOriginOpen, setIsBehaviouralOriginOpen] = useState(
     savedDemoProgress?.isBehaviouralOriginOpen ?? false
   );
@@ -594,15 +603,17 @@ export function ComparePage({
         const resume = modelEvidenceDemo?.active ? readCalibrationDemoProgress() : null;
         const parentPrimaryVersion = modelEvidenceDemo?.primaryVersion ?? '';
         const parentComparisonVersion = modelEvidenceDemo?.comparisonVersion ?? '';
-        const initialComparisonEnabled =
+        const initialComparisonEnabled = !isModelInformationDemo && (
           params.get('mode') === 'compare' ||
           resume?.isCompareChecked === true ||
-          Boolean(parentComparisonVersion);
+          Boolean(parentComparisonVersion));
         const defaultVersion = getDefaultModelVersion(available, versionPayload.inProgressVersions);
         const requested = initialComparisonEnabled
           ? params.get('right') ?? resume?.primaryVersion ?? parentPrimaryVersion
           : params.get('version') ?? resume?.primaryVersion ?? parentPrimaryVersion;
-        const primaryVersion = available.includes(requested) ? requested : defaultVersion;
+        const primaryVersion = isModelInformationDemo
+          ? modelInformationCalibrationVersion(requested, available, defaultVersion)
+          : available.includes(requested) ? requested : defaultVersion;
         const requestedComparison = params.get('left') ?? resume?.comparisonVersion ?? parentComparisonVersion;
         setVersions(available);
         setInProgress(versionPayload.inProgressVersions);
@@ -647,8 +658,10 @@ export function ComparePage({
       next.set('right', selected);
       if (left && left !== selected) next.set('left', left);
       else next.delete('left');
-      next.delete('version');
+      if (isModelInformationDemo) next.set('version', selected);
+      else next.delete('version');
     }
+    if (isModelInformationDemo) next.delete('comparisonVersion');
     if (next.toString() !== params.toString()) setParams(next, { replace: true });
 
     let cancelled = false;
@@ -715,6 +728,56 @@ export function ComparePage({
     void load();
     return () => { cancelled = true; if (timer) window.clearTimeout(timer); };
   }, [comparisonEnabled, mode, selected, left, catalog, reloadToken]);
+
+  useEffect(() => {
+    if (!isModelInformationDemo || !selected) return;
+    const requestedYear = modelInformationEvidenceYear ? Number(modelInformationEvidenceYear) : undefined;
+    // The URL change after resolving the default year must not refetch or reset the tour.
+    if (modelInformationValidationContext?.version === selected &&
+        modelInformationValidationContext.evidenceYear === requestedYear) return;
+    setModelInformationValidationContext(null);
+    setModelInformationValidationError('');
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    const loadContext = async () => {
+      try {
+        const context = await loadModelInformationValidationContext(selected, requestedYear, fetchValidationOverview);
+        if (cancelled) return;
+        setModelInformationValidationContext(context);
+      } catch (reason) {
+        if (cancelled) return;
+        if (isRetryableApiError(reason)) {
+          retryTimer = window.setTimeout(() => void loadContext(), API_RETRY_DELAY_MS);
+          return;
+        }
+        setModelInformationValidationError((reason as Error).message);
+      }
+    };
+    void loadContext();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [isModelInformationDemo, selected, modelInformationEvidenceYear, reloadToken]);
+
+  useEffect(() => {
+    if (!isModelInformationDemo || !modelInformationValidationContext ||
+        modelInformationValidationContext.version !== selected || params.get('version') !== selected ||
+        modelInformationEvidenceYear) return;
+    // Apply the resolved default to the latest route, not the query captured by an API
+    // request. A slow response must never roll back a newer step or model selection.
+    const next = new URLSearchParams(params);
+    next.set('evidenceYear', String(modelInformationValidationContext.evidenceYear));
+    setParams(next, { replace: true });
+  }, [isModelInformationDemo, modelInformationValidationContext, modelInformationEvidenceYear, selected, params, setParams]);
+
+  useEffect(() => {
+    if (!isModelInformationDemo) return;
+    // Prepare each stop on entry and history restoration, without requiring clicks or
+    // continuously reopening a section the visitor subsequently chooses to collapse.
+    if (modelInformationStep === 'fitted-parameters') setIsFittedParametersOpen(true);
+    if (modelInformationStep === 'other-assumptions') setIsOtherAssumptionsOpen(true);
+  }, [isModelInformationDemo, modelInformationStep, selected]);
 
   const referenceGroups = useMemo(() => {
     const rows = (comparison?.items ?? []).filter((item) => !FITTED_IDS.has(item.id));
@@ -836,7 +899,19 @@ export function ComparePage({
     modelEvidenceDemo.onContextChange(selected, requestedComparisonVersion);
   }, [modelEvidenceDemo, requestedComparisonVersion, selected]);
 
-  return <section className="calibration-layout calibration-workspace">
+  const modelInformationState = error || modelInformationValidationError
+    ? 'unavailable'
+    : !isCalibrationDemoReady || loading || waiting ||
+        modelInformationValidationContext?.version !== selected ||
+        modelInformationValidationContext.evidenceYear !== Number(modelInformationEvidenceYear)
+      ? 'loading'
+      : 'ready';
+
+  return <section
+    className="calibration-layout calibration-workspace"
+    data-model-information-calibration-state={isModelInformationDemo ? modelInformationState : undefined}
+    data-model-information-message={isModelInformationDemo ? error || modelInformationValidationError || undefined : undefined}
+  >
     {hasSetupContext && returnVersion && <EvidenceReturnPanel
       className="evidence-context-banner"
       message={hasScenarioContext
@@ -853,7 +928,7 @@ export function ComparePage({
     />}
     <article className="results-card calibration-evidence-introduction">
       <div className="validation-introduction-copy">
-        <h2 id="calibration-page-heading">Calibration</h2>
+        <h2 id="calibration-page-heading" className="visually-hidden">Calibration</h2>
         <p>Understand why the model needs fitted behaviour, what was fitted, and which other assumptions it carries.</p>
         <p>
           The model combines inputs measured directly from UK data with behavioural parameters that cannot be

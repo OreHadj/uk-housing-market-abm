@@ -15,7 +15,7 @@ WORKDIR /app/dashboard
 
 RUN npm run build:server && npm prune --omit=dev
 
-RUN mkdir -p /app/tmp && chown node:node /app/tmp
+RUN mkdir -p /app/tmp /app/Results && chown node:node /app/tmp /app/Results
 
 USER node
 

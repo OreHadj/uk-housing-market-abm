@@ -1,4 +1,5 @@
 // Author: Max Stoddard
+import { useId } from 'react';
 import { CollapsibleSection } from '../../components/CollapsibleSection';
 import type { ModelRunParameterDefinition } from '../../../shared/types';
 import { InfoLabel } from './InfoLabel';
@@ -77,12 +78,16 @@ interface ParameterInputProps {
 }
 
 export function ParameterInput({ parameter, value, executionDisabled, mode = 'manual', onChange }: ParameterInputProps) {
+  const recordingNoteId = useId();
+  const showRecordingNote = mode === 'manual' && parameter.key === 'recordTransactions';
   return (
     <label className="run-param-item">
       <InfoLabel label={parameter.title} info={getParameterHelp(parameter, mode)} />
       {parameter.type === 'boolean' ? (
         <input
           type="checkbox"
+          aria-label={showRecordingNote ? parameter.title : undefined}
+          aria-describedby={showRecordingNote ? recordingNoteId : undefined}
           checked={Boolean(value)}
           disabled={executionDisabled}
           onChange={(event) => onChange(parameter, event.target.checked)}
@@ -96,6 +101,7 @@ export function ParameterInput({ parameter, value, executionDisabled, mode = 'ma
           onChange={(event) => onChange(parameter, event.target.value)}
         />
       )}
+      {showRecordingNote && <small id={recordingNoteId}>Used by the policy Report’s “03 / Lending risk” section for High LTV and High LTI charts. Increases output file size.</small>}
     </label>
   );
 }
@@ -272,7 +278,7 @@ export function RecordSettingsControl({
       >
         {mode === 'manual' && (
           <p className="additional-data-exports-intro">
-            Optional transaction and household-level files for analysis outside the dashboard. These exports can substantially increase file size and do not add charts to the current Results page.
+            Record transactions enables the Lending risk charts in policy reports. Other optional exports support further analysis outside the dashboard. These files can substantially increase output size.
           </p>
         )}
         <div className="run-param-grid">

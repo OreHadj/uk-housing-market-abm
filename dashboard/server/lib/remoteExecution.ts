@@ -1568,6 +1568,7 @@ export class RemoteExecutionManager {
       repoRoot: tempRoot,
       dataRoot: path.join(tempRoot, 'input-data-versions'),
       resultsRoot,
+      demoExamplesRoot: path.join(tempRoot, 'demo-examples'),
       tempRoot: path.join(tempRoot, 'tmp'),
       logsRoot: path.join(tempRoot, 'logs')
     };

@@ -123,6 +123,7 @@ function PolicyValueField({
     const stored = scaledInputToStoredFraction(raw, scale);
     committedRef.current = Number.parseFloat(stored);
     onChange(parameter, stored);
+    onDemoCommit?.(stored);
   };
 
   const handleBlur = () => {

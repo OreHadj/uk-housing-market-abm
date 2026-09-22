@@ -1,0 +1,120 @@
+.navigation-demo-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  isolation: isolate;
+  pointer-events: none;
+}
+
+.navigation-demo-scrim {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.navigation-demo-spotlight {
+  position: absolute;
+  pointer-events: none;
+}
+
+.navigation-demo-coach {
+  position: absolute;
+  z-index: 1;
+  box-sizing: border-box;
+  width: min(22rem, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1.2rem;
+  border: 1px solid rgba(17, 32, 24, 0.16);
+  border-radius: 0.9rem;
+  background: var(--panel, #fff);
+  box-shadow: 0 24px 70px rgba(10, 24, 17, 0.3);
+  pointer-events: auto;
+  outline: none;
+}
+
+.navigation-demo-coach.is-centred {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.navigation-demo-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.navigation-demo-progress {
+  margin: 0;
+  color: var(--accent, #0b7285);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.navigation-demo-exit {
+  flex-shrink: 0;
+  padding: 0.35rem 0.45rem;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--muted, #52615d);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.navigation-demo-exit:hover {
+  background: rgba(17, 32, 24, 0.07);
+}
+
+.navigation-demo-coach h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.navigation-demo-body {
+  margin: 0.7rem 0 0;
+  color: var(--muted, #52615d);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.navigation-demo-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.navigation-demo-actions button {
+  min-height: 2.4rem;
+  margin: 0;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.navigation-demo-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.navigation-demo-coach button:focus-visible {
+  outline: 3px solid var(--accent, #0b7285);
+  outline-offset: 3px;
+}
+
+@media (max-width: 600px) {
+  .navigation-demo-coach {
+    max-height: min(60vh, calc(100dvh - 24px));
+    padding: 1rem;
+  }
+}

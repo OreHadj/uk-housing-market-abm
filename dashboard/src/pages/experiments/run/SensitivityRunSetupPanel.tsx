@@ -1,5 +1,5 @@
 import { SensitivitySetupCard } from '../../run-experiments/SensitivitySetupCard';
-import type { ExperimentDemoCoordinator } from '../../../components/ExperimentDemoOverlay';
+import type { ExperimentDemoCoordinator } from '../../../lib/guidedDemos/creation';
 import type { ExperimentRunController } from './useExperimentRunController';
 
 interface SensitivityRunSetupPanelProps {
@@ -71,7 +71,7 @@ export function SensitivityRunSetupPanel({
         ...experimentDemo,
         ready: controller.isDraftHydrated && Boolean(controller.options),
         loading: controller.isLoadingOptions,
-        error: controller.isLoadingOptions ? '' : controller.pageError,
+        error: controller.isLoadingOptions ? '' : controller.optionsError,
         onRetryLoad: () => {
           void controller.retryOptions();
         }

@@ -225,6 +225,74 @@ try {
   check('seed count', pooled.seedCount, 2);
   check('seed labels', pooled.seedLabels, ['seed-1', 'seed-2']);
 
+  console.log('\n=== fixture: large pooled transaction files ===');
+  // Each seed is below the usual function-argument limit, but their combined 240,000 rows are
+  // above it. Spreading the pooled model times into Math.min/Math.max used to throw before the
+  // requested analysis window could be applied. Cash-only endpoints and malformed outliers also
+  // ensure the bounds still describe exactly the transactions accepted by the parser.
+  const largePattern: FixtureRow[] = [
+    { ...BASE_ROWS[0], modelTime: 100 },
+    { ...BASE_ROWS[0], modelTime: 600, principal: 160000 },
+    { ...BASE_ROWS[1], modelTime: 600 },
+    { ...BASE_ROWS[1], modelTime: 1001, principal: 240000 },
+    { ...BASE_ROWS[3], modelTime: 10 },
+    { ...BASE_ROWS[3], modelTime: 2000 }
+  ];
+  const largeSeedRows = Array.from({ length: 120000 }, (_, index) => largePattern[index % largePattern.length]);
+  largeSeedRows.push(
+    { ...BASE_ROWS[0], modelTime: 0, price: Number.NaN },
+    { ...BASE_ROWS[0], modelTime: 9000, price: Number.NaN }
+  );
+  writeFixtureRun(
+    path.join(fixturePaths.resultsRoot, 'fixture-large-seeds'),
+    {
+      [path.join('seeds', 'seed-1', SALE_FILE)]: largeSeedRows,
+      [path.join('seeds', 'seed-2', SALE_FILE)]: largeSeedRows
+    },
+    ['TIME_TO_START_RECORDING_TRANSACTIONS = 0', 'recordTransactions = true']
+  );
+
+  const largeFull = getLendingDistribution(fixturePaths, 'fixture-large-seeds', 'full');
+  check('large pooled run is available', largeFull.available, true);
+  check('large pool retains both seeds', [largeFull.seedCount, largeFull.seedLabels], [2, ['seed-1', 'seed-2']]);
+  check('cash endpoints set full bounds; malformed outliers do not',
+    [largeFull.window.startModelTime, largeFull.window.endModelTime], [10, 2000]);
+  check('large full-window counts', largeFull.counts, {
+    transactions: 240000,
+    mortgaged: 160000,
+    cashExcluded: 80000,
+    byBorrowerType: [
+      { borrowerType: 'FTB', count: 80000 },
+      { borrowerType: 'HM', count: 80000 },
+      { borrowerType: 'BTL', count: 0 }
+    ]
+  });
+  check('large full-window FTB high-LTV share', tailShare(largeFull, 'ltv', 'FTB'), 50);
+  check('large full-window HM high-LTV share', tailShare(largeFull, 'ltv', 'HM'), 50);
+
+  const largePost500 = getLendingDistribution(fixturePaths, 'fixture-large-seeds', 'post500');
+  check('large filtered run is available', largePost500.available, true);
+  check('large pool honours post500 and the cash-only end',
+    [largePost500.window.effective, largePost500.window.clamped,
+      largePost500.window.startModelTime, largePost500.window.endModelTime],
+    ['post500', false, 500, 2000]);
+  check('large filtered counts', largePost500.counts, {
+    transactions: 160000,
+    mortgaged: 120000,
+    cashExcluded: 40000,
+    byBorrowerType: [
+      { borrowerType: 'FTB', count: 40000 },
+      { borrowerType: 'HM', count: 80000 },
+      { borrowerType: 'BTL', count: 0 }
+    ]
+  });
+  check('large filtered FTB mean LTV', round(summaryFor(largePost500, 'FTB').meanLtv, 4), 80);
+  check('large filtered HM mean LTV', round(summaryFor(largePost500, 'HM').meanLtv, 4), 65);
+  check('large filtered FTB high-LTV share', tailShare(largePost500, 'ltv', 'FTB'), 100);
+  check('large filtered HM high-LTV share', tailShare(largePost500, 'ltv', 'HM'), 50);
+  check('large filtered FTB high-LTI share', tailShare(largePost500, 'lti', 'FTB'), 100);
+  check('large filtered HM high-LTI share', tailShare(largePost500, 'lti', 'HM'), 50);
+
   console.log('\n=== fixture: unavailable states ===');
   const disabledRun = path.join(fixturePaths.resultsRoot, 'fixture-disabled');
   fs.mkdirSync(disabledRun, { recursive: true });

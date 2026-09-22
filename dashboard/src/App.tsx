@@ -14,43 +14,18 @@ import { HomePage } from './pages/HomePage';
 import { LoginPage } from './pages/LoginPage';
 import { ModelEvidencePage } from './pages/ModelEvidencePage';
 import { ResultsPage } from './pages/ResultsPage';
+import { ResultsLandingPage } from './pages/ResultsLandingPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { WorkspaceTypeNavigation } from './components/WorkspaceTypeNavigation';
+import { ModelInformationNavigation } from './components/ModelInformationNavigation';
+import { GuidedDemo } from './components/GuidedDemo';
+import { PrimaryNavigationIcon } from './components/PrimaryNavigationIcon';
+import { getActivePrimaryDestination, getModelInformationView, getResultsNavigationSearch, isResultsLanding, MODEL_INFORMATION_VIEWS, PRIMARY_DESTINATION_LABELS } from './lib/workspaceNavigation';
 
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
 const LEGACY_PREVIEW_MODE_STORAGE_KEY = 'dashboard.prodPreviewEnabled';
 const EXPERIMENTS_VIEW_PATH = '/experiments';
-
-type PrimaryDestination = 'home' | 'experiments' | 'results' | 'model-evidence' | 'settings';
-
-const PRIMARY_DESTINATION_LABELS: Record<PrimaryDestination, string> = {
-  home: 'Home',
-  experiments: 'Experiments',
-  results: 'Results',
-  'model-evidence': 'Model Evidence',
-  settings: 'Settings'
-};
-
-function getActivePrimaryDestination(pathname: string): PrimaryDestination | null {
-  if (pathname === '/') return 'home';
-  if (pathname === '/experiments') return 'experiments';
-  if (pathname === '/results') return 'results';
-  if (pathname === '/settings') return 'settings';
-  if (pathname === '/model-evidence' || pathname === '/calibration' || pathname === '/validation') {
-    return 'model-evidence';
-  }
-
-  if (
-    pathname === '/scenarios' ||
-    pathname === '/scenarios/new' ||
-    pathname === '/sensitivity' ||
-    pathname === '/sensitivity/new' ||
-    pathname === '/runs' ||
-    pathname === '/new-scenario' ||
-    pathname === '/compare'
-  ) return 'experiments';
-  return null;
-}
 
 /**
  * /compare was a separate page that rendered the same ManualResultsView as /scenarios, differing
@@ -169,6 +144,37 @@ export function App() {
 
   const loginPath = `/login?next=${encodeURIComponent(EXPERIMENTS_VIEW_PATH)}`;
   const activePrimaryDestination = getActivePrimaryDestination(location.pathname);
+  const resultsLanding = activePrimaryDestination === 'results' && isResultsLanding(new URLSearchParams(location.search));
+  const [openSidebarSections, setOpenSidebarSections] = useState(() => ({
+    experiments: activePrimaryDestination === 'experiments',
+    results: activePrimaryDestination === 'results',
+    'model-evidence': activePrimaryDestination === 'model-evidence'
+  }));
+  const [lastResultsSearch, setLastResultsSearch] = useState(() => activePrimaryDestination === 'results' && !resultsLanding
+    ? getResultsNavigationSearch(new URLSearchParams(location.search)) : '');
+  const [lastModelInformationSearch, setLastModelInformationSearch] = useState('');
+  const modelInformationView = getModelInformationView(new URLSearchParams(location.search));
+
+  useEffect(() => {
+    if (activePrimaryDestination === 'experiments' || activePrimaryDestination === 'results' || activePrimaryDestination === 'model-evidence') {
+      setOpenSidebarSections((current) => current[activePrimaryDestination]
+        ? current : { ...current, [activePrimaryDestination]: true });
+    }
+  }, [activePrimaryDestination]);
+
+  useEffect(() => {
+    if (activePrimaryDestination === 'results' && !resultsLanding) {
+      setLastResultsSearch(getResultsNavigationSearch(new URLSearchParams(location.search)));
+    }
+  }, [activePrimaryDestination, location.search, resultsLanding]);
+
+  useEffect(() => {
+    if (location.pathname !== '/model-evidence') return;
+    const search = new URLSearchParams(location.search);
+    // Keep model selections and draft return context, but never restart an exited tour.
+    for (const key of ['demo', 'step', 'tour', 'journey']) search.delete(key);
+    setLastModelInformationSearch(search.size ? `?${search}` : '');
+  }, [location.pathname, location.search]);
 
   const refreshAuthStatus = useCallback(async () => {
     try {
@@ -276,38 +282,87 @@ export function App() {
             className={activePrimaryDestination === 'home' ? 'active' : undefined}
             aria-current={activePrimaryDestination === 'home' ? 'page' : undefined}
             to="/"
+            data-guided-target="sidebar-home"
           >
-            Home
+            <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="home" /><span>Home</span></span>
           </Link>
-          <Link
-            className={activePrimaryDestination === 'experiments' ? 'active' : undefined}
-            aria-current={activePrimaryDestination === 'experiments' ? 'page' : undefined}
-            to="/experiments"
-          >
-            Experiments
-          </Link>
-          <Link
-            className={activePrimaryDestination === 'results' ? 'active' : undefined}
-            aria-current={activePrimaryDestination === 'results' ? 'page' : undefined}
-            to="/results"
-          >
-            Results
-          </Link>
-          {modelEvidenceVisible && (
+          <div className={`sidebar-destination${activePrimaryDestination === 'experiments' ? ' is-active' : ''}${openSidebarSections.experiments ? ' is-expanded' : ''}`}>
             <Link
-              className={activePrimaryDestination === 'model-evidence' ? 'active' : undefined}
-              aria-current={activePrimaryDestination === 'model-evidence' ? 'page' : undefined}
-              to="/model-evidence"
+              className={activePrimaryDestination === 'experiments' ? 'active' : undefined}
+              aria-current={activePrimaryDestination === 'experiments'
+                ? location.pathname === '/experiments' ? 'page' : 'true'
+                : undefined}
+              aria-expanded={openSidebarSections.experiments}
+              aria-controls="sidebar-experiment-types"
+              to="/experiments"
+              data-guided-target="sidebar-experiments"
+              onClick={(event) => {
+                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                setOpenSidebarSections((current) => ({
+                  ...current,
+                  experiments: activePrimaryDestination === 'experiments' ? !current.experiments : true
+                }));
+              }}
             >
-              Model Evidence
+              <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="experiments" /><span>Experiments</span></span>
             </Link>
+            <div id="sidebar-experiment-types" hidden={!openSidebarSections.experiments}>
+              <WorkspaceTypeNavigation area="experiments" />
+            </div>
+          </div>
+          <div className={`sidebar-destination${activePrimaryDestination === 'results' ? ' is-active' : ''}${openSidebarSections.results ? ' is-expanded' : ''}`}>
+            <Link
+              className={activePrimaryDestination === 'results' ? 'active' : undefined}
+              aria-current={activePrimaryDestination === 'results' ? resultsLanding ? 'page' : 'true' : undefined}
+              aria-expanded={openSidebarSections.results}
+              aria-controls="sidebar-result-types"
+              to="/results"
+              data-guided-target="sidebar-results"
+              onClick={(event) => {
+                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                setOpenSidebarSections((current) => ({
+                  ...current,
+                  results: resultsLanding ? !current.results : true
+                }));
+              }}
+            >
+              <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="results" /><span>Results</span></span>
+            </Link>
+            <div id="sidebar-result-types" hidden={!openSidebarSections.results}>
+              <WorkspaceTypeNavigation area="results" resultsSearch={lastResultsSearch} />
+            </div>
+          </div>
+          {modelEvidenceVisible && (
+            <div className={`sidebar-destination${activePrimaryDestination === 'model-evidence' ? ' is-active' : ''}${openSidebarSections['model-evidence'] ? ' is-expanded' : ''}`}>
+              <Link
+                className={activePrimaryDestination === 'model-evidence' ? 'active' : undefined}
+                aria-current={activePrimaryDestination === 'model-evidence' ? 'true' : undefined}
+                aria-expanded={openSidebarSections['model-evidence']}
+                aria-controls="sidebar-model-information-sections"
+                to={activePrimaryDestination === 'model-evidence' ? `${location.pathname}${location.search}` : `/model-evidence${lastModelInformationSearch}`}
+                data-guided-target="sidebar-model-information"
+                onClick={(event) => {
+                  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  setOpenSidebarSections((current) => ({
+                    ...current,
+                    'model-evidence': activePrimaryDestination === 'model-evidence' ? !current['model-evidence'] : true
+                  }));
+                }}
+              >
+                <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="model-evidence" /><span>{PRIMARY_DESTINATION_LABELS['model-evidence']}</span></span>
+              </Link>
+              <div id="sidebar-model-information-sections" hidden={!openSidebarSections['model-evidence']}>
+                <ModelInformationNavigation modelInformationSearch={lastModelInformationSearch} />
+              </div>
+            </div>
           )}
           <Link
             className={activePrimaryDestination === 'settings' ? 'active' : undefined}
             aria-current={activePrimaryDestination === 'settings' ? 'page' : undefined}
             to="/settings"
+            data-guided-target="sidebar-settings"
           >
-            Settings
+            <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="settings" /><span>Settings</span></span>
           </Link>
           {experimentsVisible && browserAuthControlsVisible && authStatus.authEnabled && !authStatus.canWrite && (
             <NavLink className="main-nav-auth-control main-nav-auth-link" to={loginPath}>
@@ -339,9 +394,17 @@ export function App() {
       </aside>
 
       <div className="app-workspace">
-        {isDevEnv && (
-          <header className="top">
-            <div className="env-controls">
+        {(activePrimaryDestination || isDevEnv) && (
+          <header className="top workspace-header">
+            {activePrimaryDestination && (
+              <h2 id="workspace-page-title" className="workspace-page-title">
+                {PRIMARY_DESTINATION_LABELS[activePrimaryDestination]}
+                {activePrimaryDestination === 'model-evidence' && <span className="model-information-workspace-title">
+                  <span aria-hidden="true"> / </span>{MODEL_INFORMATION_VIEWS.find((view) => view.id === modelInformationView)?.label}
+                </span>}
+              </h2>
+            )}
+            {isDevEnv && <div className="env-controls">
               <span className="env-pill-dev">{activeViewModeLabel}</span>
               <label className="env-selector">
                 <span>Runtime view</span>
@@ -353,16 +416,11 @@ export function App() {
                   ))}
                 </select>
               </label>
-            </div>
+            </div>}
           </header>
         )}
 
-      <main id="main-workspace" className="app-main" tabIndex={-1}>
-        {activePrimaryDestination && (
-          <header className="workspace-page-header">
-            <h2 className="workspace-page-title">{PRIMARY_DESTINATION_LABELS[activePrimaryDestination]}</h2>
-          </header>
-        )}
+      <main id="main-workspace" className="app-main" tabIndex={-1} aria-labelledby={activePrimaryDestination ? 'workspace-page-title' : undefined}>
         {authError && <p className="error-banner">{authError}</p>}
         {experimentsVisible && authLoaded && authStatus.authMisconfigured && (
           <p className="error-banner">
@@ -439,7 +497,7 @@ export function App() {
             {experimentsVisible && (
               <Route
                 path="/results"
-                element={
+                element={resultsLanding ? <ResultsLandingPage resultsSearch={lastResultsSearch} /> : (
                   <ResultsPage
                     canWrite={authStatus.canWrite}
                     canDownloadResults={authStatus.canDownloadResults}
@@ -447,7 +505,7 @@ export function App() {
                     deleteKeyRequired={authStatus.deleteKeyRequired}
                     authEnabled={authStatus.authEnabled}
                   />
-                }
+                )}
               />
             )}
             {experimentsVisible && (
@@ -468,6 +526,7 @@ export function App() {
         </div>
       </footer>
       </div>
+      {authLoaded && <GuidedDemo />}
     </div>
   );
 }

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "exampleSetVersion": 1,
+  "examples": [
+    {
+      "kind": "run",
+      "id": "Example Bank Rate raised by 1 pp v0o7",
+      "relativePath": "runs/Example Bank Rate raised by 1 pp v0o7"
+    },
+    {
+      "kind": "run",
+      "id": "Example 2024 policy, unchanged v0o7",
+      "relativePath": "runs/Example 2024 policy, unchanged v0o7"
+    },
+    {
+      "kind": "sensitivity",
+      "id": "sensitivity-20260921T215211Z-f1c9432c",
+      "relativePath": "sensitivity/sensitivity-20260921T215211Z-f1c9432c"
+    }
+  ]
+}

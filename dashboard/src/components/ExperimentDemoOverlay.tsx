@@ -13,6 +13,7 @@ import type {
   ExperimentDemoProgressEvent,
   ExperimentDemoStepProgressEvent
 } from '../lib/experimentDemo';
+import { DemoShading } from './DemoShading';
 
 export type ExperimentDemoStepKind = 'info' | 'action' | 'inspect';
 
@@ -705,6 +706,7 @@ export function ExperimentDemoOverlay<StepId extends string>({
       data-experiment-demo-chapter={chapter}
       data-experiment-demo-state={ready ? currentStep.id : 'loading'}
     >
+      <DemoShading holes={targetState === 'ready' && spotlight ? [spotlight] : []} />
       {scrimStyles.map((style, index) => (
         <div
           className={`validation-demo-scrim is-${scrimKinds[index]}`}

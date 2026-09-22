@@ -396,7 +396,7 @@ assert.ok(
   'The representative-metric step should target the real table Details button'
 );
 assert.ok(
-  validationPageSource.includes('data-validation-demo-target={validationDemoProvenanceTargetId(demoMetricId)}'),
+  /data-validation-demo-target=\{(?:demoMetricId \? )?validationDemoProvenanceTargetId\(demoMetricId\)/.test(validationPageSource),
   'The provenance step should target the real disclosure inside the table details panel'
 );
 assert.ok(validationPageSource.includes('demoTarget={VALIDATION_DEMO_TARGETS.methodology}'));
@@ -516,11 +516,14 @@ assert.ok(walkthroughSource.includes('Exit to Home'));
 assert.ok(walkthroughSource.includes('prefers-reduced-motion: reduce'));
 
 assert.ok(
-  (homePageSource.match(/to: null/g) ?? []).length === 2 &&
-    homePageSource.includes('to: POLICY_EXPERIMENT_DEMO_LAUNCH_HREF') &&
-    homePageSource.includes('to: MODEL_EVIDENCE_DEMO_LAUNCH_HREF') &&
-    homePageSource.includes('disabled={!choice.to}'),
-  'Experiment and Model Evidence should launch while the other demo choices remain disabled'
+  !homePageSource.includes('to: null') &&
+    !homePageSource.includes('opensExperimentChooser') &&
+    homePageSource.includes('to: EXPERIMENT_DEMO_POLICY_LAUNCH_HREF') &&
+    homePageSource.includes('to: buildGuidedDemoHref(demo.id)') &&
+    homePageSource.includes("to: buildGuidedDemoHref('model-information')") &&
+    !homePageSource.includes('view=validation&demo=validation') &&
+    homePageSource.includes("availability !== 'ready'"),
+  'The chooser launches creation, registered results and evidence walkthroughs directly with per-demo example checks'
 );
 
 console.log('Validation demo walkthrough tests passed.');

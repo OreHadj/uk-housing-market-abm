@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { MODEL_EVIDENCE_DEMO_LAUNCH_HREF } from '../lib/modelEvidenceDemo';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { buildGuidedDemoHref, GUIDED_DEMOS, hasGuidedDemoExamples } from '../lib/guidedDemos/registry';
+import { fetchResultsRuns, fetchSensitivityExperiments } from '../lib/api';
+import { MODEL_INFORMATION_DEMO } from '../lib/guidedDemos/modelInformation';
+import type { GuidedDemoId } from '../lib/guidedDemos/types';
 import {
-  EXPERIMENT_DEMO_COMBINED_LAUNCH_HREF,
   EXPERIMENT_DEMO_POLICY_LAUNCH_HREF,
   EXPERIMENT_DEMO_SENSITIVITY_LAUNCH_HREF
 } from '../lib/experimentDemo';
@@ -23,73 +25,110 @@ const DESTINATIONS = [
   },
   {
     to: '/model-evidence',
-    title: 'Model evidence',
+    title: 'Model information',
     description: 'How the model was calibrated, and how closely its output matches the evidence.'
   }
 ] as const;
 
 const DEMO_CHOOSER_ID = 'demo-chooser-dialog';
 
-export const DEMO_CHOICES = [
-  {
-    label: 'Run full demo',
-    description: 'Tour experiments, results, and model evidence from start to finish.',
-    to: null,
-    opensExperimentChooser: false
-  },
-  {
-    label: 'Run experiment demo',
-    description: 'Learn how to create a policy scenario and a sensitivity analysis.',
-    to: null,
-    opensExperimentChooser: true
-  },
-  {
-    label: 'Run results demo',
-    description: 'Learn how to open, read, and compare finished results.',
-    to: null,
-    opensExperimentChooser: false
-  },
-  {
-    label: 'Run model evidence demo',
-    description: 'Learn how to review calibration and validation evidence.',
-    to: MODEL_EVIDENCE_DEMO_LAUNCH_HREF,
-    opensExperimentChooser: false
-  }
+export const DEMO_SECTIONS = [
+  { id: 'getting-started', label: 'Getting started' },
+  { id: 'creating-experiments', label: 'Creating experiments' },
+  { id: 'exploring-results', label: 'Exploring results' },
+  { id: 'model-information', label: 'Model information' }
 ] as const;
 
-export const EXPERIMENT_DEMO_CHOICES = [
+interface DemoChoice {
+  label: string;
+  description: string;
+  to: string;
+  section: typeof DEMO_SECTIONS[number]['id'];
+  startHere: boolean;
+  requiresExamples: boolean;
+  guidedDemoId?: GuidedDemoId;
+  unavailableReason?: string;
+}
+
+export const DEMO_CHOICES: readonly DemoChoice[] = [
   {
-    label: 'Both — policy then sensitivity',
-    description: 'Recommended: complete both creation chapters in sequence.',
-    to: EXPERIMENT_DEMO_COMBINED_LAUNCH_HREF
+    section: 'getting-started',
+    label: 'Explore the dashboard',
+    description: 'A brief introduction to each page and what you can do there.',
+    to: buildGuidedDemoHref('dashboard-overview'),
+    startHere: true,
+    requiresExamples: false
   },
   {
-    label: 'Policy scenario demo',
-    description: 'Build and audit one edited policy configuration against its reference.',
-    to: EXPERIMENT_DEMO_POLICY_LAUNCH_HREF
+    section: 'creating-experiments',
+    label: 'Create a policy scenario',
+    description: 'Prepare a policy change, submit a short run and follow its results.',
+    to: EXPERIMENT_DEMO_POLICY_LAUNCH_HREF,
+    startHere: false,
+    requiresExamples: false
   },
   {
-    label: 'Sensitivity analysis demo',
-    description: 'Define and audit one policy-instrument sweep.',
-    to: EXPERIMENT_DEMO_SENSITIVITY_LAUNCH_HREF
+    section: 'creating-experiments',
+    label: 'Create a sensitivity analysis',
+    description: 'Test a range of policy settings, submit a short analysis and open its report.',
+    to: EXPERIMENT_DEMO_SENSITIVITY_LAUNCH_HREF,
+    startHere: false,
+    requiresExamples: false
+  },
+  // New results walkthroughs become accessible as soon as their implementations are registered.
+  ...GUIDED_DEMOS.filter((demo) => demo.id.endsWith('-results')).map((demo): DemoChoice => ({
+    section: 'exploring-results',
+    label: demo.label,
+    description: demo.description,
+    to: buildGuidedDemoHref(demo.id),
+    guidedDemoId: demo.id,
+    startHere: false,
+    requiresExamples: Boolean(demo.requiredRunIds.length || demo.requiredExperimentIds.length)
+  })),
+  {
+    section: 'model-information',
+    label: MODEL_INFORMATION_DEMO.label,
+    description: MODEL_INFORMATION_DEMO.description,
+    to: buildGuidedDemoHref('model-information'),
+    startHere: false,
+    requiresExamples: false
   }
-] as const;
+];
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [isDemoChooserOpen, setIsDemoChooserOpen] = useState(false);
-  const [demoChooserView, setDemoChooserView] = useState<'main' | 'experiment'>('main');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [isDemoChooserOpen, setIsDemoChooserOpen] = useState(searchParams.get('chooseDemo') === '1');
+  const [exampleAvailability, setExampleAvailability] = useState<Partial<Record<GuidedDemoId, 'ready' | 'missing'>>>({});
   const demoTriggerRef = useRef<HTMLButtonElement>(null);
   const demoDialogRef = useRef<HTMLElement>(null);
   const demoCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const demoBackButtonRef = useRef<HTMLButtonElement>(null);
-  const experimentChoiceRef = useRef<HTMLButtonElement>(null);
-  const previousDemoChooserViewRef = useRef<'main' | 'experiment'>('main');
 
   const closeDemoChooser = useCallback(() => {
     setIsDemoChooserOpen(false);
-    setDemoChooserView('main');
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get('chooseDemo') !== '1') return;
+    setIsDemoChooserOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('chooseDemo');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (!isDemoChooserOpen) return;
+    let cancelled = false;
+    setExampleAvailability({});
+    void Promise.allSettled([fetchResultsRuns(true), fetchSensitivityExperiments(true)]).then(([runs, experiments]) => {
+      const runIds = runs.status === 'fulfilled' ? runs.value.filter((run) => run.isExample).map((run) => run.runId) : [];
+      const experimentIds = experiments.status === 'fulfilled' ? experiments.value.experiments.filter((experiment) => experiment.isExample).map((experiment) => experiment.experimentId) : [];
+      if (!cancelled) setExampleAvailability(Object.fromEntries(GUIDED_DEMOS.map((demo) => [
+        demo.id, hasGuidedDemoExamples(demo, runIds, experimentIds) ? 'ready' : 'missing'
+      ])));
+    });
+    return () => { cancelled = true; };
+  }, [isDemoChooserOpen]);
 
   useEffect(() => {
     if (!isDemoChooserOpen) {
@@ -145,20 +184,6 @@ export function HomePage() {
     };
   }, [closeDemoChooser, isDemoChooserOpen]);
 
-  useEffect(() => {
-    if (!isDemoChooserOpen) {
-      previousDemoChooserViewRef.current = 'main';
-      return;
-    }
-    if (previousDemoChooserViewRef.current === demoChooserView) return;
-    previousDemoChooserViewRef.current = demoChooserView;
-    const frame = window.requestAnimationFrame(() => {
-      if (demoChooserView === 'experiment') demoBackButtonRef.current?.focus();
-      else experimentChoiceRef.current?.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [demoChooserView, isDemoChooserOpen]);
-
   return (
     <div className="wrap home-launcher">
       <h2 className="home-title">
@@ -189,7 +214,7 @@ export function HomePage() {
         >
           <span className="home-action-text">
             <strong>Run demo</strong>
-            <span>Take a guided tour of experiments, results, and model evidence.</span>
+            <span>Find your way around, practise creating an experiment, or explore saved results.</span>
           </span>
           <span className="home-action-arrow" aria-hidden="true">
             →
@@ -219,12 +244,10 @@ export function HomePage() {
             <div className="demo-chooser-header">
               <div>
                 <h2 id="demo-chooser-title">
-                  {demoChooserView === 'experiment' ? 'Two ways to test policy' : 'Choose a demo'}
+                  Choose a demo
                 </h2>
                 <p id="demo-chooser-description">
-                  {demoChooserView === 'experiment'
-                    ? 'A policy scenario tests one chosen set of changes against an unchanged reference. A sensitivity analysis varies one instrument across several values to show how outcomes respond. Both use a calibrated model, repeated seeds, saved drafts, and a final review before any run starts.'
-                    : 'Follow the complete walkthrough, or explore one part of the application.'}
+                  Find your way around, create experiments, explore results, or understand the model.
                 </p>
               </div>
               <button
@@ -238,37 +261,29 @@ export function HomePage() {
               </button>
             </div>
 
-            {demoChooserView === 'experiment' && (
-              <button
-                ref={demoBackButtonRef}
-                type="button"
-                className="demo-chooser-back"
-                onClick={() => setDemoChooserView('main')}
-              >
-                ← Back to demos
-              </button>
-            )}
-
-            <div className="demo-chooser-options">
-              {(demoChooserView === 'experiment' ? EXPERIMENT_DEMO_CHOICES : DEMO_CHOICES).map((choice) => (
+            <div className="demo-chooser-body">
+              {DEMO_SECTIONS.map((section) => <section className="demo-chooser-section" key={section.id} aria-labelledby={`demo-section-${section.id}`}>
+                <h3 id={`demo-section-${section.id}`}>{section.label}</h3>
+                <div className="demo-chooser-options">
+              {DEMO_CHOICES.filter((choice) => choice.section === section.id).map((choice) => {
+                const availability = choice.guidedDemoId ? exampleAvailability[choice.guidedDemoId] ?? 'loading' : 'ready';
+                return (
                 <button
-                  ref={'opensExperimentChooser' in choice && choice.opensExperimentChooser
-                    ? experimentChoiceRef
-                    : undefined}
                   type="button"
                   className="demo-chooser-option"
                   key={choice.label}
-                  disabled={!choice.to && !('opensExperimentChooser' in choice && choice.opensExperimentChooser)}
-                  onClick={'opensExperimentChooser' in choice && choice.opensExperimentChooser
-                    ? () => setDemoChooserView('experiment')
-                    : choice.to
-                      ? () => navigate(choice.to)
-                      : undefined}
+                  disabled={Boolean(choice.unavailableReason) || (choice.requiresExamples && availability !== 'ready')}
+                  onClick={() => { closeDemoChooser(); navigate(choice.to); }}
                 >
-                  <strong>{choice.label}</strong>
+                  <strong>{choice.label}{'startHere' in choice && choice.startHere && <span className="example-badge">Start here</span>}</strong>
                   <span>{choice.description}</span>
+                  {choice.unavailableReason && <span>{choice.unavailableReason}</span>}
+                  {choice.requiresExamples && availability !== 'ready' && <span>{availability === 'loading' ? 'Checking bundled examples…' : "This example isn't available on this installation"}</span>}
                 </button>
-              ))}
+                );
+              })}
+                </div>
+              </section>)}
             </div>
           </section>
         </div>

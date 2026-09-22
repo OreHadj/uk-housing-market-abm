@@ -1042,9 +1042,14 @@ export function getLendingDistribution(
     );
   }
 
-  const allModelTimes = [...pooledMortgaged.map((row) => row.modelTime), ...pooledCashModelTimes];
-  const dataStart = Math.min(...allModelTimes);
-  const dataEnd = Math.max(...allModelTimes);
+  // Reuse each file's bounds: spreading every transaction into Math.min/Math.max
+  // exceeds JavaScript's argument limit on large or multi-seed runs.
+  let dataStart = Number.POSITIVE_INFINITY;
+  let dataEnd = Number.NEGATIVE_INFINITY;
+  for (const { parsed } of parsedFiles) {
+    if (parsed.minModelTime !== null) dataStart = Math.min(dataStart, parsed.minModelTime);
+    if (parsed.maxModelTime !== null) dataEnd = Math.max(dataEnd, parsed.maxModelTime);
+  }
   const windowInfo = resolveWindow(window, dataStart, dataEnd, config.recordingStartModelTime);
   const windowStart = windowInfo.startModelTime ?? dataStart;
   const windowEnd = windowInfo.endModelTime ?? dataEnd;

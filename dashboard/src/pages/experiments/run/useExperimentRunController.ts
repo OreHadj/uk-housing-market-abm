@@ -7,13 +7,17 @@ import type {
   ModelRunOptionsPayload,
   ModelRunParameterDefinition,
   ModelRunSubmitRequest,
+  ModelRunSubmitResponse,
   ModelRunWarning,
-  SensitivityPolicyPackageDefinition
+  SensitivityPolicyPackageDefinition,
+  SensitivityExperimentCreateRequest,
+  SensitivityExperimentSubmitResponse
 } from '../../../../shared/types';
 import { normalizeSensitivitySampleValue } from '../../../../shared/sensitivitySampling';
 import { DEFAULT_SENSITIVITY_POLICY_PACKAGE_ID } from '../../../../shared/policyCatalogue';
 import {
   API_RETRY_DELAY_MS,
+  ApiRequestError,
   cancelExperimentJob,
   fetchExperimentJobs,
   fetchModelRunOptions,
@@ -51,6 +55,10 @@ import {
   type SensitivityDraftV1
 } from '../../../lib/sensitivityDraft';
 import type { ExperimentType } from '../types';
+import type { ExperimentDemoCoordinator, PolicyPracticeRun } from '../../../lib/guidedDemos/creation';
+import { isExperimentDemoJourneyId, isExperimentDemoPolicyDraftId, isExperimentDemoSensitivityDraftId } from '../../../lib/experimentDemo';
+import { applyPolicyPracticeDefaults, policyPracticeRunTitle } from '../../../lib/policyPractice';
+import { applySensitivityPracticeDefaults, SENSITIVITY_PRACTICE_SETTINGS, validateSensitivityPracticeSize } from '../../../lib/sensitivityPractice';
 
 export interface ExperimentRunController {
   options: ModelRunOptionsPayload | null;
@@ -100,6 +108,7 @@ export interface ExperimentRunController {
   isSubmittingSensitivity: boolean;
   isCancelingSensitivity: boolean;
   pageError: string;
+  optionsError: string;
   pendingRunId: string;
   pendingSensitivityExperimentId: string;
   executionDisabled: boolean;
@@ -132,13 +141,156 @@ interface UseExperimentRunControllerOptions {
   followJobRef?: string;
   draftId?: string;
   experimentDemoActive?: boolean;
+  experimentDemo?: ExperimentDemoCoordinator;
+  canWrite?: boolean;
 }
 
 export function isExperimentDemoSubmissionBlocked(
   activeType: ExperimentType,
-  experimentDemoActive: boolean
+  experimentDemoActive: boolean,
+  allowPolicySubmission = false,
+  allowSensitivitySubmission = false
 ): boolean {
-  return experimentDemoActive && (activeType === 'manual' || activeType === 'sensitivity');
+  return experimentDemoActive && (activeType === 'sensitivity' ? !allowSensitivitySubmission : !allowPolicySubmission);
+}
+
+export function isPolicyPracticeIdentity(
+  activeType: ExperimentType, draftId: string, context: ExperimentDemoCoordinator | undefined
+): boolean {
+  return Boolean(activeType === 'manual' && context?.active && context.mode !== 'sensitivity' &&
+    context.draftId === draftId && isExperimentDemoPolicyDraftId(draftId) && isExperimentDemoJourneyId(context.journeyId));
+}
+
+/** This exception is only valid at the explicit Start stop in an identified policy practice. */
+export function isPolicyPracticeSubmissionAllowed(
+  activeType: ExperimentType, draftId: string, context: ExperimentDemoCoordinator | undefined
+): boolean {
+  return Boolean(isPolicyPracticeIdentity(activeType, draftId, context) && context && !context.paused &&
+    context.savedStepId === 'policy-submit' && context.allowPolicySubmission === true &&
+    !context.policyRun && context.onPolicyRunChange);
+}
+
+export function isSensitivityPracticeIdentity(
+  activeType: ExperimentType, draftId: string, context: ExperimentDemoCoordinator | undefined
+): boolean {
+  return Boolean(activeType === 'sensitivity' && context?.active && context.mode !== 'policy' &&
+    context.draftId === draftId && isExperimentDemoSensitivityDraftId(draftId) && isExperimentDemoJourneyId(context.journeyId));
+}
+
+export function isSensitivityPracticeSubmissionAllowed(
+  activeType: ExperimentType, draftId: string, context: ExperimentDemoCoordinator | undefined
+): boolean {
+  return Boolean(isSensitivityPracticeIdentity(activeType, draftId, context) && context && !context.paused &&
+    context.savedStepId === 'sensitivity-submit' && context.allowSensitivitySubmission === true &&
+    !context.sensitivityRun && context.onSensitivityRunChange);
+}
+
+export function recoverSensitivityPracticeRun(pending: PolicyPracticeRun | undefined, jobs: readonly ExperimentJobSummary[]): PolicyPracticeRun | undefined {
+  if (pending?.status !== 'submitting') return undefined;
+  const matching = jobs.find((job) => job.type === 'sensitivity' && job.title === pending.title && Boolean(job.id?.trim()) && job.jobRef === `sensitivity:${job.id}`);
+  return matching ? { status: 'submitted', title: pending.title, jobRef: matching.jobRef, runId: matching.id } : undefined;
+}
+
+export function recoverPolicyPracticeRun(pending: PolicyPracticeRun | undefined, jobs: readonly ExperimentJobSummary[]): PolicyPracticeRun | undefined {
+  if (pending?.status !== 'submitting') return undefined;
+  const matching = jobs.find((job) => job.type === 'manual' && job.title === pending.title && Boolean(job.runId?.trim()) && /^manual:.+$/.test(job.jobRef));
+  return matching ? { status: 'submitted', title: pending.title, jobRef: matching.jobRef, runId: matching.runId } : undefined;
+}
+
+export function isDefinitivePolicyPracticeRejection(error: unknown): boolean {
+  // A timeout, proxy/server failure or unreadable response may follow an accepted POST.
+  return error instanceof ApiRequestError && error.status !== null && error.status >= 400 && error.status < 500 &&
+    ![408, 425, 429].includes(error.status);
+}
+
+const POLICY_PRACTICE_UNCERTAIN_MESSAGE = 'The practice request may have been accepted. Checking the Results queue for its unique title. Another request will not be sent. Keep this practice open or return to it after reconnecting.';
+
+/** Persist the unique title before sending; accepted/pending state always suppresses another POST. */
+export async function submitPolicyPracticeRun({
+  payload, draftId, state, onChange, submit = submitModelRun
+}: {
+  payload: ModelRunSubmitRequest;
+  draftId: string;
+  state: { current: PolicyPracticeRun | undefined };
+  onChange: (run: PolicyPracticeRun | undefined) => void;
+  submit?: (payload: ModelRunSubmitRequest) => Promise<ModelRunSubmitResponse>;
+}): Promise<ModelRunSubmitResponse> {
+  if (state.current) throw new Error('This practice run has already been sent. Check its Results queue entry.');
+  const pending: PolicyPracticeRun = { status: 'submitting', title: policyPracticeRunTitle(payload.title ?? '', draftId) };
+  state.current = pending;
+  try {
+    onChange(pending);
+  } catch (error) {
+    state.current = undefined;
+    throw error;
+  }
+  let response: ModelRunSubmitResponse;
+  try {
+    response = await submit({ ...payload, title: pending.title, confirmWarnings: false });
+  } catch (error) {
+    if (isDefinitivePolicyPracticeRejection(error)) {
+      state.current = undefined;
+      onChange(undefined);
+      throw error;
+    }
+    throw new Error(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+  }
+  if (!response.accepted) {
+    state.current = undefined;
+    onChange(undefined);
+    return response;
+  }
+  if (!response.job?.runId?.trim() || !response.job.jobId?.trim()) throw new Error(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+  const submitted: PolicyPracticeRun = {
+    status: 'submitted', title: pending.title, runId: response.job.runId, jobRef: `manual:${response.job.jobId}`
+  };
+  state.current = submitted;
+  onChange(submitted);
+  return response;
+}
+
+/** The same persisted acceptance boundary as policy practice, using an experiment result ID. */
+export async function submitSensitivityPracticeRun({
+  payload, draftId, state, onChange, submit = submitSensitivityExperiment
+}: {
+  payload: SensitivityExperimentCreateRequest;
+  draftId: string;
+  state: { current: PolicyPracticeRun | undefined };
+  onChange: (run: PolicyPracticeRun | undefined) => void;
+  submit?: (payload: SensitivityExperimentCreateRequest) => Promise<SensitivityExperimentSubmitResponse>;
+}): Promise<SensitivityExperimentSubmitResponse> {
+  if (state.current) throw new Error('This practice analysis has already been sent. Check its Results queue entry.');
+  const pending: PolicyPracticeRun = { status: 'submitting', title: policyPracticeRunTitle(payload.title ?? '', draftId) };
+  state.current = pending;
+  try {
+    onChange(pending);
+  } catch (error) {
+    state.current = undefined;
+    throw error;
+  }
+  let response: SensitivityExperimentSubmitResponse;
+  try {
+    response = await submit({ ...payload, title: pending.title });
+  } catch (error) {
+    if (isDefinitivePolicyPracticeRejection(error)) {
+      state.current = undefined;
+      onChange(undefined);
+      throw error;
+    }
+    throw new Error(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+  }
+  if (!response.accepted) {
+    state.current = undefined;
+    onChange(undefined);
+    return response;
+  }
+  if (!response.experiment?.experimentId?.trim()) throw new Error(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+  const submitted: PolicyPracticeRun = {
+    status: 'submitted', title: pending.title, runId: response.experiment.experimentId, jobRef: `sensitivity:${response.experiment.experimentId}`
+  };
+  state.current = submitted;
+  onChange(submitted);
+  return response;
 }
 
 function parseJobRefId(jobRef: string | null): string {
@@ -241,7 +393,9 @@ export function useExperimentRunController({
   onSensitivityRunAccepted,
   followJobRef,
   draftId = '',
-  experimentDemoActive = false
+  experimentDemoActive = false,
+  experimentDemo,
+  canWrite = true
 }: UseExperimentRunControllerOptions): ExperimentRunController {
   const [options, setOptions] = useState<ModelRunOptionsPayload | null>(null);
   const [selectedBaseline, setSelectedBaseline] = useState<string>('');
@@ -280,6 +434,7 @@ export function useExperimentRunController({
   const [isSubmittingSensitivity, setIsSubmittingSensitivity] = useState<boolean>(false);
   const [isCancelingSensitivity, setIsCancelingSensitivity] = useState<boolean>(false);
   const [pageError, setPageError] = useState<string>('');
+  const [optionsError, setOptionsError] = useState<string>('');
 
   const [pendingRunId, setPendingRunId] = useState<string>('');
   const [pendingSensitivityExperimentId, setPendingSensitivityExperimentId] = useState<string>('');
@@ -287,6 +442,16 @@ export function useExperimentRunController({
   const [pendingSensitivityJobRef, setPendingSensitivityJobRef] = useState<string>('');
   const jobsLifecycleRef = useRef<symbol | null>(null);
   const submissionInFlightRef = useRef(false);
+  const policyPracticeRunRef = useRef<PolicyPracticeRun | undefined>(experimentDemo?.policyRun);
+  const sensitivityPracticeRunRef = useRef<PolicyPracticeRun | undefined>(experimentDemo?.sensitivityRun);
+  // Keep the immediate pre-POST guard until persisted context catches up with this render.
+  if (experimentDemo?.policyRun) policyPracticeRunRef.current = experimentDemo.policyRun;
+  if (experimentDemo?.sensitivityRun) sensitivityPracticeRunRef.current = experimentDemo.sensitivityRun;
+  const guidedPracticeActive = experimentDemoActive || experimentDemo?.active === true;
+  const hasPolicyPracticeIdentity = isPolicyPracticeIdentity(activeType, draftId, experimentDemo);
+  const allowPolicyPracticeSubmission = guidedPracticeActive && isPolicyPracticeSubmissionAllowed(activeType, draftId, experimentDemo);
+  const hasSensitivityPracticeIdentity = isSensitivityPracticeIdentity(activeType, draftId, experimentDemo);
+  const allowSensitivityPracticeSubmission = guidedPracticeActive && isSensitivityPracticeSubmissionAllowed(activeType, draftId, experimentDemo);
 
   useEffect(() => {
     // A fresh token also rejects requests from StrictMode's previous effect setup.
@@ -333,6 +498,7 @@ export function useExperimentRunController({
 
   const refreshOptions = async (requestedBaseline?: string, hydrateDraft = false): Promise<ModelRunOptionsPayload | null> => {
     setPageError('');
+    setOptionsError('');
     setIsLoadingOptions(true);
 
     try {
@@ -342,12 +508,18 @@ export function useExperimentRunController({
       const initialValues = toInitialFormValues(payload.parameters, defaultBasePolicyOption);
       // Seeds per sampled point come from the shared builder default, so a sweep point is scored
       // on the same seed depth as a scenario run.
-      const initialSensitivityValues = normalizeSensitivityFormValues(payload.parameters, initialValues);
+      const initialSensitivityValues = hasSensitivityPracticeIdentity
+        ? applySensitivityPracticeDefaults(payload.parameters, initialValues)
+        : normalizeSensitivityFormValues(payload.parameters, initialValues);
       setOptions(payload);
       setSelectedBaseline(payload.requestedBaseline);
       setBasePolicyState(defaultBasePolicy);
       setSensitivityBasePolicyState(defaultBasePolicy);
-      const initialManualValues = applyPolicyRunBuilderDefaults(payload.parameters, initialValues);
+      const storedManualDraft = activeType === 'manual' && draftId && hydrateDraft ? readScenarioDraft(draftId) : null;
+      const ordinaryManualValues = applyPolicyRunBuilderDefaults(payload.parameters, initialValues);
+      const initialManualValues = hasPolicyPracticeIdentity && hydrateDraft && !storedManualDraft
+        ? applyPolicyPracticeDefaults(payload.parameters, ordinaryManualValues)
+        : ordinaryManualValues;
       for (const key of manualLockedParameterKeys) {
         if (formValues[key] !== undefined) {
           initialManualValues[key] = formValues[key];
@@ -355,11 +527,16 @@ export function useExperimentRunController({
       }
       setFormValues(initialManualValues);
       setSensitivityFormValues(initialSensitivityValues);
-      setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialValues.N_SIMS), payload.sensitivityMaxWorkersCap));
+      if (hasSensitivityPracticeIdentity) {
+        setSensitivitySampleCount(String(SENSITIVITY_PRACTICE_SETTINGS.samples));
+        setSensitivityMaxWorkers(String(SENSITIVITY_PRACTICE_SETTINGS.workers));
+        setSensitivityMaxWorkersTouched(true);
+      }
+      setManualMaxWorkers(defaultMaxWorkers(parsePositiveInteger(initialManualValues.N_SIMS), payload.sensitivityMaxWorkersCap));
       setManualMaxWorkersTouched(false);
       setWarnings([]);
       if (activeType === 'manual' && draftId && hydrateDraft) {
-        const stored = readScenarioDraft(draftId);
+        const stored = storedManualDraft;
         if (stored) {
           const storedBasePolicyOption = payload.basePolicies.find((item) => item.id === stored.basePolicy) ?? defaultBasePolicyOption;
           const draftInitialValues = applyPolicyRunBuilderDefaults(
@@ -418,9 +595,11 @@ export function useExperimentRunController({
           setSensitivityPolicyPackageId(restored.draft.policyPackageId);
           setSensitivityMin(restored.draft.min);
           setSensitivityMax(restored.draft.max);
-          setSensitivitySampleCount(restored.draft.sampleCount);
-          setSensitivityFormValues(normalizeSensitivityFormValues(payload.parameters, restored.draft.formValues));
-          setSensitivityMaxWorkers(restored.draft.maxWorkers);
+          setSensitivitySampleCount(hasSensitivityPracticeIdentity ? String(SENSITIVITY_PRACTICE_SETTINGS.samples) : restored.draft.sampleCount);
+          setSensitivityFormValues(hasSensitivityPracticeIdentity
+            ? applySensitivityPracticeDefaults(payload.parameters, restored.draft.formValues)
+            : normalizeSensitivityFormValues(payload.parameters, restored.draft.formValues));
+          setSensitivityMaxWorkers(hasSensitivityPracticeIdentity ? String(SENSITIVITY_PRACTICE_SETTINGS.workers) : restored.draft.maxWorkers);
           setSensitivityMaxWorkersTouched(true);
           skipSensitivityRangeResetForPackage.current = restored.draft.policyPackageId;
           setDraftNotice(restored.choicesChanged
@@ -431,6 +610,7 @@ export function useExperimentRunController({
       setDraftHydrated(true);
       return payload;
     } catch (error) {
+      setOptionsError((error as Error).message);
       setPageError((error as Error).message);
       return null;
     } finally {
@@ -440,14 +620,17 @@ export function useExperimentRunController({
 
   useEffect(() => {
     if (activeType !== 'manual' || !draftId || !draftHydrated || !options) return;
+    const storedDraft = readScenarioDraft(draftId);
     writeScenarioDraft(draftId, {
       version: 1,
       title,
       calibratedModel: selectedBaseline,
       basePolicy,
       formValues,
+      // Do not mark an old, still-unchecked form as migrated during a hot reload.
+      recordingDefaultsVersion: formValues.recordTransactions === true ? 1 : storedDraft?.recordingDefaultsVersion,
       maxWorkers: manualMaxWorkers,
-      currentStep: readScenarioDraft(draftId)?.currentStep,
+      currentStep: storedDraft?.currentStep,
       ...(manualLockedParameterKeys.length > 0 ? { lockedParameterKeys: manualLockedParameterKeys } : {})
     });
   }, [activeType, basePolicy, draftHydrated, draftId, formValues, manualLockedParameterKeys, manualMaxWorkers, options, selectedBaseline, title]);
@@ -577,6 +760,46 @@ export function useExperimentRunController({
       window.clearInterval(interval);
     };
   }, [options?.executionEnabled, selectedJobRef]);
+
+  useEffect(() => {
+    if (!hasPolicyPracticeIdentity || !experimentDemo?.onPolicyRunChange || isSubmitting) return;
+    const pending = policyPracticeRunRef.current;
+    if (pending?.status !== 'submitting') return;
+    const recovered = recoverPolicyPracticeRun(pending, jobs);
+    if (recovered) {
+      policyPracticeRunRef.current = recovered;
+      experimentDemo.onPolicyRunChange(recovered);
+      setPageError('');
+      if (onManualRunAccepted) {
+        jobsLifecycleRef.current = null;
+        onManualRunAccepted(recovered.runId ?? '', recovered.jobRef ?? '');
+      } else if (recovered.jobRef) {
+        onSelectedJobRefChange(recovered.jobRef);
+      }
+    } else if (!isLoadingJobs) {
+      setPageError(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+    }
+  }, [experimentDemo, hasPolicyPracticeIdentity, isLoadingJobs, isSubmitting, jobs, onManualRunAccepted, onSelectedJobRefChange]);
+
+  useEffect(() => {
+    if (!hasSensitivityPracticeIdentity || !experimentDemo?.onSensitivityRunChange || isSubmittingSensitivity) return;
+    const pending = sensitivityPracticeRunRef.current;
+    if (pending?.status !== 'submitting') return;
+    const recovered = recoverSensitivityPracticeRun(pending, jobs);
+    if (recovered) {
+      sensitivityPracticeRunRef.current = recovered;
+      experimentDemo.onSensitivityRunChange(recovered);
+      setPageError('');
+      if (onSensitivityRunAccepted) {
+        jobsLifecycleRef.current = null;
+        onSensitivityRunAccepted(recovered.runId ?? '', recovered.jobRef ?? '');
+      } else if (recovered.jobRef) {
+        onSelectedJobRefChange(recovered.jobRef);
+      }
+    } else if (!isLoadingJobs) {
+      setPageError(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
+    }
+  }, [experimentDemo, hasSensitivityPracticeIdentity, isLoadingJobs, isSubmittingSensitivity, jobs, onSensitivityRunAccepted, onSelectedJobRefChange]);
 
   useEffect(() => {
     const firstPackage = sensitivityPolicyPackages[0];
@@ -828,8 +1051,24 @@ export function useExperimentRunController({
   };
 
   const onSubmitRun = async (confirmWarnings: boolean) => {
-    if (isExperimentDemoSubmissionBlocked(activeType, experimentDemoActive)) {
-      setPageError('Experiment submission is disabled during the guided demo.');
+    if (isExperimentDemoSubmissionBlocked(activeType, guidedPracticeActive, allowPolicyPracticeSubmission)) {
+      setPageError('Practice can start only from its Start lesson, once per practice.');
+      return;
+    }
+    if (activeType !== 'manual' || !canWrite || !options?.executionEnabled || isLoadingOptions || !draftHydrated) {
+      setPageError('Run submission requires loaded options, execution availability and write access.');
+      return;
+    }
+    if (allowPolicyPracticeSubmission && isLoadingJobs) {
+      setPageError('Wait for the Results queue to load before starting the practice run.');
+      return;
+    }
+    if (manualSubmissionLockedBySensitivity) {
+      setPageError('Policy scenario runs are locked while a sensitivity analysis is active.');
+      return;
+    }
+    if (guidedPracticeActive && policyPracticeRunRef.current) {
+      setPageError(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
       return;
     }
     if (submissionInFlightRef.current) return;
@@ -843,17 +1082,22 @@ export function useExperimentRunController({
         throw new Error('Max workers must be a positive integer.');
       }
       const payload = buildSubmitPayload(confirmWarnings, maxWorkers);
-      const response = await submitModelRun(payload);
+      const response = allowPolicyPracticeSubmission && experimentDemo?.onPolicyRunChange
+        ? await submitPolicyPracticeRun({ payload, draftId, state: policyPracticeRunRef, onChange: experimentDemo.onPolicyRunChange })
+        : await submitModelRun(payload);
       if (!response.accepted) {
         setWarnings(response.warnings);
+        if (allowPolicyPracticeSubmission) setPageError('The practice request was not accepted. Review the message and edit the run name before trying again.');
         return;
       }
 
-      setDraftHydrated(false);
-      clearScenarioDraft(draftId);
+      if (!allowPolicyPracticeSubmission) {
+        setDraftHydrated(false);
+        clearScenarioDraft(draftId);
+        setTitle('');
+        setManualLockedParameterKeys([]);
+      }
       setWarnings([]);
-      setTitle('');
-      setManualLockedParameterKeys([]);
       const jobRef = response.job ? `manual:${response.job.jobId}` : '';
       if (onManualRunAccepted) {
         // Hand ownership to Results once. In-flight setup polls must not rewrite the old route.
@@ -875,8 +1119,24 @@ export function useExperimentRunController({
   };
 
   const onSubmitSensitivity = async () => {
-    if (isExperimentDemoSubmissionBlocked(activeType, experimentDemoActive)) {
-      setPageError('Experiment submission is disabled during the guided demo.');
+    if (isExperimentDemoSubmissionBlocked(activeType, guidedPracticeActive, false, allowSensitivityPracticeSubmission)) {
+      setPageError('Practice can start only from its Start lesson, once per practice.');
+      return;
+    }
+    if (activeType !== 'sensitivity' || !canWrite || !options?.executionEnabled || isLoadingOptions || !draftHydrated) {
+      setPageError('Run submission requires loaded options, execution availability and write access.');
+      return;
+    }
+    if (allowSensitivityPracticeSubmission && isLoadingJobs) {
+      setPageError('Wait for the Results queue to load before starting the practice analysis.');
+      return;
+    }
+    if (sensitivitySubmissionLockedByManual) {
+      setPageError('Sensitivity analyses are locked while a policy scenario is active.');
+      return;
+    }
+    if (guidedPracticeActive && sensitivityPracticeRunRef.current) {
+      setPageError(POLICY_PRACTICE_UNCERTAIN_MESSAGE);
       return;
     }
     if (!selectedSensitivityPackage) {
@@ -890,6 +1150,10 @@ export function useExperimentRunController({
     setIsSubmittingSensitivity(true);
 
     try {
+      if (allowSensitivityPracticeSubmission) {
+        const sizeError = validateSensitivityPracticeSize(sensitivityFormValues, sensitivitySampleCount, sensitivityMaxWorkers);
+        if (sizeError) throw new Error(sizeError);
+      }
       const min = Number.parseFloat(sensitivityMin);
       const max = Number.parseFloat(sensitivityMax);
       const sampleCount = Number.parseFloat(sensitivitySampleCount);
@@ -900,7 +1164,7 @@ export function useExperimentRunController({
       if (!Number.isFinite(maxWorkers) || !Number.isInteger(maxWorkers) || maxWorkers < 1) {
         throw new Error('Max workers must be a positive integer.');
       }
-      const response = await submitSensitivityExperiment({
+      const payload: SensitivityExperimentCreateRequest = {
         baseline: selectedBaseline,
         basePolicy: sensitivityBasePolicy,
         title: sensitivityTitle,
@@ -910,17 +1174,23 @@ export function useExperimentRunController({
         sampleCount,
         overrides: buildSensitivityGeneralOverrides(),
         maxWorkers: Math.min(maxWorkers, options?.sensitivityMaxWorkersCap ?? maxWorkers)
-      });
+      };
+      const response = allowSensitivityPracticeSubmission && experimentDemo?.onSensitivityRunChange
+        ? await submitSensitivityPracticeRun({ payload, draftId, state: sensitivityPracticeRunRef, onChange: experimentDemo.onSensitivityRunChange })
+        : await submitSensitivityExperiment(payload);
 
       if (!response.accepted) {
         setSensitivityWarnings(response.warnings);
+        if (allowSensitivityPracticeSubmission) setPageError('The practice request was not accepted. Review the message before trying again.');
         return;
       }
 
-      setDraftHydrated(false);
-      clearSensitivityDraft(draftId);
+      if (!allowSensitivityPracticeSubmission) {
+        setDraftHydrated(false);
+        clearSensitivityDraft(draftId);
+        setSensitivityTitle('');
+      }
       setSensitivityWarnings([]);
-      setSensitivityTitle('');
       const acceptedExperimentId = response.experiment?.experimentId ?? '';
       const jobRef = acceptedExperimentId ? `sensitivity:${acceptedExperimentId}` : '';
       if (onSensitivityRunAccepted) {
@@ -942,7 +1212,7 @@ export function useExperimentRunController({
   };
 
   const onCancelActiveSensitivity = async () => {
-    if (experimentDemoActive) {
+    if (guidedPracticeActive) {
       setPageError('Canceling active jobs is disabled during the guided demo.');
       return;
     }
@@ -963,7 +1233,7 @@ export function useExperimentRunController({
   };
 
   const onCancelJob = async (jobRef: string) => {
-    if (experimentDemoActive) {
+    if (guidedPracticeActive) {
       setPageError('Canceling active jobs is disabled during the guided demo.');
       return;
     }
@@ -1057,6 +1327,7 @@ export function useExperimentRunController({
     isSubmittingSensitivity,
     isCancelingSensitivity,
     pageError,
+    optionsError,
     pendingRunId,
     pendingSensitivityExperimentId,
     executionDisabled,
