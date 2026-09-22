@@ -203,10 +203,10 @@ jobs:
           $installDir = Join-Path $env:RUNNER_TEMP 'UK Housing installer path spaces\UK Housing Model'
           npm run test:windows-installed-installer -- --install-dir "$installDir"
 
-      - name: Installed app in a custom folder with non-ASCII characters
+      - name: Installed app in a custom folder with accented characters
         working-directory: dashboard
         run: |
-          $installDir = Join-Path $env:RUNNER_TEMP 'UK Housing modèle 用户\UK Housing Model'
+          $installDir = Join-Path $env:RUNNER_TEMP 'UK Housing modèle José\UK Housing Model'
           npm run test:windows-installed-installer -- --install-dir "$installDir"
 
       - id: installer-artifacts

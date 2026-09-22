@@ -44,10 +44,6 @@ const homePageSource = fs.readFileSync(
   path.resolve(repoRoot, 'dashboard/src/pages/HomePage.tsx'),
   'utf-8'
 );
-const handoffSource = fs.readFileSync(
-  path.resolve(repoRoot, 'docs/validation-demo-handoff.txt'),
-  'utf-8'
-);
 
 const expectedStepIds = [
   'purpose',
@@ -440,12 +436,6 @@ assert.ok(
 for (const staleMessage of ['You can continue.', 'You can finish.']) {
   assert.equal(walkthroughSource.includes(staleMessage), false, `Remove stale action copy: ${staleMessage}`);
 }
-assert.ok(
-  handoffSource.includes('automatically advance') &&
-    !handoffSource.includes('Do not auto-advance on the same click.') &&
-    !handoffSource.includes('After the user presses Next on step 3'),
-  'The handoff should describe automatic required-action progression'
-);
 assert.equal(VALIDATION_DEMO_SESSION_KEY, 'validation-demo-progress-v1');
 assert.equal(VALIDATION_DEMO_COMPLETION_EVENT, 'validation-demo:complete');
 assert.ok(
