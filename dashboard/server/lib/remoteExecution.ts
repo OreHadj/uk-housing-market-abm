@@ -1535,13 +1535,23 @@ export class RemoteExecutionManager {
     return `${job.artifactS3Prefix}Results/${job.runId ?? job.id}/`;
   }
 
-  private async listRemoteRunObjects(job: RemoteJobRecord): Promise<RemoteRunObject[]> {
+  private async listRemoteRunObjects(
+    job: RemoteJobRecord,
+    additionalSeedFileNames: string[] = []
+  ): Promise<RemoteRunObject[]> {
     const prefix = this.remoteRunResultsPrefix(job);
     const objects = await this.adapter.listObjects(this.config.artifactsBucket, prefix);
     const files: RemoteRunObject[] = [];
     for (const object of objects) {
+      if (!object.key.startsWith(prefix)) {
+        continue;
+      }
       const relativeName = object.key.slice(prefix.length);
-      if (!relativeName || relativeName.includes('/')) {
+      // Only lending workspaces opt into per-seed files. Keep the normal manifest
+      // at the run root and exclude traversal, other subfolders and deeper paths.
+      const seedFile = /^seeds\/[A-Za-z0-9_-]+\/([^/]+)$/.exec(relativeName);
+      const includeSeedFile = seedFile !== null && additionalSeedFileNames.includes(seedFile[1]);
+      if (!relativeName || (relativeName.includes('/') && !includeSeedFile)) {
         continue;
       }
       const fileType = resolveResultsFileType(relativeName);
@@ -1594,7 +1604,7 @@ export class RemoteExecutionManager {
         const runId = job.runId ?? job.id;
         const runPath = path.join(resultsRoot, runId);
         fs.mkdirSync(runPath, { recursive: true });
-        const objects = await this.listRemoteRunObjects(job);
+        const objects = await this.listRemoteRunObjects(job, additionalFileNames);
         objectsByRunId.set(runId, objects);
         for (const object of objects) {
           if (!wantsObject(object.relativeName)) {

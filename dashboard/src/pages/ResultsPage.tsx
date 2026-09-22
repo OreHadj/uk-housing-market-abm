@@ -7,7 +7,7 @@ import { getResultsType } from '../lib/workspaceNavigation';
 import { NAVIGATION_DEMO_QUERY_VALUE } from '../lib/navigationDemo';
 import { SubmittedReport } from '../components/SubmittedReport';
 import { ResultsDemoInvitation } from '../components/ResultsDemoInvitation';
-import { sensitivityDetailedSelection } from '../lib/reportUrlState';
+import { policyDetailedSelection, sensitivityDetailedSelection } from '../lib/reportUrlState';
 
 const Report2Page = lazy(() => import('./report2/Report2Page').then((module) => ({ default: module.Report2Page })));
 const SensitivityReport2Page = lazy(() => import('./sensitivity-report2/SensitivityReport2Page').then((module) => ({ default: module.SensitivityReport2Page })));
@@ -94,8 +94,8 @@ export function ResultsPage({
                 aria-pressed={presentation === style}
                 onClick={() => updateSearch({
                   presentation: style,
-                  ...(activeType === 'sensitivity' && style === 'detailed' && presentation !== style
-                    ? sensitivityDetailedSelection(searchParams) : {})
+                  ...(style === 'detailed' && presentation !== style
+                    ? activeType === 'sensitivity' ? sensitivityDetailedSelection(searchParams) : policyDetailedSelection(searchParams) : {})
                 })}
               >
                 {style === 'report' ? 'Report' : 'Detailed'}
@@ -120,7 +120,7 @@ export function ResultsPage({
             if (result.jobRef === submittedJobRef) updates.jobRef = '';
             if (result.type === 'manual') {
               if (result.runId === baselineRunId) { updates.baselineRunId = ''; updates.runId = ''; }
-              if (result.runId === comparisonRunId) updates.comparisonRunId = '';
+              if (result.runId === comparisonRunId) { updates.comparisonRunId = ''; updates.comparisonNoneFor = baselineRunId; }
             } else if (result.id === experimentId) updates.experimentId = '';
             if (Object.keys(updates).length) updateSearch(updates);
           }}>
@@ -143,7 +143,7 @@ export function ResultsPage({
           requestedComparisonRunId={comparisonRunId}
           requestedJobRef={submittedJobRef}
           queueInitiallyExpanded={queueInitiallyExpanded}
-          onManualSelectionChange={(selection) => updateSearch({ ...selection, jobRef: '' })}
+          onManualSelectionChange={(selection) => updateSearch({ ...selection, runId: '', jobRef: selection.jobRef ?? '' })}
           sidebarSubtitle="Manage policy scenario runs"
         />
       ) : (

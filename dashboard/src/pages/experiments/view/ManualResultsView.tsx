@@ -68,6 +68,7 @@ import { PolicyDetailedHeader } from '../../report2/PolicyDetailedHeader';
 import { POLICY_REPORT_INDICATORS } from '../../../lib/policyReport';
 import { ResultsQueue } from './ResultsQueue';
 import { manualResultsQueueItem } from '../../../lib/resultsQueue';
+import { readPolicyAnalysisWindow, updateReportQuery } from '../../../lib/reportUrlState';
 import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
 import { useResultsTopNavigation } from './useResultsTopNavigation';
 import { useRunHistoryDeletion } from './useRunHistoryDeletion';
@@ -287,7 +288,7 @@ interface ManualResultsViewProps {
   requestedComparisonRunId: string;
   requestedJobRef?: string;
   queueInitiallyExpanded?: boolean;
-  onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string }) => void;
+  onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string; comparisonNoneFor: string; jobRef?: string }) => void;
   sidebarSubtitle: string;
 }
 
@@ -391,10 +392,11 @@ export function ManualResultsView({
   const [runDetailsTarget, setRunDetailsTarget] = useState<ManifestTarget | null>(null);
   const [expandedPolicyGroupIds, setExpandedPolicyGroupIds] = useState<string[]>([]);
   const [loadedComparePayload, setComparePayload] = useState<ResultsComparePayload | null>(null);
-  const [analysisCutoffMonths, setAnalysisCutoffMonths] = useState<number>(500);
-  const compareWindow: CompareWindow = analysisCutoffMonths === 0
-    ? 'full'
-    : `post${analysisCutoffMonths}` as CompareWindow;
+  const compareWindow = readPolicyAnalysisWindow(pageSearch);
+  const analysisCutoffMonths = compareWindow === 'full' ? 0 : Number.parseInt(compareWindow.slice(4), 10);
+  const setAnalysisCutoffMonths = (months: number) => setPageSearch((current) => updateReportQuery(current, {
+    window: months === 0 ? 'full' : `post${months}`
+  }), { replace: true });
   const [smoothWindow, setSmoothWindow] = useState<SmoothWindow>(12);
   // Report means and lines use the same recorded monthly data. Keep Detailed's smoothing choice.
   const effectiveSmoothWindow = presentation === 'report' ? 0 : smoothWindow;
@@ -422,9 +424,8 @@ export function ManualResultsView({
   const [isPolicyResultsExpanded, setIsPolicyResultsExpanded] = useState<boolean>(guidedPolicyResultsOpen);
   const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
-  // Clearing the comparison is an explicit user choice for this primary run. Keep that choice
-  // locally so the URL's absent comparison id is not immediately reinterpreted as "choose default".
-  const [comparisonDefaultOptOutRunId, setComparisonDefaultOptOutRunId] = useState<string>('');
+  // The opt-out belongs to this run and survives presentation changes, refresh and navigation.
+  const comparisonDefaultOptOutRunId = pageSearch.get('comparisonNoneFor') ?? '';
   const requestedJobId = requestedJobRef.startsWith('manual:') ? requestedJobRef.slice('manual:'.length) : '';
   const removedJobIds = useRef(new Set<string>());
   const removedRunIds = useRef(new Set<string>());
@@ -438,14 +439,18 @@ export function ManualResultsView({
       if (jobRef === requestedJobRef || runId === requestedBaselineRunId || runId === requestedComparisonRunId) {
         onManualSelectionChange({
           baselineRunId: requestedBaselineRunId === runId ? '' : requestedBaselineRunId,
-          comparisonRunId: requestedComparisonRunId === runId ? '' : requestedComparisonRunId
+          comparisonRunId: requestedComparisonRunId === runId ? '' : requestedComparisonRunId,
+          comparisonNoneFor: requestedComparisonRunId === runId ? requestedBaselineRunId : comparisonDefaultOptOutRunId
         });
       }
     }
   });
-  const requestedJob = runJobs.find((job) => job.jobId === requestedJobId);
-  const requestedJobPending = Boolean(requestedJobId) &&
-    (!requestedJob || requestedJob.status === 'queued' || requestedJob.status === 'running');
+  const requestedJob = runJobs.find((job) => requestedJobId
+    ? job.jobId === requestedJobId
+    : Boolean(requestedBaselineRunId) && job.runId === requestedBaselineRunId);
+  const requestedRunId = requestedBaselineRunId || requestedJob?.runId || '';
+  const requestedJobPending = (Boolean(requestedJobId) && !requestedJob)
+    || requestedJob?.status === 'queued' || requestedJob?.status === 'running';
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
   // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
@@ -460,40 +465,43 @@ export function ManualResultsView({
       );
       // The results directory may arrive before the first jobs response. Preserve the submitted
       // run's queued identity instead of treating its empty directory as completed output.
-      if (requestedJobPending && requestedBaselineRunId) ids.add(requestedBaselineRunId);
+      if (requestedJobPending && requestedRunId) ids.add(requestedRunId);
       return ids;
     },
-    [requestedBaselineRunId, requestedJobPending, runJobs, stopDeletion.pending?.jobRef]
+    [requestedRunId, requestedJobPending, runJobs, stopDeletion.pending?.jobRef]
   );
   const historyRuns = useMemo(() => runs.filter((run) => !activeRunIds.has(run.runId)), [runs, activeRunIds]);
   const awaitingRequestedResult = requestedJob?.status === 'succeeded' &&
-    !historyRuns.some((run) => run.runId === requestedBaselineRunId);
+    !historyRuns.some((run) => run.runId === requestedRunId);
+  const selectedRunPending = requestedJobPending || activeRunIds.has(requestedRunId) || awaitingRequestedResult;
+  const comparisonDefaultOptOut = Boolean(comparisonDefaultOptOutRunId) &&
+    (comparisonDefaultOptOutRunId === requestedRunId || comparisonDefaultOptOutRunId === requestedJobRef);
 
   const resolvedSelection = useMemo(
-    () => isGuidedPolicy
-      ? { baselineRunId: requestedBaselineRunId, comparisonRunId: requestedComparisonRunId }
-      : resolveManualRunSelection(historyRuns, requestedBaselineRunId, requestedComparisonRunId, {
-        defaultToMatchedBaseline: comparisonDefaultOptOutRunId !== requestedBaselineRunId
+    () => isGuidedPolicy || selectedRunPending || (requestedRunId && isLoadingRuns)
+      ? { baselineRunId: requestedRunId, comparisonRunId: requestedComparisonRunId === requestedRunId ? '' : requestedComparisonRunId }
+      : resolveManualRunSelection(historyRuns, requestedRunId, requestedComparisonRunId, {
+        defaultToMatchedBaseline: !comparisonDefaultOptOut
       }),
-    [comparisonDefaultOptOutRunId, historyRuns, isGuidedPolicy, requestedBaselineRunId, requestedComparisonRunId]
+    [comparisonDefaultOptOut, historyRuns, isGuidedPolicy, requestedRunId, requestedComparisonRunId, selectedRunPending, isLoadingRuns]
   );
   const baselineRunId = resolvedSelection.baselineRunId;
   const comparisonRunId = resolvedSelection.comparisonRunId;
   const mode: ManualResultsMode = comparisonRunId ? 'compare' : 'single';
   const selectedRunIds = useMemo(
-    () => (baselineRunId ? (comparisonRunId ? [baselineRunId, comparisonRunId] : [baselineRunId]) : []),
-    [baselineRunId, comparisonRunId]
+    () => (baselineRunId && !selectedRunPending ? (comparisonRunId ? [baselineRunId, comparisonRunId] : [baselineRunId]) : []),
+    [baselineRunId, comparisonRunId, selectedRunPending]
   );
   // Never label the previous run's cached details or chart as the newly selected run.
-  const baselineDetail = loadedBaselineDetail?.runId === baselineRunId ? loadedBaselineDetail : null;
-  const comparisonDetail = loadedComparisonDetail?.runId === comparisonRunId ? loadedComparisonDetail : null;
+  const baselineDetail = !selectedRunPending && loadedBaselineDetail?.runId === baselineRunId ? loadedBaselineDetail : null;
+  const comparisonDetail = !selectedRunPending && loadedComparisonDetail?.runId === comparisonRunId ? loadedComparisonDetail : null;
   const comparePayload = loadedComparePayload?.runIds.length === selectedRunIds.length &&
     loadedComparePayload.runIds.every((runId, index) => runId === selectedRunIds[index]) &&
     loadedComparePayload.window === compareWindow &&
     loadedComparePayload.smoothWindow === effectiveSmoothWindow &&
     requestedIndicatorIds.every((id) => loadedComparePayload.indicatorIds.includes(id))
     ? loadedComparePayload : null;
-  const manifestRunId = manifestTarget === 'comparison' && comparisonRunId ? comparisonRunId : baselineRunId;
+  const manifestRunId = selectedRunPending ? '' : manifestTarget === 'comparison' && comparisonRunId ? comparisonRunId : baselineRunId;
   const manifestTargetLabel = manifestTarget === 'comparison' && comparisonRunId
     ? COMPARISON_RUN_LABEL
     : PRIMARY_RUN_LABEL;
@@ -512,43 +520,48 @@ export function ManualResultsView({
     // of the results view — the "View results" button appears to do nothing. Once runs have
     // loaded, a genuinely-missing id falls back to a default run instead of an empty one. An
     // accepted job keeps its requested result id until the job and its finished output arrive.
-    if (isLoadingRuns || requestedJobPending || awaitingRequestedResult) {
+    if (isLoadingRuns || selectedRunPending) {
       return;
     }
     if (
       requestedBaselineRunId === baselineRunId &&
       requestedComparisonRunId === comparisonRunId &&
-      requestedJob?.status !== 'succeeded'
+      (!requestedJobId || requestedJob?.status !== 'succeeded')
     ) {
       return;
     }
 
     onManualSelectionChange({
       baselineRunId,
-      comparisonRunId
+      comparisonRunId,
+      comparisonNoneFor: !comparisonRunId && baselineRunId === requestedRunId && comparisonDefaultOptOut ? baselineRunId : ''
     });
   }, [
     baselineRunId,
     comparisonRunId,
     isLoadingRuns,
-    requestedJobPending,
+    selectedRunPending,
+    requestedJobId,
     requestedJob?.status,
-    awaitingRequestedResult,
+    requestedRunId,
+    comparisonDefaultOptOut,
     onManualSelectionChange,
     requestedBaselineRunId,
     requestedComparisonRunId
   ]);
 
-  const loadRuns = useCallback(async () => {
+  const runsRequestId = useRef(0);
+  const loadRuns = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const requestId = ++runsRequestId.current;
     setLoadError('');
     setIsLoadingRuns(true);
 
     try {
       const runsPayload = (await fetchResultsRuns()).filter((run) => !removedRunIds.current.has(run.runId));
-      setRuns(runsPayload);
+      if (isCurrent() && requestId === runsRequestId.current) setRuns(runsPayload);
       return runsPayload;
     } finally {
-      setIsLoadingRuns(false);
+      if (isCurrent() && requestId === runsRequestId.current) setIsLoadingRuns(false);
     }
   }, []);
 
@@ -578,8 +591,7 @@ export function ManualResultsView({
           { defaultToMatchedBaseline: false }
         );
         // Deleting a selected comparison leaves it cleared, including after the refresh.
-        setComparisonDefaultOptOutRunId(nextSelection.comparisonRunId ? '' : nextSelection.baselineRunId);
-        onManualSelectionChange(nextSelection);
+        onManualSelectionChange({ ...nextSelection, comparisonNoneFor: nextSelection.comparisonRunId ? '' : nextSelection.baselineRunId });
       }
       await loadRuns();
     }
@@ -591,7 +603,7 @@ export function ManualResultsView({
 
     const loadRunsWithRetry = async () => {
       try {
-        await loadRuns();
+        await loadRuns(() => !cancelled);
       } catch (error) {
         if (cancelled) {
           return;
@@ -616,14 +628,22 @@ export function ManualResultsView({
     };
   }, [loadRuns]);
 
+  // Changing the selected run must not discard observed job transitions or a pending refresh.
+  const historyRequestedJobId = useRef(requestedJobId);
+  const historyRequestedRunId = useRef(requestedRunId);
+  useEffect(() => {
+    historyRequestedJobId.current = requestedJobId;
+    historyRequestedRunId.current = requestedRunId;
+  }, [requestedJobId, requestedRunId]);
+
   useEffect(() => {
     let cancelled = false;
-    let previousActive = false;
-    let previousRequestedStatus: ModelRunJobStatus | undefined;
+    let previousStatuses: Map<string, ModelRunJobStatus> | undefined;
+    const pendingCompletedRunIds = new Set<string>();
     let polling = false;
 
     const pollActiveRuns = async () => {
-      if (polling) return;
+      if (cancelled || polling) return;
       polling = true;
       try {
         const jobs = (await fetchModelRunJobs()).filter((job) => !removedJobIds.current.has(job.jobId));
@@ -631,20 +651,31 @@ export function ManualResultsView({
           return;
         }
         setRunJobs(jobs);
-        const active = jobs.some((job) => job.status === 'queued' || job.status === 'running');
-        const submittedJob = jobs.find((job) => job.jobId === requestedJobId);
-        const requestedStatus = submittedJob?.status;
-        if ((previousActive && !active) || (requestedStatus === 'succeeded' && previousRequestedStatus !== 'succeeded')) {
-          // The submitted run can finish while another job remains active. Refresh its output
-          // immediately so the preserved requested selection becomes available in the picker.
-          const refreshedRuns = await loadRuns();
-          if (requestedStatus === 'succeeded' && !refreshedRuns.some((run) => run.runId === submittedJob?.runId)) {
-            // Output listing can lag job completion; retry on the next poll without losing focus.
-            return;
-          }
+        const statuses = new Map(jobs.map((job) => [job.jobId, job.status]));
+        const finishedJobs = jobs.filter((job) =>
+          job.status !== 'queued' && job.status !== 'running' &&
+          previousStatuses?.get(job.jobId) !== job.status &&
+          (previousStatuses !== undefined || (job.status === 'succeeded' && (historyRequestedJobId.current
+            ? job.jobId === historyRequestedJobId.current
+            : Boolean(historyRequestedRunId.current) && job.runId === historyRequestedRunId.current)))
+        );
+        const removedActiveJob = previousStatuses !== undefined && [...previousStatuses].some(([jobId, status]) =>
+          (status === 'queued' || status === 'running') && !statuses.has(jobId)
+        );
+        for (const job of finishedJobs) {
+          if (job.status === 'succeeded' && job.runId) pendingCompletedRunIds.add(job.runId);
         }
-        previousActive = active;
-        previousRequestedStatus = requestedStatus;
+        for (const runId of pendingCompletedRunIds) {
+          if (removedRunIds.current.has(runId)) pendingCompletedRunIds.delete(runId);
+        }
+        if (finishedJobs.length || removedActiveJob || pendingCompletedRunIds.size) {
+          // Every completed job can add history while other work continues. Output listing can
+          // lag completion, so keep retrying missing successful runs (including the submitted run).
+          const refreshedRuns = await loadRuns(() => !cancelled);
+          if (cancelled) return;
+          for (const run of refreshedRuns) pendingCompletedRunIds.delete(run.runId);
+        }
+        previousStatuses = statuses;
       } catch {
         // Model runs may be unavailable (e.g. cloud/preview); ignore polling errors.
       } finally {
@@ -661,7 +692,7 @@ export function ManualResultsView({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [loadRuns, requestedJobId]);
+  }, [loadRuns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -707,7 +738,7 @@ export function ManualResultsView({
     // The comparison run's policy is fetched separately from its results so the policy block can
     // show both sides of a comparison; without it the block would silently describe only the
     // baseline while the page header says "Comparing runs".
-    if (!comparisonRunId) {
+    if (!comparisonRunId || selectedRunPending) {
       setComparisonDetail(null);
       return;
     }
@@ -728,11 +759,12 @@ export function ManualResultsView({
     return () => {
       cancelled = true;
     };
-  }, [comparisonRunId]);
+  }, [comparisonRunId, selectedRunPending]);
 
   useEffect(() => {
-    if (!baselineRunId) {
+    if (!baselineRunId || selectedRunPending) {
       setBaselineDetail(null);
+      setIsLoadingDetail(false);
       return;
     }
 
@@ -762,7 +794,7 @@ export function ManualResultsView({
     return () => {
       cancelled = true;
     };
-  }, [baselineRunId]);
+  }, [baselineRunId, selectedRunPending]);
 
   useEffect(() => {
     if (!manifestRunId) {
@@ -809,6 +841,7 @@ export function ManualResultsView({
     if (selectedRunIds.length === 0) {
       setComparePayload(null);
       setCompareError('');
+      setIsLoadingCompare(false);
       return;
     }
 
@@ -845,6 +878,7 @@ export function ManualResultsView({
       setLendingBaseline(null);
       setLendingComparison(null);
       setLendingError('');
+      setIsLoadingLending(false);
       return;
     }
 
@@ -924,7 +958,7 @@ export function ManualResultsView({
   };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
-  const selectedRunName = baselineDetail ? getRunPrimaryLabel(baselineDetail) : baselineSummary ? getRunPrimaryLabel(baselineSummary) : baselineRunId || requestedBaselineRunId || 'Select a policy run';
+  const selectedRunName = baselineDetail ? getRunPrimaryLabel(baselineDetail) : baselineSummary ? getRunPrimaryLabel(baselineSummary) : requestedJob?.title || baselineRunId || requestedBaselineRunId || (selectedRunPending ? 'Checking submitted run…' : 'Select a policy run');
   const comparisonRunName = comparisonDetail ? getRunPrimaryLabel(comparisonDetail) : comparisonSummary ? getRunPrimaryLabel(comparisonSummary) : comparisonRunId;
   const detailedTitle = comparisonRunId ? `${selectedRunName} vs ${comparisonRunName}` : selectedRunName;
   const matchedBaselineSummary = useMemo(
@@ -1183,20 +1217,23 @@ export function ManualResultsView({
   }, [baselineDetail, guidedTrendId, isGuidedPolicy, presentation]);
 
   const updateSelection = useCallback(
-    (nextBaselineRunId: string, nextComparisonRunId: string) => {
+    (nextBaselineRunId: string, nextComparisonRunId: string, comparisonNoneFor = '') => {
       onManualSelectionChange({
         baselineRunId: nextBaselineRunId,
         comparisonRunId:
-          nextComparisonRunId && nextComparisonRunId !== nextBaselineRunId ? nextComparisonRunId : ''
+          nextComparisonRunId && nextComparisonRunId !== nextBaselineRunId ? nextComparisonRunId : '',
+        comparisonNoneFor,
+        // Editing a comparison must keep the accepted identity while its first jobs response
+        // is pending. A primary selection change or completed handoff retires the reference.
+        ...(selectedRunPending && nextBaselineRunId === requestedRunId && requestedJobRef ? { jobRef: requestedJobRef } : {})
       });
     },
-    [onManualSelectionChange]
+    [onManualSelectionChange, selectedRunPending, requestedRunId, requestedJobRef]
   );
 
   const setComparisonSelection = useCallback(
     (runId: string) => {
-      setComparisonDefaultOptOutRunId(runId ? '' : baselineRunId);
-      updateSelection(baselineRunId, runId);
+      updateSelection(baselineRunId, runId, runId ? '' : baselineRunId);
     },
     [baselineRunId, updateSelection]
   );
@@ -1204,7 +1241,6 @@ export function ManualResultsView({
   const setBaselineSelection = (runId: string) => {
     // Deliberately leaves Run History open: selecting a run is often the first of several
     // comparisons, and collapsing the list would throw away the user's place in it.
-    setComparisonDefaultOptOutRunId('');
     updateSelection(runId, '');
   };
 
@@ -1357,6 +1393,8 @@ export function ManualResultsView({
         disabled={historyRuns.length === 0}
         onChange={(event) => setBaselineSelection(event.target.value)}
       >
+        {!baselineRunId && <option value="">{selectedRunName}</option>}
+        {baselineRunId && !historyRuns.some((run) => run.runId === baselineRunId) && <option value={baselineRunId}>{selectedRunName}</option>}
         {historyRuns.map((run) => (
           <option key={run.runId} value={run.runId}>
             {formatRunOptionLabel(run)}
@@ -1433,6 +1471,7 @@ export function ManualResultsView({
             canCancel={canWrite && canDeleteResults} stopDeletion={stopDeletion}
             loadingSubmitted={loadingRequestedJob}
           />
+          {selectedRunPending && <p className="info-banner" role="status">{selectedRunName} — results will load automatically when this run finishes.</p>}
 
           <article className="results-card manual-results-summary-card">
             <div

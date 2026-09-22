@@ -34,7 +34,7 @@ const draftId = 'unfinished-draft';
 const handoffNames = ['onManualRunAccepted', 'onSensitivityRunAccepted'];
 const navigationNames = [...handoffNames, 'onSelectedJobRefChange', 'setPendingManualJobRef', 'setPendingSensitivityJobRef', 'refreshJobs'];
 
-function createHarness(workspace: Workspace, withHandoff = true, demo = false) {
+function createHarness(workspace: Workspace, withHandoff = true, demo = false, guards: Record<string, unknown> = {}) {
   const calls: RecordedCall[] = [];
   const drafts = new Set([`manual:${draftId}`, `sensitivity:${draftId}`]);
   const lifecycle = Symbol('mounted controller');
@@ -59,7 +59,15 @@ function createHarness(workspace: Workspace, withHandoff = true, demo = false) {
   const context = vm.createContext({
     exports: {},
     activeType: workspace,
-    experimentDemoActive: demo,
+    guidedPracticeActive: demo,
+    allowPolicyPracticeSubmission: false,
+    allowSensitivityPracticeSubmission: false,
+    canWrite: true,
+    isLoadingOptions: false,
+    draftHydrated: true,
+    isLoadingJobs: false,
+    manualSubmissionLockedBySensitivity: false,
+    sensitivitySubmissionLockedByManual: false,
     jobsLifecycleRef,
     submissionInFlightRef: { current: false },
     draftId,
@@ -72,7 +80,7 @@ function createHarness(workspace: Workspace, withHandoff = true, demo = false) {
     sensitivityMax: '5',
     sensitivitySampleCount: '5',
     sensitivityMaxWorkers: '3',
-    options: { sensitivityMaxWorkersCap: 4 },
+    options: { executionEnabled: true, sensitivityMaxWorkersCap: 4 },
     buildSubmitPayload: (confirmWarnings: boolean, maxWorkers: number) => ({ confirmWarnings, maxWorkers }),
     buildSensitivityGeneralOverrides: () => ({ N_SIMS: 8 }),
     submitModelRun: (payload: unknown) => { record('submitModelRun', payload); return response; },
@@ -82,7 +90,8 @@ function createHarness(workspace: Workspace, withHandoff = true, demo = false) {
     onManualRunAccepted: withHandoff ? handoff('onManualRunAccepted') : undefined,
     onSensitivityRunAccepted: withHandoff ? handoff('onSensitivityRunAccepted') : undefined,
     refreshJobs: async () => { record('refreshJobs'); },
-    ...Object.fromEntries(setters.map((name) => [name, (...args: unknown[]) => record(name, ...args)]))
+    ...Object.fromEntries(setters.map((name) => [name, (...args: unknown[]) => record(name, ...args)])),
+    ...guards
   });
   vm.runInContext(executable, context);
   const submit = vm.runInContext(workspace === 'manual' ? 'onSubmitRun' : 'onSubmitSensitivity', context) as (confirmWarnings: boolean) => Promise<void>;
@@ -163,11 +172,24 @@ for (const workspace of ['manual', 'sensitivity'] as const) {
 
   const guidedDemo = createHarness(workspace, true, true);
   await guidedDemo.submit(false);
-  assert.equal(guidedDemo.named(apiName).length, 0, `${workspace}: guided demos must never submit`);
+  assert.equal(guidedDemo.named(apiName).length, 0, `${workspace}: practice cannot submit outside its explicit Start lesson`);
   assert.equal(guidedDemo.drafts.size, 2);
   assertNoNavigation(guidedDemo);
-  assert.match(String(guidedDemo.named('setPageError')[0]?.args[0]), /disabled during the guided demo/);
+  assert.match(String(guidedDemo.named('setPageError')[0]?.args[0]), /only from its Start lesson, once per practice/);
   assert.equal(guidedDemo.jobsLifecycleRef.current, guidedDemo.lifecycle);
+
+  for (const guards of [
+    { canWrite: false }, { isLoadingOptions: true }, { draftHydrated: false },
+    { options: { executionEnabled: false } },
+    manual ? { manualSubmissionLockedBySensitivity: true } : { sensitivitySubmissionLockedByManual: true }
+  ]) {
+    const blocked = createHarness(workspace, true, false, guards);
+    await blocked.submit(false);
+    assert.equal(blocked.named(apiName).length, 0, `${workspace}: ${JSON.stringify(guards)} must block submission`);
+    assert.equal(blocked.drafts.size, 2);
+    assertNoNavigation(blocked);
+    assert.equal(blocked.named('setPageError').length, 1);
+  }
 }
 
 console.log('Experiment submission handoff tests passed.');

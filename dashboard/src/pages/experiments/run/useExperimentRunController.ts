@@ -441,6 +441,7 @@ export function useExperimentRunController({
   const [pendingManualJobRef, setPendingManualJobRef] = useState<string>('');
   const [pendingSensitivityJobRef, setPendingSensitivityJobRef] = useState<string>('');
   const jobsLifecycleRef = useRef<symbol | null>(null);
+  const optionsRequestRef = useRef(0);
   const submissionInFlightRef = useRef(false);
   const policyPracticeRunRef = useRef<PolicyPracticeRun | undefined>(experimentDemo?.policyRun);
   const sensitivityPracticeRunRef = useRef<PolicyPracticeRun | undefined>(experimentDemo?.sensitivityRun);
@@ -497,12 +498,18 @@ export function useExperimentRunController({
   );
 
   const refreshOptions = async (requestedBaseline?: string, hydrateDraft = false): Promise<ModelRunOptionsPayload | null> => {
+    const lifecycle = jobsLifecycleRef.current;
+    if (!lifecycle) return null;
+    const request = ++optionsRequestRef.current;
+    const isCurrentRequest = () => jobsLifecycleRef.current === lifecycle && optionsRequestRef.current === request;
     setPageError('');
     setOptionsError('');
     setIsLoadingOptions(true);
 
     try {
       const payload = await fetchModelRunOptions(requestedBaseline);
+      // Only the latest choice may replace the model, its defaults or a restored draft.
+      if (!isCurrentRequest()) return null;
       const defaultBasePolicy = getDefaultExperimentBasePolicy(payload);
       const defaultBasePolicyOption = payload.basePolicies.find((item) => item.id === defaultBasePolicy) ?? null;
       const initialValues = toInitialFormValues(payload.parameters, defaultBasePolicyOption);
@@ -610,11 +617,13 @@ export function useExperimentRunController({
       setDraftHydrated(true);
       return payload;
     } catch (error) {
-      setOptionsError((error as Error).message);
-      setPageError((error as Error).message);
+      if (isCurrentRequest()) {
+        setOptionsError((error as Error).message);
+        setPageError((error as Error).message);
+      }
       return null;
     } finally {
-      setIsLoadingOptions(false);
+      if (isCurrentRequest()) setIsLoadingOptions(false);
     }
   };
 
@@ -709,8 +718,10 @@ export function useExperimentRunController({
           ? readScenarioDraft(draftId)?.calibratedModel
           : readSensitivityDraft(draftId)?.calibratedModel
         : '';
-      const loadedOptions = await refreshOptions(handedOffBaseline || savedDraftBaseline || undefined, true);
-      if (cancelled) {
+      const pendingOptions = refreshOptions(handedOffBaseline || savedDraftBaseline || undefined, true);
+      const request = optionsRequestRef.current;
+      const loadedOptions = await pendingOptions;
+      if (cancelled || optionsRequestRef.current !== request) {
         return;
       }
 

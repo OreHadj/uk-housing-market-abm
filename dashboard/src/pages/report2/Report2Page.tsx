@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import type { LendingDistributionComparePayload, LendingDistributionPayload, ResultsComparePayload, ResultsCompareWindow, ResultsRunDetail, ResultsRunSummary } from '../../../shared/types';
+import type { LendingDistributionComparePayload, LendingDistributionPayload, ResultsComparePayload, ResultsRunDetail, ResultsRunSummary } from '../../../shared/types';
 import { getBasePolicyOption, summariseRunPolicy } from '../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
 import { EChart } from '../../components/EChart';
@@ -10,7 +10,7 @@ import { fetchLendingDistributionCompare, fetchResultsCompare, fetchResultsRunDe
 import { findMatchedManualBaselineRun, formatKpiComparisonDelta, formatKpiDeltaValue, formatKpiValue, formatManualComparisonCalibrationNotice, formatManualComparisonMismatchWarning, getManualComparisonFieldDifferences, getPolicySettingDifferences } from '../../lib/manualResultsView';
 import { getPolicyReportCoverage } from '../../lib/policyReport';
 import { formatModelOptionLabel } from '../../lib/modelAnchors';
-import { readReportIndicator, updateReportQuery } from '../../lib/reportUrlState';
+import { POLICY_ANALYSIS_WINDOWS as WINDOWS, policyDetailedSelection, readPolicyAnalysisWindow, readReportIndicator, updateReportQuery } from '../../lib/reportUrlState';
 import type { ReportExecutionState } from '../../lib/resultsQueue';
 import { createScenarioDraftId, setActiveScenarioDraftId, writeScenarioDraft, type ScenarioDraftV1 } from '../../lib/scenarioDraft';
 import { buildReport2Borrowers, buildReport2Risk, buildReport2Tenure, buildReport2Trend } from './report2Charts';
@@ -19,14 +19,6 @@ import { Report2ComparisonAction } from './Report2ComparisonAction';
 import { getReport2Kpi, getReport2LoanMean, getReport2Points, getReport2PrivateRentingShare, getReport2TailShare, getReport2Volatility, REPORT2_INDICATOR_IDS } from './report2Model';
 import './report2.css';
 
-const WINDOWS: { value: ResultsCompareWindow; label: string }[] = [
-  { value: 'post500', label: 'After month 500' },
-  { value: 'post1000', label: 'After month 1,000' },
-  { value: 'post1500', label: 'After month 1,500' },
-  { value: 'post2000', label: 'After month 2,000' },
-  { value: 'tail120', label: 'Latest 120 months' },
-  { value: 'full', label: 'Full run' }
-];
 const MARKET = [
   { id: 'output_saleAvSalePrice', label: 'House prices', units: 'GBP' },
   { id: 'core_mortgageApprovals', label: 'Mortgage approvals', units: 'count/month' },
@@ -124,8 +116,7 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
   const requestedComparison = searchParams.get('comparisonRunId')?.trim() ?? '';
   const comparisonId = requestedComparison === primaryId ? '' : requestedComparison;
   const isPolicyGuide = searchParams.get('demo') === 'policy-results';
-  const requestedWindow = searchParams.get('window');
-  const window = WINDOWS.find((item) => item.value === requestedWindow)?.value ?? 'post500';
+  const window = readPolicyAnalysisWindow(searchParams);
   const [savedRuns, setRuns] = useState<ResultsRunSummary[]>([]);
   const unavailableRunIds = new Set([
     ...(execution?.removedIds ?? []),
@@ -202,7 +193,7 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('baselineRunId', selected.runId);
-      if (!next.has('comparisonRunId') && matched) next.set('comparisonRunId', matched.runId);
+      if (!next.has('comparisonRunId') && matched && next.get('comparisonNoneFor') !== selected.runId) next.set('comparisonRunId', matched.runId);
       return next;
     }, { replace: true });
   }, [reportBlocked, isPolicyGuide, primaryId, runs, runsLoading, setSearchParams]);
@@ -268,7 +259,7 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
   const differences = primary && comparison ? getManualComparisonFieldDifferences(primary, comparison) : [];
   const calibrationNote = formatManualComparisonCalibrationNotice(differences);
   const settingsNote = formatManualComparisonMismatchWarning(differences);
-  const originalParams = new URLSearchParams(searchParams);
+  const originalParams = updateReportQuery(searchParams, policyDetailedSelection(searchParams, primaryId));
   originalParams.set('type', 'manual'); originalParams.set('presentation', 'detailed');
   const detailedUrl = `/results?${originalParams}`;
   const coverage = (value: typeof marketCoverage) => value ? `${value.startMonth.toLocaleString('en-GB')}–${value.endMonth.toLocaleString('en-GB')} · ${value.observedMonths.toLocaleString('en-GB')} observations` : 'No recorded months';
@@ -284,10 +275,10 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
     {queueControls}
     <div className="r2-toolbar">
       <div className="r2-controls r2-run-controls" data-guided-target="policy-run-selectors">
-      <label><span><i className="r2-dot r2-policy" />Selected policy run</span><select aria-label="Selected policy run" value={primaryId} onChange={(event) => { const id = event.target.value; update({ baselineRunId: id, runId: '', jobRef: '', comparisonRunId: findMatchedManualBaselineRun(runs, id)?.runId ?? '' }); }} disabled={runsLoading && runs.length === 0}>
+      <label><span><i className="r2-dot r2-policy" />Selected policy run</span><select aria-label="Selected policy run" value={primaryId} onChange={(event) => { const id = event.target.value; update({ baselineRunId: id, runId: '', jobRef: '', comparisonRunId: findMatchedManualBaselineRun(runs, id)?.runId ?? '', comparisonNoneFor: '' }); }} disabled={runsLoading && runs.length === 0}>
         {!primaryId && <option value="">{runsLoading ? 'Loading runs…' : 'Select a run'}</option>}{primaryId && !runs.some((run) => run.runId === primaryId) && <option value={primaryId}>{selectedRunName}</option>}{runs.map((run) => <option key={run.runId} value={run.runId}>{name(run)}</option>)}
       </select></label>
-      <label><span><i className="r2-dot r2-baseline" />Comparison baseline</span><select aria-label="Comparison baseline" value={comparisonId} onChange={(event) => update({ comparisonRunId: event.target.value })} disabled={runsLoading || !primaryId}>
+      <label><span><i className="r2-dot r2-baseline" />Comparison baseline</span><select aria-label="Comparison baseline" value={comparisonId} onChange={(event) => update({ comparisonRunId: event.target.value, comparisonNoneFor: event.target.value ? '' : primaryId })} disabled={runsLoading || !primaryId}>
         <option value="">No comparison run</option>{comparisonId && !runs.some((run) => run.runId === comparisonId) && <option value={comparisonId}>{comparisonId}</option>}{runs.filter((run) => run.runId !== primaryId).map((run) => <option key={run.runId} value={run.runId}>{name(run)}</option>)}
       </select></label>
       </div>
@@ -311,7 +302,7 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
       {(primary?.status === 'partial' || comparison?.status === 'partial') && <p className="r2-notice">Partial output: figures cover recorded months only.</p>}
       {primary && !runsLoading && !runsError && (!hasComparison || comparison) && <Report2ComparisonAction
         primary={primary} comparison={comparison} runs={runs} canWrite={canWrite}
-        onUse={(runId) => update({ comparisonRunId: runId })} onCreate={openMatchingBaseline}
+        onUse={(runId) => update({ comparisonRunId: runId, comparisonNoneFor: '' })} onCreate={openMatchingBaseline}
       />}
       <div className="r2-dashboard">
         <PolicyContext primary={primary} comparison={comparison} comparisonSelected={hasComparison} />

@@ -1,6 +1,28 @@
 import { chooseReport2Setting, REPORT2_OUTCOMES, type SensitivityReport2Model } from '../pages/sensitivity-report2/sensitivityReport2Model';
 import { SELECTABLE_KPI_KEYS } from './kpiLabels';
 
+export const POLICY_ANALYSIS_WINDOWS = [
+  { value: 'post500', label: 'After month 500' },
+  { value: 'post1000', label: 'After month 1,000' },
+  { value: 'post1500', label: 'After month 1,500' },
+  { value: 'post2000', label: 'After month 2,000' },
+  { value: 'full', label: 'Full run' }
+] as const;
+
+export function readPolicyAnalysisWindow(params: URLSearchParams) {
+  return POLICY_ANALYSIS_WINDOWS.find((item) => item.value === params.get('window'))?.value ?? 'post500';
+}
+
+/** An absent comparison in Report is an explicit choice when opening Detailed. */
+export function policyDetailedSelection(params: URLSearchParams, selectedRunId = '') {
+  const primaryId = params.get('baselineRunId')?.trim() || params.get('runId')?.trim() || selectedRunId;
+  const comparisonId = params.get('comparisonRunId')?.trim();
+  // A job-only link may be switched before its accepted run id has arrived.
+  const jobRef = params.get('jobRef')?.trim() ?? '';
+  const scope = primaryId || (jobRef.startsWith('manual:') ? jobRef : '');
+  return { comparisonNoneFor: scope && (!comparisonId || comparisonId === primaryId) ? scope : '' };
+}
+
 export const REPORT_MARKET_INDICATOR_IDS = [
   'output_saleAvSalePrice', 'core_mortgageApprovals', 'core_housingTransactions'
 ] as const;

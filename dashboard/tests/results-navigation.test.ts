@@ -34,9 +34,8 @@ const sensitivity = readView('SensitivityResultsView');
 for (const kind of ['manual', 'sensitivity']) {
   const calls: Array<{ name: string; value?: unknown }> = [];
   const context = vm.createContext({
-    baselineRunId: 'current', selectedExperimentId: 'current',
+    baselineRunId: 'current', selectedExperimentId: 'current', selectedRunPending: false, requestedRunId: '', requestedJobRef: '',
     useCallback: (callback: unknown) => callback,
-    setComparisonDefaultOptOutRunId: () => {},
     setPageError: () => {},
     onManualSelectionChange: (value: unknown) => calls.push({ name: 'select', value: structuredClone(value) }),
     onSelectedExperimentIdChange: (value: unknown) => calls.push({ name: 'select', value }),
@@ -49,7 +48,7 @@ for (const kind of ['manual', 'sensitivity']) {
   execute(handlers.map((name) => `const ${name} = ${view.expressions.get(name)};`).join('\n'), context);
   execute("viewRunResults('other')", context);
   assert.deepEqual(calls, [
-    { name: 'select', value: kind === 'manual' ? { baselineRunId: 'other', comparisonRunId: '' } : 'other' },
+    { name: 'select', value: kind === 'manual' ? { baselineRunId: 'other', comparisonRunId: '', comparisonNoneFor: '' } : 'other' },
     { name: 'scroll' }
   ], `${kind}: select the clicked run before requesting the scroll`);
   calls.length = 0;
@@ -73,7 +72,7 @@ for (const requested of ['run-a', 'run-b', 'run-a', 'just-submitted']) {
 
 for (const [view, guards, context] of [
   [manual, ['baselineDetail', 'comparisonDetail', 'comparePayload'], {
-    baselineRunId: 'new-primary', comparisonRunId: 'new-comparison', selectedRunIds: ['new-primary', 'new-comparison'],
+    baselineRunId: 'new-primary', comparisonRunId: 'new-comparison', selectedRunIds: ['new-primary', 'new-comparison'], selectedRunPending: false,
     loadedBaselineDetail: { runId: 'old-primary' }, loadedComparisonDetail: { runId: 'old-comparison' },
     loadedComparePayload: { runIds: ['old-primary', 'old-comparison'] }
   }],

@@ -192,7 +192,11 @@ assert.match(styles, /\.parameter-row-head code \{[\s\S]*?background: transparen
 assert.ok(styles.includes('.calibration-parameter-summary:hover'));
 assert.ok(styles.includes('.calibration-parameter-summary:focus-visible'));
 assert.ok(styles.includes('.calibration-parameter-row[open] > .calibration-parameter-summary'));
-assert.ok(styles.includes('@media (max-width: 980px)') && styles.includes('.parameter-number-grid { grid-column: 2; }'));
+// The sidebar reduces the workspace width. Keep the compact row layout in a medium-width
+// media query without tying its viewport breakpoint to the former full-width page.
+const parameterCompactLayout = styles.match(/@media \(max-width: (\d+)px\) \{\s*\.calibration-parameter-summary \{[^}]*grid-template-columns: auto minmax\(0, 1fr\);[^}]*\}\s*\.parameter-number-grid \{\s*grid-column: 2;\s*\}/);
+assert.ok(parameterCompactLayout, 'Compact parameter rows keep the values under the parameter name');
+assert.ok(Number(parameterCompactLayout[1]) > 720, 'Compact rows apply before the narrow/mobile layout');
 assert.ok(styles.includes('@media (max-width: 480px)') && styles.includes('.parameter-number-grid { grid-template-columns: 1fr; }'));
 assert.ok(styles.includes('.assumption-group + .assumption-group { border-top: 1px solid var(--rule); }'));
 assert.ok(styles.includes('.assumption-group-summary:hover'));
