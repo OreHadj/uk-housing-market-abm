@@ -108,13 +108,13 @@ function PolicyOutcomeCard({ definition, indicator, primaryKpi, comparisonKpi, p
         )}
       </dl>
       {option && (primaryCoverage || comparisonCoverage) ? (
-        <div role="img" aria-label={`${definition.title}: recorded monthly values${hasComparison ? ' for the primary and comparison runs' : ''}. Dotted lines show analysis-window means.`}>
+        <div role="img" aria-label={`${definition.title}. Recorded monthly values${hasComparison ? ' for the primary and comparison runs' : ''}. Dotted lines show analysis-window means.`}>
           <EChart option={option} className="policy-report-chart" />
         </div>
       ) : <p className="policy-report-empty">{missingNote || 'No recorded values in this analysis window. Try a shorter warm-up period or another run.'}</p>}
       <div className="policy-report-coverage">
-        <p>{hasComparison && <strong>Primary: </strong>}{primaryCoverage ? coverageText(primaryCoverage) : missingNote || coverageText(null)}</p>
-        {hasComparison && <p><strong>Comparison: </strong>{comparisonCoverage ? coverageText(comparisonCoverage) : missingComparisonNote || coverageText(null)}</p>}
+        <p>{hasComparison && <strong>Primary run · </strong>}{primaryCoverage ? coverageText(primaryCoverage) : missingNote || coverageText(null)}</p>
+        {hasComparison && <p><strong>Comparison run · </strong>{comparisonCoverage ? coverageText(comparisonCoverage) : missingComparisonNote || coverageText(null)}</p>}
       </div>
     </article>
   );
@@ -164,8 +164,8 @@ export function PolicyReportView({ payload, primary, comparison, primaryRunId, c
           </div>
           <aside className="policy-report-method" aria-label="How the report is calculated">
             <p>{hasEnsemble ? 'For runs with multiple recorded seeds, monthly values average the available seeds before the time average is calculated. ' : ''}These are averages of model indicators over time. No interval for uncertainty across seeds is shown.</p>
-            {hasLegacyProvenance && <p>Some selected output has no recorded ensemble manifest; its seed coverage cannot be confirmed from the results metadata.</p>}
-            {comparisonRunId && <p>Differences are primary minus comparison. Each mean uses that run’s available months, shown beneath its chart. The comparison is descriptive; differing run settings or calibration also affect outcomes.</p>}
+            {hasLegacyProvenance && <p>Some selected output has no recorded ensemble manifest. Its seed coverage cannot be confirmed from the results metadata.</p>}
+            {comparisonRunId && <p>Differences are primary minus comparison. Each mean uses that run’s available months, shown beneath its chart. The comparison is descriptive. Differing run settings or calibration also affect outcomes.</p>}
             <p>Use Detailed to explore all indicators and smoothing options.</p>
           </aside>
         </>

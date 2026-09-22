@@ -52,7 +52,7 @@ import type {
   assert.match(html, /4%/);
   assert.match(html, /5%/);
   assert.match(html, /240%/, 'Prominent mean is the retained value at the highlighted setting');
-  assert.match(html, /Baseline mean: 200%/, 'Comparison identifies the raw baseline debt-to-income level');
+  assert.match(html, /Baseline mean 200%/, 'Comparison identifies the raw baseline debt-to-income level');
   assert.match(html, /Mean at 5%/, 'Each headline identifies its own policy setting');
   assert.match(html, /\+20%/, 'Headline uses the signed relative mean difference');
   assert.equal((html.match(/class="sensitivity-report__chart"/g) ?? []).length, 3);
@@ -99,11 +99,11 @@ import type {
   const nearZeroHtml = render(detail, nearZero);
   assert.equal((nearZeroHtml.match(/class="sensitivity-report__chart"/g) ?? []).length, 3, 'Unavailable percentages do not hide raw-value charts');
   assert.match(nearZeroHtml, /\+40 pp/, 'Raw differences use percentage points for percent-valued metrics');
-  assert.match(nearZeroHtml, /Raw means shown; a relative comparison is unavailable/);
+  assert.match(nearZeroHtml, /Raw means are shown\. A relative comparison is unavailable/);
 
   const noBaselineHtml = render(detail, { ...results, baselinePointId: null });
   assert.match(noBaselineHtml, /Mean at 5%/, 'Raw tested means remain visible without an eligible baseline');
-  assert.match(noBaselineHtml, /Baseline mean: Unavailable/);
+  assert.match(noBaselineHtml, /Baseline mean Unavailable/);
   assert.doesNotMatch(noBaselineHtml, /\+20%/, 'Missing baselines cannot produce comparisons');
 
   const unsafeHtml = render({ ...detail, parameter: { ...detail.parameter, title: '<script>unsafe</script>' } });

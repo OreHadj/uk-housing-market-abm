@@ -52,6 +52,8 @@ export type PolicyExperimentDemoStepId =
 
 const configuration = DEMO_EXAMPLE_FIGURES.configuration;
 const practice = POLICY_PRACTICE_SETTINGS;
+// A default policy run (3,500 months, 8 seeds) that records transactions writes about 541 MB.
+const TRANSACTION_SIZE_WARNING = 'Transaction files use about 0.5 GB per full run.';
 
 export const POLICY_EXPERIMENT_DEMO_STEPS = [
   {
@@ -128,8 +130,8 @@ export const POLICY_EXPERIMENT_DEMO_STEPS = [
     body: '',
     bullets: [
       `Start recording at month ${practice.recordFrom} skips the first ${practice.recordFrom} transaction months. This lets the model settle and keeps files smaller.`,
-      'Record transactions enables Lending risk’s High LTV and High LTI charts.',
-      'Other exports add files only.'
+      'Record transactions enables Lending risk’s High LTV and LTI charts.',
+      TRANSACTION_SIZE_WARNING
     ]
   },
   {
@@ -232,9 +234,9 @@ export function buildPolicyExperimentDemoSteps(state: PolicyCreationCopyState): 
       return { ...step, bullets: [
         recording,
         state.recordTransactions === false
-          ? 'Enable Record transactions for Lending risk’s High LTV and High LTI charts.'
-          : 'Record transactions enables Lending risk’s High LTV and High LTI charts.',
-        'Other exports add files only.'
+          ? 'Enable Record transactions for Lending risk’s High LTV and LTI charts.'
+          : 'Record transactions enables Lending risk’s High LTV and LTI charts.',
+        TRANSACTION_SIZE_WARNING
       ] };
     }
     if (step.id === 'policy-review-overview') {

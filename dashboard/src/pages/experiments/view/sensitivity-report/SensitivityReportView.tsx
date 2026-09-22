@@ -60,19 +60,19 @@ function OutcomeCard({ outcome, rows, parameter }: {
         <div className="sensitivity-report__comparison">
           <dt>Change vs baseline</dt>
           <dd>{largest ? compactReportChange(largest.change, outcome) : 'Unavailable'}</dd>
-          <small>Baseline mean: {compactReportValue(outcome.baselineMean, outcome.units)}</small>
+          <small>Baseline mean {compactReportValue(outcome.baselineMean, outcome.units)}</small>
         </div>
       </dl>
       {largest && largest.change !== 0 && outcome.ties.length > 0 && (
-        <p className="sensitivity-report__tie" title={outcome.ties.map((tie) => `${compactReportChange(tie.change, outcome)} at ${tie.row.setting}`).join('; ')}>
-          Equally large: {outcome.ties.map((tie) => `${compactReportChange(tie.change, outcome)} at ${tie.row.setting}`).join('; ')}
+        <p className="sensitivity-report__tie" title={outcome.ties.map((tie) => `${compactReportChange(tie.change, outcome)} at ${tie.row.setting}`).join(', ')}>
+          Equally large changes include {outcome.ties.map((tie) => `${compactReportChange(tie.change, outcome)} at ${tie.row.setting}`).join(', ')}
         </p>
       )}
       {!outcome.relative && outcome.available && (
-        <p className="sensitivity-report__raw-note">Raw means shown; a relative comparison is unavailable.</p>
+        <p className="sensitivity-report__raw-note">Raw means are shown. A relative comparison is unavailable.</p>
       )}
       {outcome.available ? (
-        <div className="sensitivity-report__visual" role="img" aria-label={`${outcome.title}: ${outcome.relative ? 'percentage differences from baseline' : 'mean values'} across tested policy settings. Dashed line: baseline. Large dot: highlighted setting.`}>
+        <div className="sensitivity-report__visual" role="img" aria-label={`${outcome.title}. ${outcome.relative ? 'Percentage differences from baseline' : 'Mean values'} across tested policy settings. The dashed line shows the baseline. The large dot marks the highlighted setting.`}>
           <EChart className="sensitivity-report__chart" option={option} />
         </div>
       ) : (
@@ -112,7 +112,7 @@ export function SensitivityReportView({ detail, results, windowType }: Sensitivi
         <p className="sensitivity-report__context">
           <span>{formatModelOptionLabel(detail.baseline)}</span>
           <span>{basePolicy}</span>
-          <span>Analysis: {report.windowLabel}</span>
+          <span>Analysis window {report.windowLabel}</span>
         </p>
       </header>
 
@@ -127,7 +127,7 @@ export function SensitivityReportView({ detail, results, windowType }: Sensitivi
               Incomplete or missing responses remain gaps. Use Detailed for all recorded values and statuses.
             </p>
           )}
-          <p className="sensitivity-report__reading-key">Each card highlights its largest available difference from baseline. Dashed line: baseline · Large dot: highlighted setting.</p>
+          <p className="sensitivity-report__reading-key">Each card highlights its largest available difference from baseline. The dashed line shows the baseline. The large dot marks the highlighted setting.</p>
           <div className="sensitivity-report__outcomes" aria-label="Three headline policy responses">
             {outcomes.map((outcome) => <OutcomeCard key={outcome.id} outcome={outcome} rows={report.rows} parameter={detail.parameter} />)}
           </div>
@@ -135,10 +135,10 @@ export function SensitivityReportView({ detail, results, windowType }: Sensitivi
             <details>
               <summary>How to read this report</summary>
               <p>Means are calculated over the recorded analysis period within each seed, then averaged across successful seeds. They are never averaged across tested policy settings. Seed uncertainty is not shown.</p>
-              <p>The highlighted setting has the largest absolute difference among usable tested settings; its sign is retained. Different cards may highlight different settings. Without a usable baseline, the first available setting supplies the mean instead. A large response alone does not establish statistical significance or a policy problem.</p>
-              <p>Graphs show responses across tested policy values, not simulation time. Lines join observed settings; they do not establish the response between them. Relative differences use the baseline mean; absolute differences of percentage-valued outcomes use percentage points (pp).</p>
+              <p>The highlighted setting has the largest absolute difference among usable tested settings. Its sign is retained. Different cards may highlight different settings. Without a usable baseline, the first available setting supplies the mean instead. A large response alone does not establish statistical significance or a policy problem.</p>
+              <p>Graphs show responses across tested policy values, not simulation time. Lines join observed settings. They do not establish the response between them. Relative differences use the baseline mean. Absolute differences of percentage-valued outcomes use percentage points (pp).</p>
               {!report.coverageKnown && <p>For legacy summaries without seed detail, aggregation across seeds cannot be verified.</p>}
-              {outcomes.map((outcome) => <p key={outcome.id}><strong>{outcome.title}:</strong> {outcome.description}</p>)}
+              {outcomes.map((outcome) => <p key={outcome.id}><strong>{outcome.title}.</strong> {outcome.description}</p>)}
               <p>Use Detailed for all indicators, tested values, volatility and dispersion. Volatility and dispersion describe variation over time, not uncertainty across seeds.</p>
             </details>
           </footer>

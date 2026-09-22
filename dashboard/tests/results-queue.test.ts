@@ -90,7 +90,7 @@ for (const job of [manual, sensitivity]) {
   assert.ok(expanded.includes('aria-valuenow="0"'));
   assert.equal(expanded.match(/>Cancel</g)?.length, 3, 'Waiting jobs can be canceled as well as running jobs');
   assert.equal(expanded.includes('View results'), false, 'An unfinished sensitivity run has no ineffective View action');
-  if (job.type === 'sensitivity') assert.ok(expanded.includes('Instrument: Bank rate'));
+  if (job.type === 'sensitivity') assert.ok(expanded.includes('Instrument · Bank rate'));
   const actions = buttons(ResultsQueue({ ...props, expanded: true })).filter((button) => button.props.className === 'danger-button');
   actions.forEach((button) => button.props.onClick());
   assert.deepEqual(calls, [[job.jobRef, job.title], [waiting.jobRef, waiting.title], [secondRunning.jobRef, secondRunning.title]], 'Each action targets its own job using the existing cancellation hook');

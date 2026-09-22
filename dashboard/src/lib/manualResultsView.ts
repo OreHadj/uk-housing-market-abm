@@ -734,11 +734,11 @@ export function formatManualComparisonMismatchWarning(
     seeds ? formatCount(seeds.primaryValue, 'seed', 'seeds') : null
   ].filter((value): value is string => Boolean(value));
   const advice = steps && seeds
-    ? 'We advise using the same number of steps; the results with fewer seeds could be noisier.'
+    ? 'Use the same number of steps and remember that results with fewer seeds could be noisier.'
     : steps
       ? 'We advise comparing runs with the same number of steps.'
       : 'The results with fewer seeds could be noisier.';
-  return `The comparison run used ${comparisonParts.join(' and ')}; the primary run used ${primaryParts.join(' and ')}. ${advice}`;
+  return `The comparison run used ${comparisonParts.join(' and ')} and the primary run used ${primaryParts.join(' and ')}. ${advice}`;
 }
 
 /** Visible calibration explanation, kept separate from run-setup advice. */

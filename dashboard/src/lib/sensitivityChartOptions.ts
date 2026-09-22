@@ -126,13 +126,13 @@ export function buildSensitivityReportMeanOption(
           : null;
         return [
           `<strong>${escapeTooltipText(row.setting)}</strong>`,
-          `${escapeTooltipText(outcome.title)} — ${measureLabel}: ${escapeTooltipText(formatReportValue(value, units))}`,
-          `Status: ${escapeTooltipText(row.status)}`,
+          `${escapeTooltipText(outcome.title)} — ${measureLabel} ${escapeTooltipText(formatReportValue(value, units))}`,
+          `Status ${escapeTooltipText(row.status)}`,
           escapeTooltipText(coverage),
           contributions ? escapeTooltipText(contributions) : null,
           baseline !== null
-            ? `Baseline: ${escapeTooltipText(formatReportValue(baseline, units))}`
-            : 'Baseline: unavailable'
+            ? `Baseline ${escapeTooltipText(formatReportValue(baseline, units))}`
+            : 'Baseline unavailable'
         ].filter((line) => line !== null).join('<br/>');
       }
     },
@@ -240,7 +240,7 @@ export function buildDeltaTrendOption(
           const delta = typeof value[1] === 'number' && Number.isFinite(value[1])
             ? `${value[1].toLocaleString('en-GB', { maximumFractionDigits: 6 })}%`
             : 'n/a';
-          return `${escapeTooltipText(formatPolicyValue(value[0], policyUnit))}<br/>${escapeTooltipText(KPI_LABELS[kpi].label)}: ${delta}`;
+          return `${escapeTooltipText(formatPolicyValue(value[0], policyUnit))}<br/>${escapeTooltipText(KPI_LABELS[kpi].label)} ${delta}`;
         }
       } : {}),
       valueFormatter: (value: unknown) => {

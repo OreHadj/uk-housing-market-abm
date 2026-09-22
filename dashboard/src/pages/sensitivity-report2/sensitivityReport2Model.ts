@@ -163,7 +163,7 @@ function valueFor(result: SensitivityPointResult | SensitivitySeedRunResult | nu
 
 function countLabel(successful: number | null, expected: number | null): string {
   if (successful === null) return 'seed details not retained';
-  return expected === null ? `${successful} successful seeds; planned count unknown` : `${successful}/${expected} successful seeds`;
+  return expected === null ? `${successful} successful seeds. Planned count unknown` : `${successful}/${expected} successful seeds`;
 }
 
 function buildCoverage(
@@ -298,7 +298,7 @@ export function buildSensitivityReport2(
   const warnings = [...codes].map((code) => {
     const messages = [...new Set((detail.warnings ?? []).filter((warning) => warning.code === code).map((warning) => warning.message))];
     const affected = rows.filter((row) => detail.warningSummary?.byPoint?.[row.point.pointId]?.includes(code));
-    return { code, message: messages[0] ?? `Recorded configuration warning: ${code}`, messages,
+    return { code, message: messages[0] ?? `Recorded configuration warning (${code})`, messages,
       pointIds: affected.map((row) => row.point.pointId), settings: affected.map((row) => row.setting) };
   });
   return {
@@ -339,7 +339,7 @@ export function formatReport2Difference(value: number | null, outcome: Report2Ou
 export function formatReport2Pairing(metric: Report2Metric): string {
   const pairs = metric.paired;
   if (!pairs || pairs.total === 0) return 'No valid matched seed pairs';
-  if (pairs.total === 1) return '1 matched seed; variation across seeds cannot be assessed';
+  if (pairs.total === 1) return 'With 1 matched seed, variation across seeds cannot be assessed';
   if (metric.change === null || metric.change === 0) {
     return `${pairs.higher} higher, ${pairs.lower} lower, ${pairs.equal} unchanged across ${pairs.total} matched seeds`;
   }
@@ -427,7 +427,7 @@ export function buildReport2Observations(
       const [a, b, c] = metrics.map((metric) => metric.value!);
       if ((b - a) * (c - b) < 0) {
         observations.push({ kind: 'coverage', title: 'Complete coverage before interpreting the reversal',
-          text: `${outcome.title} changes ${formatReport2Difference(b - a, outcome)} from ${rows[0].setting} to ${rows[1].setting}, then ${formatReport2Difference(c - b, outcome)} to ${rows[2].setting}. ${rows.filter((row) => !row.metrics[outcome.key].eligible).map((row) => `${row.setting}: ${row.coverage.label}, ${row.metrics[outcome.key].finiteSeeds ?? 'unknown'} finite KPI seeds`).join('; ')}.`,
+          text: `${outcome.title} changes ${formatReport2Difference(b - a, outcome)} from ${rows[0].setting} to ${rows[1].setting}, then ${formatReport2Difference(c - b, outcome)} to ${rows[2].setting}. ${rows.filter((row) => !row.metrics[outcome.key].eligible).map((row) => `Setting ${row.setting} has ${row.coverage.label}, with ${row.metrics[outcome.key].finiteSeeds ?? 'unknown'} finite KPI seeds`).join('. ')}.`,
           pointIds: rows.map((row) => row.point.pointId) });
         break;
       }
@@ -441,14 +441,14 @@ export function buildReport2Observations(
     const flat = analysis.intervals.find((interval) => interval.change === 0 &&
       warning.pointIds.includes(interval.from.point.pointId) && warning.pointIds.includes(interval.to.point.pointId))!;
     observations.push({ kind: 'warning', title: 'Inspect the recorded binding-constraint warning',
-      text: `${outcome.title} is unchanged (${formatReport2Difference(0, outcome)}) from ${intervalLabel(flat)}; ${intervalCoverage(flat, outcome)}. ${formatReport2ConstraintWarning(warning)} This may explain the flat interval.`,
+      text: `${outcome.title} is unchanged (${formatReport2Difference(0, outcome)}) from ${intervalLabel(flat)}. Coverage is ${intervalCoverage(flat, outcome)}. ${formatReport2ConstraintWarning(warning)} This may explain the flat interval.`,
       pointIds: [flat.from.point.pointId, flat.to.point.pointId] });
   }
 
   if (analysis.largestIntervals.length > 0) {
     const tied = analysis.largestIntervals.length > 1;
     observations.push({ kind: 'interval', title: tied ? 'Sample the tied most responsive intervals more densely' : 'Sample the most responsive interval more densely',
-      text: `${outcome.title}: ${analysis.largestIntervals.map((interval) => `${intervalLabel(interval)} (${formatReport2Difference(interval.change, outcome)}; slope ${formatReport2Number(interval.slope)} ${interval.slopeUnits}; ${intervalCoverage(interval, outcome)})`).join('; ')}. ${tied ? 'These intervals share the largest absolute observed slope.' : 'This is the largest absolute observed slope.'} Sampled endpoints do not locate an exact threshold.${analysis.excludedPointIds.length ? ' Incomplete or unavailable neighbouring intervals are excluded.' : ''}`,
+      text: `${analysis.largestIntervals.map((interval) => `${outcome.title} changes ${formatReport2Difference(interval.change, outcome)} from ${intervalLabel(interval)}. The slope is ${formatReport2Number(interval.slope)} ${interval.slopeUnits}. Coverage is ${intervalCoverage(interval, outcome)}`).join('. ')}. ${tied ? 'These intervals share the largest absolute observed slope.' : 'This is the largest absolute observed slope.'} Sampled endpoints do not locate an exact threshold.${analysis.excludedPointIds.length ? ' Incomplete or unavailable neighbouring intervals are excluded.' : ''}`,
       pointIds: [...new Set(analysis.largestIntervals.flatMap((interval) => [interval.from.point.pointId, interval.to.point.pointId]))] });
   }
 
@@ -461,7 +461,7 @@ export function buildReport2Observations(
       const debtOutcome = model.outcomes.find((item) => item.key === 'core_debtToIncome')!;
       const ftbOutcome = model.outcomes.find((item) => item.key === 'core_advancesToFTB')!;
       observations.push({ kind: 'tradeoff', title: `Inspect lending activity and leverage at ${selected.setting}`,
-        text: `Against the same simulated baseline, mortgage debt to income changes ${formatReport2Difference(debt.change, debtOutcome)} alongside first-time-buyer advances ${formatReport2Difference(ftb.change, ftbOutcome)}. ${formatReport2Pairing(debt)} for debt to income; ${formatReport2Pairing(ftb)} for FTB advances. Complete KPI coverage at both settings; this does not establish a desirable policy change.`,
+        text: `Against the same simulated baseline, mortgage debt to income changes ${formatReport2Difference(debt.change, debtOutcome)} alongside first-time-buyer advances ${formatReport2Difference(ftb.change, ftbOutcome)}. ${formatReport2Pairing(debt)} for debt to income. ${formatReport2Pairing(ftb)} for FTB advances. Both settings have complete KPI coverage. This does not establish a desirable policy change.`,
         pointIds: [selected.point.pointId, model.baselineRow.point.pointId] });
     }
   }
@@ -474,13 +474,13 @@ export function buildReport2Observations(
   } else if (analysis.diminishing.length > 0) {
     const { earlier, later } = analysis.diminishing[0];
     observations.push({ kind: 'diminishing', title: 'Investigate the smaller response in the next interval',
-      text: `${outcome.title}: ${intervalLabel(earlier)} changes ${formatReport2Difference(earlier.change, outcome)} (slope ${formatReport2Number(earlier.slope)}), then ${intervalLabel(later)} changes ${formatReport2Difference(later.change, outcome)} (slope ${formatReport2Number(later.slope)}). Slopes use ${earlier.slopeUnits}; both intervals have complete KPI seed coverage.`,
+      text: `${outcome.title} changes ${formatReport2Difference(earlier.change, outcome)} from ${intervalLabel(earlier)} (slope ${formatReport2Number(earlier.slope)}), then ${formatReport2Difference(later.change, outcome)} from ${intervalLabel(later)} (slope ${formatReport2Number(later.slope)}). Slopes use ${earlier.slopeUnits}. Both intervals have complete KPI seed coverage.`,
       pointIds: [earlier.from.point.pointId, earlier.to.point.pointId, later.to.point.pointId] });
   }
 
   if (analysis.boundaryRows.length > 0) {
     observations.push({ kind: 'boundary', title: 'Consider extending the sampled range',
-      text: `${outcome.title} has ${analysis.boundaryRows.length > 1 ? 'tied largest absolute changes' : 'a largest absolute change'} from baseline at ${analysis.boundaryRows.map((row) => `${row.setting} (${formatReport2Difference(row.metrics[outcome.key].change, outcome)})`).join(' and ')}, at the tested boundary. These comparisons have complete KPI seed coverage; behaviour beyond the sampled range is unknown.${analysis.excludedPointIds.length ? ' Incomplete settings are excluded from this comparison.' : ''}`,
+      text: `${outcome.title} has ${analysis.boundaryRows.length > 1 ? 'tied largest absolute changes' : 'a largest absolute change'} from baseline at ${analysis.boundaryRows.map((row) => `${row.setting} (${formatReport2Difference(row.metrics[outcome.key].change, outcome)})`).join(' and ')}, at the tested boundary. These comparisons have complete KPI seed coverage. Behaviour beyond the sampled range is unknown.${analysis.excludedPointIds.length ? ' Incomplete settings are excluded from this comparison.' : ''}`,
       pointIds: analysis.boundaryRows.map((row) => row.point.pointId) });
   }
   return observations.slice(0, 3);

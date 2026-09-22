@@ -34,7 +34,7 @@ for (const status of ['failed', 'canceled'] as const) {
   assert.equal(stopped.includes('Estimated remaining'), false);
 }
 const stale = markup(snapshot, 'Connection lost');
-assert.ok(stale.includes('Last reported: 45.0%') && stale.includes('retrying'));
+assert.ok(stale.includes('Last reported 45.0%') && stale.includes('Retrying'));
 assert.equal(markup({ ...snapshot, percentComplete: Number.NaN }).includes('aria-valuenow'), false);
 
 function deferred<T>() {

@@ -147,8 +147,8 @@ export function formatReportSetting(
   return Object.entries(values).map(([key, value]) => {
     const display = CENTRAL_BANK_POLICY_DISPLAY[key];
     const formatted = display ? formatPolicyValue(value, display.unit) : formatReportNumber(value);
-    return `${display?.label ?? key}: ${formatted}`;
-  }).join('; ');
+    return `${display?.label ?? key} ${formatted}`;
+  }).join(', ');
 }
 
 export function getReportWindowLabel(windowType: SensitivityExperimentChartsPayload['windowType'] | null): string {

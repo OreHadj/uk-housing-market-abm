@@ -148,11 +148,12 @@ assert.equal(stepText(stepById(shortDraftSteps, 'policy-review-overview')).inclu
 const defaultExports = stepText(stepById(defaultDraftSteps, 'policy-exports'));
 assert.ok(defaultExports.includes('Start recording at month 500 skips the first 500 transaction months'));
 assert.ok(defaultExports.includes('lets the model settle and keeps files smaller'));
-assert.ok(defaultExports.includes('Record transactions enables Lending risk’s High LTV and High LTI charts'));
-assert.ok(defaultExports.includes('Other exports add files only'));
+assert.ok(defaultExports.includes('Record transactions enables Lending risk’s High LTV and LTI charts'));
+assert.ok(defaultExports.includes('Transaction files use about 0.5 GB per full run'), 'Step 8 warns about transaction storage');
 const editedExports = stepText(stepById(buildPolicyExperimentDemoSteps({ ...guideProps, recordingStartMonth: '1250', recordTransactions: false }), 'policy-exports'));
 assert.ok(editedExports.includes('month 1,250 skips the first 1,250 transaction months'));
 assert.ok(editedExports.includes('Enable Record transactions'));
+assert.ok(editedExports.includes('about 0.5 GB per full run'), 'The storage warning stays when recording is switched off');
 assert.equal(editedExports.includes('month 500'), false);
 const zeroRecording = stepText(stepById(buildPolicyExperimentDemoSteps({ ...guideProps, recordingStartMonth: '0' }), 'policy-exports'));
 assert.ok(zeroRecording.includes('month 0 keeps transactions from the first month'));

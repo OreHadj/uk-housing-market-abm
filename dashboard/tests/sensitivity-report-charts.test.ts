@@ -156,7 +156,7 @@ assert.equal(rangeChart.yAxis.name, 'P95–P5 (pp)', 'Temporal dispersion of per
 assert.equal(rangeChart.series[0].markLine?.data[0].yAxis, 0.5, 'Dispersion uses baseline P95–P5 rather than baseline mean');
 assert.deepEqual(rangeChart.series[0].markPoint?.data[0].coord, [0.9, 2.4]);
 assert.equal(chart(rangeRows, rangeOutcome, parameter, 'point-0.85').series[0].markPoint, undefined);
-assert.match(rangeChart.tooltip.formatter?.([{ dataIndex: 0 }]) ?? '', /P95–P5: 1\.2 pp/);
+assert.match(rangeChart.tooltip.formatter?.([{ dataIndex: 0 }]) ?? '', /P95–P5 1\.2 pp/);
 assert.match(rangeChart.tooltip.formatter?.([{ dataIndex: 0 }]) ?? '', /3 valid seed P95–P5 measures/);
 assert.equal(chart(rangeRows, { ...rangeOutcome, baselineRange: 0 }).series[0].markLine?.data[0].yAxis, 0);
 assert.equal(chart(rangeRows, { ...rangeOutcome, baselineRange: null }).series[0].markLine, undefined, 'A missing baseline range does not fall back to the mean');
@@ -200,7 +200,7 @@ assert.equal(legacyDetailed.xAxis.axisLabel.formatter(0.8), '0.8', 'Three-argume
 const formattedDetailed = buildDeltaTrendOption(deltaSeries, parameter.title, 'mean', 'percentage') as unknown as ChartShape;
 assert.equal(formattedDetailed.xAxis.axisLabel.formatter(0.8), '80%');
 assert.deepEqual(formattedDetailed.series[0].data, [[0.8, 10]]);
-assert.match(formattedDetailed.tooltip.formatter?.([{ value: [0.8, 10] }]) ?? '', /80%<br\/>Mean \(monthly\): 10%/);
+assert.match(formattedDetailed.tooltip.formatter?.([{ value: [0.8, 10] }]) ?? '', /80%<br\/>Mean \(monthly\) 10%/);
 
 const renderedChart = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 320, height: 160 });
 try {

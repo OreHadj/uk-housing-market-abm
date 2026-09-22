@@ -957,7 +957,7 @@ assert.deepEqual(
   'Expected a run differing only in duration to report only N_STEPS'
 );
 assert.ok(
-  nStepsWarning?.includes('The comparison run used 2,000 steps; the primary run used 3,500 steps.') &&
+  nStepsWarning?.includes('The comparison run used 2,000 steps and the primary run used 3,500 steps.') &&
     nStepsWarning.includes('same number of steps') &&
     !nStepsWarning.includes('N_STEPS'),
   'Expected the short duration warning to show both values in plain language'
@@ -971,7 +971,7 @@ const seedDifferences = getManualComparisonFieldDifferences(matchedPrimaryRun, s
 const seedWarning = formatManualComparisonMismatchWarning(seedDifferences);
 assert.deepEqual(seedDifferences.map((difference) => difference.field.key), ['N_SIMS']);
 assert.ok(
-  seedWarning?.includes('The comparison run used 1 seed; the primary run used 10 seeds.') &&
+  seedWarning?.includes('The comparison run used 1 seed and the primary run used 10 seeds.') &&
     seedWarning.includes('results with fewer seeds could be noisier') &&
     !seedWarning.includes('same number of seeds'),
   'Expected the seed warning to explain extra variability without calling the comparison invalid'

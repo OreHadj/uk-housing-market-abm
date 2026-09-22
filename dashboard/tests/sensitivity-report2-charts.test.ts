@@ -149,7 +149,7 @@ function points(option: Shape, index = 0) {
   const comparison = shape(buildSensitivityReport2Comparison(model, 'borrowers', 'p4'));
   assert.deepEqual(comparison.series[0].data, [50, null, 50], 'Missing borrower activity never becomes zero');
   assert.deepEqual(comparison.series[1].data, [30, 30, 30]);
-  assert.match(comparison.tooltip.formatter([{ dataIndex: 1 }]), /Selected: Not available/);
+  assert.match(comparison.tooltip.formatter([{ dataIndex: 1 }]), /Selected setting Not available/);
   const growth = shape(buildSensitivityReport2Response(model, 'core_housePriceGrowth:range', 'p4'));
   assert.equal(growth.yAxis.name, 'Temporal P95–P5 (pp)', 'Temporal growth range is measured in percentage points, not percentages or confidence intervals');
   assert.equal(points(growth)[4].value[1], 5);

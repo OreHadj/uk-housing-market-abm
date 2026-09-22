@@ -71,7 +71,7 @@ export function ResultsQueue({ items, expanded, onExpandedChange, canCancel, sto
               <span>{timestamp(preview.createdAt)}</span>
               {cancelButton(preview)}
             </span>
-            {preview.instrumentTitle && <span className="run-preview-meta"><span>Instrument: {preview.instrumentTitle}</span></span>}
+            {preview.instrumentTitle && <span className="run-preview-meta"><span>Instrument · {preview.instrumentTitle}</span></span>}
           </div>
         ) : <p className="info-banner" role="status">Loading submitted run...</p>}
         {visibleRemaining.length > 0 && (
@@ -80,7 +80,7 @@ export function ResultsQueue({ items, expanded, onExpandedChange, canCancel, sto
               <li key={job.jobRef} className="job-item" data-job-ref={job.jobRef}>
                 <strong>{job.title}</strong>
                 <p className="run-preview-meta">{progress(job)}</p>
-                {job.instrumentTitle ? <p>Instrument: {job.instrumentTitle}</p> : job.baseline && <p>Model {job.baseline}</p>}
+                {job.instrumentTitle ? <p>Instrument · {job.instrumentTitle}</p> : job.baseline && <p>Model {job.baseline}</p>}
                 <p>{timestamp(job.createdAt)}</p>
                 <div className="job-actions-row">{cancelButton(job)}</div>
               </li>

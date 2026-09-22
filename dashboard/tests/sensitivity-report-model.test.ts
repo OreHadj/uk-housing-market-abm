@@ -298,8 +298,8 @@ for (const baselineState of ['partial', 'failed', 'canceled', 'no designation', 
   baseline.value = null;
   const report = buildSensitivityReport(detail, results, 'post_200');
   assert.equal(report.rows.at(-1)?.point.pointId, 'base');
-  assert.match(report.baselineRow!.setting, /first-time buyers: 90%/);
-  assert.match(report.baselineRow!.setting, /home movers: 85%/);
+  assert.match(report.baselineRow!.setting, /first-time buyers 90%/);
+  assert.match(report.baselineRow!.setting, /home movers 85%/);
   assert.equal(report.outcomes.find((outcome) => outcome.id === approvals)!.baselineMean, 100, 'A composite baseline remains a horizontal reference without scalar x');
   assert.equal(reportPolicyUnit(detail.parameter), 'percentage');
   assert.equal(formatReportSetting(sample('shared', 0.8), detail.parameter), '80%');

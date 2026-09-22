@@ -180,9 +180,9 @@ export function buildSensitivityReport2Response(
         if (!row) return '';
         return [
           row.setting,
-          `${outcome.title}: ${formatReport2Value(visibleValue(row, outcomeKey), outcome)}`,
+          `${outcome.title} ${formatReport2Value(visibleValue(row, outcomeKey), outcome)}`,
           coverageLabel(row, outcomeKey),
-          `Baseline: ${formatReport2Value(baseline, outcome)}`
+          `Baseline ${formatReport2Value(baseline, outcome)}`
         ].join('\n');
       }
     },
@@ -272,9 +272,9 @@ export function buildSensitivityReport2Comparison(
         if (!outcome || index === undefined) return '';
         return [
           outcome.title,
-          `Selected: ${formatReport2Value(selected[index], outcome)}`,
+          `Selected setting ${formatReport2Value(selected[index], outcome)}`,
           selectedRow ? coverageLabel(selectedRow, outcome.key) : 'Setting unavailable',
-          `Baseline: ${formatReport2Value(baseline[index], outcome)}`,
+          `Baseline ${formatReport2Value(baseline[index], outcome)}`,
           model.baselineRow ? coverageLabel(model.baselineRow, outcome.key) : 'Baseline unavailable'
         ].join('\n');
       }

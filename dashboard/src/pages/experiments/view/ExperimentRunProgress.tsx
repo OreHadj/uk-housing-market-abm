@@ -30,13 +30,13 @@ export function ExperimentProgressBar({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent ?? undefined}
-        aria-valuetext={queued ? 'Queued, waiting to start' : error ? `Last reported: ${percentLabel}. Progress updates unavailable.` : percent === null ? 'Waiting for the first progress update' : percentLabel}
+        aria-valuetext={queued ? 'Queued, waiting to start' : error ? `Last reported ${percentLabel}. Progress updates unavailable.` : percent === null ? 'Waiting for the first progress update' : percentLabel}
         style={{ width: 'clamp(6rem, 20vw, 16rem)', flexShrink: 0 }}
       >
         <span style={{ width: `${percent ?? 0}%` }} />
       </span>
-      <span>{error && percent !== null ? `Last reported: ${percentLabel}` : percentLabel}</span>
-      {error && <span>Progress updates unavailable; retrying…</span>}
+      <span>{error && percent !== null ? `Last reported ${percentLabel}` : percentLabel}</span>
+      {error && <span>Progress updates unavailable. Retrying…</span>}
     </span>
   );
 }
