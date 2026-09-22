@@ -18,6 +18,7 @@ interface UkHousingDesktopApi {
   openResultsFolder: () => Promise<UkHousingDesktopFolderOpenResult>;
   openLogsFolder: () => Promise<UkHousingDesktopFolderOpenResult>;
   exportSupportBundle: () => Promise<UkHousingDesktopSupportBundleExportResult>;
+  restoreKeyboardFocus?: () => Promise<void>;
 }
 
 interface Window {

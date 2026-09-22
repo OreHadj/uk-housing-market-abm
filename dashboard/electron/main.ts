@@ -175,6 +175,17 @@ function registerDesktopIpc(): void {
     assertTrustedDesktopIpcEvent(event);
     return exportSupportBundle();
   });
+  // On Windows, closing a native alert/confirm/prompt can leave the page without keyboard focus,
+  // so inputs stop accepting typing until the window is refocused. Refocus it for the page.
+  ipcMain.handle('uk-housing-desktop:restore-keyboard-focus', (event: IpcMainInvokeEvent) => {
+    assertTrustedDesktopIpcEvent(event);
+    if (process.platform !== 'win32' || !mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+    mainWindow.blur();
+    mainWindow.focus();
+    mainWindow.webContents.focus();
+  });
 }
 
 async function createMainWindow(url: string, trustedOrigin: string): Promise<void> {

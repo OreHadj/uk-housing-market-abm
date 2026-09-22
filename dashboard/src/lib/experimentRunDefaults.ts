@@ -71,10 +71,6 @@ export function applyPolicyRunBuilderDefaults(
   if (hasParameter('N_STEPS')) {
     nextValues.N_STEPS = String(DEFAULT_POLICY_RUN_N_STEPS);
   }
-  if (hasParameter('recordTransactions')) {
-    // The policy report's Lending risk section needs the saved loan-level records.
-    nextValues.recordTransactions = true;
-  }
   if (hasParameter('TIME_TO_START_RECORDING_TRANSACTIONS')) {
     nextValues.TIME_TO_START_RECORDING_TRANSACTIONS = String(DEFAULT_POLICY_RUN_TRANSACTION_RECORDING_START);
   }

@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('ukHousingDesktop', {
   openResultsFolder: (): Promise<DesktopFolderOpenResult> => ipcRenderer.invoke('uk-housing-desktop:open-results-folder'),
   openLogsFolder: (): Promise<DesktopFolderOpenResult> => ipcRenderer.invoke('uk-housing-desktop:open-logs-folder'),
   exportSupportBundle: (): Promise<DesktopSupportBundleExportResult> =>
-    ipcRenderer.invoke('uk-housing-desktop:export-support-bundle')
+    ipcRenderer.invoke('uk-housing-desktop:export-support-bundle'),
+  restoreKeyboardFocus: (): Promise<void> => ipcRenderer.invoke('uk-housing-desktop:restore-keyboard-focus')
 });

@@ -10891,7 +10891,7 @@ assert.ok(
 );
 assert.equal(
   electronMainSource.match(/assertTrustedDesktopIpcEvent\(event\);/g)?.length,
-  5,
+  electronMainSource.match(/ipcMain\.handle\(/g)?.length,
   'Every desktop IPC handler should validate the trusted sender before returning data or opening folders'
 );
 assert.ok(

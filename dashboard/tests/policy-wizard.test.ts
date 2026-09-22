@@ -51,17 +51,25 @@ const generalParameters: ModelRunParameterDefinition[] = [
 const sharedDefaults = toInitialFormValues(generalParameters, basePolicy);
 const policyDefaults = applyPolicyRunBuilderDefaults(generalParameters, sharedDefaults);
 assert.equal(sharedDefaults.recordTransactions, false, 'Shared defaults must keep transaction exports off outside policy runs');
-assert.equal(policyDefaults.recordTransactions, true, 'New policy runs should retain the transactions needed by Lending risk');
-assert.equal(
-  buildGeneralModelControlOverridesFromForm(generalParameters, policyDefaults).recordTransactions,
-  true,
-  'Policy submission should enable transaction recording even when the model config defaults it off'
-);
-const optedOut = normalizeManualScenarioFormValues({ ...policyDefaults, recordTransactions: false });
-assert.equal(optedOut.recordTransactions, false, 'Restored or edited policy settings must retain an explicit recording opt-out');
+// A policy run with transactions is ~0.5 GB, more than the results storage cap, so Lending risk is opt-in.
+assert.equal(policyDefaults.recordTransactions, false, 'New policy runs keep transaction recording off by default');
+// Model configs such as v0o7 enable recording, so the default must be sent as an explicit override.
 const recordingOnParameters = generalParameters.map((parameter) => parameter.key === 'recordTransactions'
   ? { ...parameter, defaultValue: true }
   : parameter);
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(recordingOnParameters, policyDefaults).recordTransactions,
+  false,
+  'Policy submission should not record transactions unless the user opts in'
+);
+const optedIn = normalizeManualScenarioFormValues({ ...policyDefaults, recordTransactions: true });
+assert.equal(
+  buildGeneralModelControlOverridesFromForm(generalParameters, optedIn).recordTransactions,
+  true,
+  'An explicit opt-in must enable recording for Lending risk'
+);
+const optedOut = normalizeManualScenarioFormValues({ ...policyDefaults, recordTransactions: false });
+assert.equal(optedOut.recordTransactions, false, 'Restored or edited policy settings must retain an explicit recording opt-out');
 assert.equal(
   buildGeneralModelControlOverridesFromForm(recordingOnParameters, optedOut).recordTransactions,
   false,

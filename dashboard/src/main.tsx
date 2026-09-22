@@ -2,7 +2,10 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
+import { installDesktopDialogFocusFix } from './lib/desktopDialogFocus';
 import './styles.css';
+
+installDesktopDialogFocusFix();
 
 const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
 if (favicon) {
