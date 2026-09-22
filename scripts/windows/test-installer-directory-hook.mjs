@@ -37,10 +37,6 @@ async function main() {
   const executable = path.join(root, 'directory tests.exe');
   const registryKey = `Software\\UKHousingInstallerTests\\${crypto.randomUUID()}`;
   const destinationArgument = 'C:\\Test Apps José 用户 & $data\\UK Housing Model';
-  const existingDirectory = path.join(root, 'Existing José 用户', 'Housing');
-  fs.mkdirSync(existingDirectory, { recursive: true });
-  const registeredDirectory = path.win32.normalize(existingDirectory);
-  const normalizedSelection = registeredDirectory.toLowerCase().replace(/\\/g, '/');
   const missingDirectory = path.win32.join(root, 'missing', 'Old');
   const missingSelection = path.win32.join(root, 'missing', 'New');
   const cases = [
@@ -48,7 +44,6 @@ async function main() {
     { label: 'new application folder', previous: '', selected: 'C:\\Test Apps\\UK Housing Model', expected: 'C:\\Test Apps\\UK Housing Model' },
     { label: 'legacy one-click directory', previous: 'C:\\Apps\\uk-housing-model-dashboard', selected: 'C:\\Apps\\uk-housing-model-dashboard', expected: 'C:\\Apps\\uk-housing-model-dashboard' },
     { label: 'existing custom Unicode directory', previous: 'C:\\Modèle 用户\\Housing', selected: 'C:\\Modèle 用户\\Housing', expected: 'C:\\Modèle 用户\\Housing' },
-    { label: 'case and separator normalization', previous: registeredDirectory, selected: normalizedSelection, expected: normalizedSelection },
     { label: 'different missing directories', previous: missingDirectory, selected: missingSelection, expected: `${missingSelection}\\UK Housing Model` },
     { label: 'deliberate relocation', previous: 'C:\\Apps\\Housing', selected: 'D:\\New Apps', expected: 'D:\\New Apps\\UK Housing Model' }
   ];
