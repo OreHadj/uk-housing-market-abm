@@ -2898,7 +2898,6 @@ section.block:first-of-type { border-top: none; }
 }
 
 .scenario-step-page {
-  min-height: 22rem;
   align-content: start;
 }
 
