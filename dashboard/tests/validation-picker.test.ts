@@ -13,6 +13,7 @@ import {
   formatValidationScorecardValue,
   formatValidationSnapshotProtocol,
   hasMetricProvenance,
+  resolveEvidenceReturnVersions,
   resolveValidationModelsForEvidenceYear,
   sortValidationMetrics,
   VALIDATION_METRIC_DETAILS_PANEL_ID,
@@ -90,11 +91,12 @@ assert.ok(
 );
 
 const validationAvailability = {
-  availableVersions: ['v0', 'v0o2', 'v0o7', 'v5o3'],
+  availableVersions: ['v0', 'v0o2', 'v0o7', 'v4.26', 'v5o3'],
   availableValidationTargetYearsByVersion: {
     v0: [2024, 2011],
     v0o2: [2024, 2011],
     v0o7: [2024, 2011],
+    'v4.26': [2024],
     v5o3: [2024]
   }
 };
@@ -120,6 +122,17 @@ assert.equal(
   resolveValidationModelsForEvidenceYear(validationAvailability, 'v0', 'v5o3', 2011).comparisonVersion,
   '',
   'An incompatible comparison should be cleared'
+);
+const referenceYearModels = resolveValidationModelsForEvidenceYear(validationAvailability, 'v0o7', '', 2011);
+assert.deepEqual(
+  referenceYearModels.eligibleVersions,
+  ['v0', 'v0o7'],
+  'The Primary and Comparison selectors should only offer models with 2011 evidence'
+);
+assert.deepEqual(
+  resolveEvidenceReturnVersions(validationAvailability, referenceYearModels.selectedVersion),
+  ['v0', 'v0o7', 'v4.26', 'v5o3'],
+  'Select different model should offer every named model, as the setup pages do, while 2011 evidence is shown'
 );
 assert.ok(
   singleMarkup.includes('If you want to understand the difference between two models, visit the') &&

@@ -1010,6 +1010,17 @@ export function resolveValidationModelsForEvidenceYear(
   };
 }
 
+/**
+ * Models offered by the evidence return panel. Choosing one updates the unfinished setup and goes
+ * straight back to it, so the list matches the setup pages rather than the displayed evidence year.
+ */
+export function resolveEvidenceReturnVersions(
+  overview: Pick<ValidationOverviewPayload, 'availableVersions'> | null,
+  currentVersion: string
+): string[] {
+  return buildModelOptions(overview?.availableVersions ?? [], currentVersion).map((option) => option.version);
+}
+
 export function ValidationPage({
   modelEvidenceDemo
 }: {
@@ -1362,6 +1373,10 @@ export function ValidationPage({
     [sortMetricId, metricsByVersion, orderedVersions]
   );
   const pickerVersions = rankedVersions ? rankedVersions.map((entry) => entry.version) : orderedVersions;
+  const returnPickerVersions = useMemo(
+    () => resolveEvidenceReturnVersions(overview, selectedVersion),
+    [overview, selectedVersion]
+  );
   const representativeMetric = useMemo(() => {
     if (!summary) return null;
     const preferred = summary.metrics.find((metric) =>
@@ -1656,7 +1671,7 @@ export function ValidationPage({
           className="validation-return-bar"
           message={`You are checking validation evidence for an unfinished ${returnDestination.noun}.`}
           returnHref={returnHref}
-          versions={pickerVersions}
+          versions={returnPickerVersions}
           currentVersion={selectedVersion}
           inProgressVersions={inProgressSet}
           onChooseModel={(version) => {
