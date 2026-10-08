@@ -1167,9 +1167,29 @@ section.block:first-of-type { border-top: none; }
 
 .run-history-card .run-item-head > .run-item-name { flex: 1; }
 
+/* Every run name gets the same three-line block, so the cards in the list share one height; a longer
+   name ends in an ellipsis and is shown in full in the details panel. */
+.run-history-split .run-item-name {
+  min-height: 3lh;
+  align-content: start;
+  font-size: 0.85rem;
+}
+
+.run-history-split .run-item-name > strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Held at the list's 60vh cap so both columns share top and bottom edges: whichever side is longer
+   scrolls inside its own column, and hovering a run with a longer policy table never moves the page. */
 .run-history-preview {
   position: sticky;
   top: 0.5rem;
+  height: 60vh;
+  overflow: auto;
   padding: 0.85rem 0.95rem;
   border: 1px solid rgba(17, 32, 24, 0.14);
   border-radius: 0.65rem;
@@ -1233,6 +1253,7 @@ section.block:first-of-type { border-top: none; }
 
   .run-history-preview {
     position: static;
+    height: auto;
   }
 }
 
