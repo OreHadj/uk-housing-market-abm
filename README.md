@@ -36,6 +36,16 @@ For the simplest local workflow on 64-bit Windows 10 or 11, download the latest
 `UK-Housing-Model-<version>-Setup.exe` from the
 [GitHub Releases](../../releases) page.
 
+Setup defaults to **Only for me**, which can install into a folder you can write
+to without administrator permissions. **Anyone who uses this computer** is also
+available and requires administrator permissions. Keep the suggested application
+folder or choose another location in the setup wizard. When selecting a parent
+folder, setup adds a **UK Housing Model** subfolder.
+
+Upgrades reuse the existing installation folder unless you deliberately choose a
+different destination. Use the installer to relocate the app; moving its folder
+in File Explorer does not update its shortcuts or uninstall registration.
+
 The app includes the dashboard, a bundled Java 25 runtime, the model, and supported
 offline input-data snapshots. Open **Experiments** to run either:
 
@@ -43,7 +53,8 @@ offline input-data snapshots. Open **Experiments** to run either:
 - a **sensitivity run**, which varies one parameter across a defined range.
 
 Results, logs, and generated configurations are retained locally under
-`%APPDATA%\UK Housing Model\`.
+`%APPDATA%\UK Housing Model\`. Choosing the application installation folder does
+not change this data location. Normal uninstall preserves these files.
 
 
 ### Local dashboard
