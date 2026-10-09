@@ -180,8 +180,7 @@ Sensitivity behavior:
 
 - one-at-a-time numeric USER SET parameter sweeps (manual min/max, baseline-in-range required)
 - 5-point sampling (`min`, `mid-lower`, `baseline`, `mid-upper`, `max`) with integer rounding and duplicate collapse
-- summary-first retention by default (per-point outputs deleted after summary extraction)
-- optional full-output retention under `Results/experiments/sensitivity/<experimentId>/points`
+- summary-only retention: per-point outputs are deleted after summary extraction (`retainFullOutput` is no longer accepted)
 - persisted experiment metadata + chart-ready summaries under `Results/experiments/sensitivity/<experimentId>`
 - summarized sensitivity live logs with worker lifecycle markers and structured progress payloads under sensitivity and unified logs endpoints; raw JVM stdout/stderr is retained in persistent model logs for debugging
 - tornado charts support KPI-basis selection (`Mean`, `CV`, `Range`); backend summaries retain `annualisedTrend` for compatibility
@@ -351,7 +350,7 @@ Runtime notes:
 
 ## AWS Deployment
 
-The dashboard is deployed from GitHub Actions to the AWS v1 architecture described in `docs/cloud/recommended-aws-setup.md`:
+The dashboard is deployed from GitHub Actions (`.github/workflows/dashboard-ci.yml`) to the AWS v1 architecture:
 
 - private S3 frontend bucket behind CloudFront
 - ECR image for the dashboard API

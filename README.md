@@ -9,7 +9,7 @@ The model itself incorporates owner-occupiers, renters, buy-to-let investors, a 
 ![ABM architecture diagram](docs/beng-project/abm%20diagram.png)
 
 A more detailed description of the original model can be found as a
-[Bank of England Working Paper](https://www.bankofengland.co.uk/working-paper/2016/macroprudential-policy-in-an-agent-based-model-of-the-uk-housing-market) and in the [Original Model Description](`docs/old-docs/ModelDescriptionFeb16.pdf`).
+[Bank of England Working Paper](https://www.bankofengland.co.uk/working-paper/2016/macroprudential-policy-in-an-agent-based-model-of-the-uk-housing-market) and in the [Original Model Description](docs/old-docs/ModelDescriptionFeb16.pdf).
 
 ## Project Contributions and Impact
 
