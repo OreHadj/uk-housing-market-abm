@@ -230,13 +230,15 @@ Homepage preview endpoint:
 
 ## Linux Web Deployment
 
-Runs the dashboard as a website on a Linux machine, with model runs executed on the same machine.
+Runs the dashboard as a website on a Linux machine, with model runs executed on the same machine. These steps were tested on Ubuntu 24.04 LTS. Do every step as the normal (non-root) account that will own the repository and run the service; that account needs sudo rights.
 
 Requirements:
 
-- Node 22 with npm. If the system Node is missing or has no npm, install it with [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22`).
-- Java 25 JDK, for example Eclipse Temurin.
-- git, and internet access for the first build and run: the Maven wrapper downloads Maven and the model dependencies.
+- git and nginx: `sudo apt update && sudo apt install -y git nginx`.
+- Node 22 with npm. Ubuntu's own `nodejs` package is too old (Node 18 on 24.04), so install Node with [nvm](https://github.com/nvm-sh/nvm#installing-and-updating): run the install command from nvm's README, open a new terminal, then run `nvm install 22`. Check with `node -v`.
+- Java 25 JDK: Eclipse Temurin 25 from [Adoptium's apt repository](https://adoptium.net/installation/linux/), or `sudo apt install -y openjdk-25-jdk`. Check with `java -version`.
+- A hostname for the site and a TLS certificate for it, for example from [Certbot](https://certbot.eff.org/).
+- Internet access for the first build and run: the Maven wrapper downloads Maven and the model dependencies.
 
 Build and check. The `git describe` line checks out the latest release tag on `master` and prints it:
 
@@ -251,6 +253,8 @@ npm run test:smoke
 npm run test:experiment-smoke
 ```
 
+Each command should finish without an error. `npm ci` reports npm audit vulnerabilities, `npm run build` warns about large chunks, and `npm run test:smoke` prints React `useLayoutEffect` warnings before `Smoke tests passed.`; these are expected. `npm run test:experiment-smoke` prints nothing when it passes.
+
 For a foreground check, start the API server from `dashboard/`, replacing `<username>` and `<password>` with your credentials and keeping the values quoted:
 
 ```bash
@@ -262,8 +266,8 @@ node dist-server/server/index.js
 ```
 
 - `NODE_ENV=production` is required. Without it the server applies the local development bypass: requests can start, download and delete runs without logging in, while the dashboard still shows a Login button.
-- The server listens on port 8787 on all network interfaces (`PORT` changes the port; the address cannot be changed). Block port 8787 from outside the machine with a firewall.
-- Check it with `curl http://127.0.0.1:8787/healthz` and `curl http://127.0.0.1:8787/api/runtime-deps`; the second should report `java` and `maven` as available.
+- The server listens on port 8787 on all network interfaces (`PORT` changes the port; the address cannot be changed). Block port 8787 from outside the machine with a firewall, for example `sudo ufw allow OpenSSH && sudo ufw allow 'Nginx Full' && sudo ufw enable`, which blocks every other incoming port. On a cloud machine, also check the provider's firewall.
+- Check it with `curl http://127.0.0.1:8787/healthz`, `curl http://127.0.0.1:8787/api/runtime-deps` and `curl http://127.0.0.1:8787/api/auth/status`. The second should report `java` and `maven` as available, and the third should report `"authEnabled":true`. The startup log line `[runtime-paths] mode=development` describes the folder layout, not `NODE_ENV`.
 
 The API server does not serve the web pages in this configuration. Copy the built pages to `/var/www/ukhm` so nginx can serve them without access to the repository's home folder. From `dashboard/`:
 
@@ -273,22 +277,37 @@ sudo cp -r dist/. /var/www/ukhm/
 sudo chmod -R a+rX /var/www/ukhm
 ```
 
-In nginx's HTTPS `server` block for the dashboard hostname, add:
+Create `/etc/nginx/sites-available/ukhm`, replacing `dashboard.example.org` with the site's hostname and the two certificate paths with your certificate's:
 
 ```nginx
-root /var/www/ukhm;
-index index.html;
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name dashboard.example.org;
+    ssl_certificate     /etc/letsencrypt/live/dashboard.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/dashboard.example.org/privkey.pem;
 
-location /api/ {
-    proxy_pass http://127.0.0.1:8787;
-}
+    root /var/www/ukhm;
+    index index.html;
 
-location / {
-    try_files $uri $uri/ /index.html;
+    location /api/ {
+        proxy_pass http://127.0.0.1:8787;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
 }
 ```
 
-Keep `proxy_pass` without a trailing slash so nginx preserves the `/api/` prefix. The `index.html` fallback supports browser routes such as `/results`. These directives go inside a server block with the site's hostname, HTTPS listener and certificate already configured; see nginx's [proxy_pass](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass) and [try_files](https://nginx.org/en/docs/http/ngx_http_core_module.html#try_files) documentation. Check and reload with `sudo nginx -t && sudo systemctl reload nginx`.
+Keep `proxy_pass` without a trailing slash so nginx preserves the `/api/` prefix. The `index.html` fallback supports browser routes such as `/results`. See nginx's [proxy_pass](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass) and [try_files](https://nginx.org/en/docs/http/ngx_http_core_module.html#try_files) documentation. Enable the site, then check and reload nginx:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/ukhm /etc/nginx/sites-enabled/ukhm
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Check that `curl https://<hostname>/results` returns HTML and `curl https://<hostname>/api/runtime-deps` returns JSON.
 
 For a quick local check without nginx, run `npx vite preview --host 127.0.0.1 --port 4173` from `dashboard/`; it forwards `/api` to port 8787.
 
@@ -326,8 +345,8 @@ Wants=network-online.target
 User=<user>
 WorkingDirectory=<repository folder>/dashboard
 EnvironmentFile=/etc/ukhm-dashboard.env
-# Delete the next two lines if Java 25 is installed
-# in a system folder such as /usr/bin:
+# If `command -v java` prints /usr/bin/java (a JDK installed with apt),
+# delete the two Environment= lines below.
 Environment="JAVA_HOME=<JDK folder>"
 Environment="PATH=<JDK folder>/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart="<output of command -v node>" dist-server/server/index.js
@@ -337,7 +356,11 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-`ExecStart` needs the full path to `node` because Node installed with nvm is not on a service's `PATH`. Start the service with `sudo systemctl daemon-reload && sudo systemctl enable --now ukhm-dashboard`, and read its log with `journalctl -u ukhm-dashboard`. If Java cannot be found, model runs are disabled and `/api/runtime-deps` reports `java` as unavailable.
+`<JDK folder>` is the folder that contains `bin/java`; `dirname "$(dirname "$(readlink -f "$(command -v java)")")"` prints it. Run `command -v node` as the repository owner in a normal terminal, not with `sudo`. `ExecStart` needs the full path to `node` because Node installed with nvm is not on a service's `PATH`; if you later install a different Node version with nvm, update `ExecStart` and run `sudo systemctl daemon-reload`.
+
+Start the service with `sudo systemctl daemon-reload && sudo systemctl enable --now ukhm-dashboard`, and read its log with `sudo journalctl -u ukhm-dashboard -e`. Without `sudo`, systemd's start, stop and failure messages may not show. If Java cannot be found, model runs are disabled and `/api/runtime-deps` reports `java` as unavailable.
+
+Open `https://<hostname>/login` and sign in with the username and password from the environment file.
 
 To update, run `sudo systemctl stop ukhm-dashboard`, then `git fetch origin --tags && git checkout "$(git describe --tags --abbrev=0 origin/master)"` from the repository root and `npm ci --include=dev && npm run build` in `dashboard/`. Copy `dist/` to `/var/www/ukhm` again as above, then run `sudo systemctl start ukhm-dashboard`. `--include=dev` keeps the build tools installed even when `NODE_ENV=production` is set. Saved runs in `Results/` are ignored by git, so they are kept.
 
