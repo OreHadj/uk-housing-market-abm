@@ -21,7 +21,7 @@ export const SETTING_HELP = {
 const PARAMETER_HELP_BY_KEY: Record<string, string> = {
   SEED: 'Seeded dashboard experiments run deterministic seed blocks starting at 1.',
   N_STEPS:
-    'Number of model time steps to simulate. Longer runs cost more but allow slower dynamics to emerge. The default of 3,500 matches the calibration and validation window used for this model (steps 500-3,500, with the first 500 discarded as warm-up).',
+    'Number of model time steps to simulate. Longer runs cost more but allow slower dynamics to emerge. The default of 3,500 gives a 500-month warm-up followed by 3,000 months of analysis.',
   N_SIMS: 'Independent seed runs used to average stochastic outcomes. More seeds reduce noise and increase runtime.',
   ROLLING_WINDOW_SIZE_FOR_CORE_INDICATORS:
     'Months included in rolling averages for core indicators. This smooths short-term variation.',

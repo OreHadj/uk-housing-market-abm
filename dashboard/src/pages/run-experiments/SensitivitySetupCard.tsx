@@ -26,6 +26,8 @@ import {
 import { committedExperimentDemoText, type CreationDemoStep } from '../../lib/guidedDemos/creation';
 import { readSensitivityDraft, updateSensitivityDraftStep } from '../../lib/sensitivityDraft';
 import { validateSensitivityPracticeSize } from '../../lib/sensitivityPractice';
+import { normalizeSensitivitySampleValue } from '../../../shared/sensitivitySampling';
+import { findPolicySettingMinimumError } from '../../../shared/policyCatalogue';
 
 interface SensitivitySetupCardProps {
   draftId?: string;
@@ -102,6 +104,12 @@ export function validateSensitivitySweepDefinition(
   }
   if (!(min < max)) {
     return 'Minimum value must be lower than maximum value.';
+  }
+  for (const key of selectedPackage.parameterKeys) {
+    const minimumError = findPolicySettingMinimumError(key, min);
+    if (minimumError) {
+      return `Minimum value: ${minimumError}`;
+    }
   }
   const count = Number.parseFloat(sampleCount);
   if (!Number.isFinite(count) || !Number.isInteger(count) || count < 2) {
@@ -1027,10 +1035,9 @@ export function buildSensitivitySampleValues(
     return [];
   }
 
-  const normalize = (value: number) => {
-    const rounded = policyPackage.type === 'integer' ? Math.round(value) : value;
-    return Object.is(rounded, -0) ? 0 : rounded;
-  };
+  // Rounded exactly as the server does, so floating-point noise (0.93 + 0.06 × 1/3 is
+  // 0.9500000000000001) cannot list the baseline twice or overstate the run count.
+  const normalize = (value: number) => normalizeSensitivitySampleValue(value, policyPackage.type);
   const values = new Set<number>();
   for (let index = 0; index < sampleCount; index += 1) {
     const value = index === sampleCount - 1 ? max : min + ((max - min) * index) / (sampleCount - 1);

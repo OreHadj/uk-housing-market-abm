@@ -64,14 +64,42 @@ export function isInstalledDemoExample(pathsInput: RuntimePathInput, kind: Examp
   return matchesMarker(marker, kind, id) && marker?.exampleSetVersion === DEMO_EXAMPLE_SET_VERSION;
 }
 
+/**
+ * The only per-seed files an example may carry: the growth series the Report measures volatility
+ * from, within each seed (SEED_VOLATILITY_FILE_NAMES in results.ts). Full seed folders stay out.
+ */
+export const DEMO_EXAMPLE_SEED_FILE_NAMES: ReadonlySet<string> = new Set([
+  'coreIndicator-housePriceGrowth.csv',
+  'coreIndicator-creditGrowth.csv'
+]);
+
+function validateSeedsTree(seedsRoot: string): void {
+  for (const seed of fs.readdirSync(seedsRoot, { withFileTypes: true })) {
+    const seedPath = path.join(seedsRoot, seed.name);
+    if (seed.isSymbolicLink() || !seed.isDirectory() || !/^seed-\d+$/.test(seed.name)) {
+      throw new Error(`Uncurated example bundle entry: ${seedPath}`);
+    }
+    for (const file of fs.readdirSync(seedPath, { withFileTypes: true })) {
+      if (file.isSymbolicLink() || !file.isFile() || !DEMO_EXAMPLE_SEED_FILE_NAMES.has(file.name)) {
+        throw new Error(`Uncurated example bundle entry: ${path.join(seedPath, file.name)}`);
+      }
+    }
+  }
+}
+
 function validateSourceTree(root: string): void {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const file = path.join(root, entry.name);
     if (entry.isSymbolicLink() || (!entry.isFile() && !entry.isDirectory())) {
       throw new Error(`Unsupported example bundle entry: ${file}`);
     }
-    if (entry.name === 'seeds' || entry.name === '.dashboard-managed-run.json') {
+    if (entry.name === '.dashboard-managed-run.json') {
       throw new Error(`Uncurated example bundle entry: ${file}`);
+    }
+    if (entry.name === 'seeds') {
+      if (!entry.isDirectory()) throw new Error(`Uncurated example bundle entry: ${file}`);
+      validateSeedsTree(file);
+      continue;
     }
     if (entry.isDirectory()) validateSourceTree(file);
   }

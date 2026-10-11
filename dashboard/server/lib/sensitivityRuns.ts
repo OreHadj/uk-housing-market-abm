@@ -41,6 +41,7 @@ import {
   resetLocalExperimentQueueForTests
 } from './localExperimentExecutionQueue';
 import {
+  findPolicySettingMinimumError,
   getBasePolicyOption,
   getDefaultBasePolicyId,
   getSensitivityPolicyPackageById,
@@ -1595,6 +1596,11 @@ function validatePayload(
     }
     if (parameter.type === 'boolean') {
       throw new Error(`Sensitivity parameter must be numeric: ${key}`);
+    }
+    // Every sampled value is at least the minimum, so checking it covers the whole sweep.
+    const minimumError = findPolicySettingMinimumError(key, min);
+    if (minimumError) {
+      throw new Error(`Sensitivity minimum: ${minimumError}`);
     }
   }
 

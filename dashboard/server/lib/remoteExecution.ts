@@ -65,7 +65,8 @@ import {
   getResultsSeries,
   REQUIRED_RESULTS_PARSE_FILE_NAMES,
   resolveResultsFileType,
-  SALE_TRANSACTIONS_FILE_NAME
+  SALE_TRANSACTIONS_FILE_NAME,
+  SEED_VOLATILITY_FILE_NAMES
 } from './results';
 import { getLendingDistribution, getLendingDistributionCompare } from './lendingDistribution';
 import {
@@ -1153,7 +1154,8 @@ export class RemoteExecutionManager {
         jobs.push(job);
       }
     }
-    const workspace = await this.createRemoteResultsWorkspace(jobs);
+    // Per-seed copies of the growth series, so volatility is measured within each seed.
+    const workspace = await this.createRemoteResultsWorkspace(jobs, SEED_VOLATILITY_FILE_NAMES);
     try {
       return getResultsCompare(
         workspace.runtimePaths,

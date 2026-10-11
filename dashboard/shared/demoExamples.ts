@@ -5,7 +5,9 @@
  */
 export const DEMO_MODEL_VERSION = 'v0o7';
 export const DEMO_EVIDENCE_YEAR = 2011;
-export const DEMO_EXAMPLE_SET_VERSION = 1;
+// Version 2 adds each seed's growth series, so the Report measures volatility within each seed.
+// A new version makes installed copies refresh.
+export const DEMO_EXAMPLE_SET_VERSION = 2;
 export const DEMO_EXAMPLE_IDS = {
   policyRunId: 'Example Bank Rate raised by 1 pp v0o7',
   baselineRunId: 'Example 2024 policy, unchanged v0o7',
@@ -99,10 +101,10 @@ export const DEMO_EXAMPLE_FIGURES = {
       "relativeChange": -2.5740056782243212
     },
     "priceGrowthVolatility": {
-      "selected": 0.9372595791563232,
-      "baseline": 0.9314900995798657,
-      "change": 0.005769479576457459,
-      "relativeChange": 0.6193817388998223
+      "selected": 2.58386161130018,
+      "baseline": 2.676536312935155,
+      "change": -0.09267470163497515,
+      "relativeChange": -3.4624862433996197
     }
   },
   "sensitivity": {

@@ -62,6 +62,30 @@ export function getReport2Volatility(points: ResultsSeriesPoint[]): number | nul
   return Number.isFinite(deviation) ? deviation : null;
 }
 
+export interface Report2SeedVolatility {
+  value: number | null;
+  /** 'seed_mean' marks a value from the seed-averaged path, which understates per-seed variation. */
+  basis: 'per_seed' | 'seed_mean';
+}
+
+/**
+ * Variation over time measured within each seed, then averaged across seeds, as computed by the
+ * server. Older remote payloads lack it, so the seed-averaged path is used and flagged instead.
+ */
+export function getReport2SeedVolatility(
+  payload: ResultsComparePayload | null,
+  runId: string,
+  indicatorId: string
+): Report2SeedVolatility {
+  const recorded = payload?.seedVolatilityByRun?.find((run) => run.runId === runId)
+    ?.values.find((entry) => entry.indicatorId === indicatorId);
+  if (recorded) {
+    const value = recorded.value !== null && Number.isFinite(recorded.value) ? recorded.value : null;
+    return { value, basis: recorded.basis };
+  }
+  return { value: getReport2Volatility(getReport2Points(payload, runId, indicatorId)), basis: 'seed_mean' };
+}
+
 /** Band shares use each borrower group's valid loans as denominator, and inclusive cuts. */
 export function getReport2TailShare(
   lending: LendingDistributionPayload | null,

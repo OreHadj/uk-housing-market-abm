@@ -267,4 +267,85 @@ const overwriteMarkup = renderToStaticMarkup(
 assert.ok(overwriteMarkup.includes('Replace results and start'), 'Replacing saved results must remain explicit');
 assert.ok(overwriteMarkup.includes('Choose a different scenario name to keep both runs'));
 
+// A changed setting past the model's lender limit is flagged on the field, the review and the summary,
+// but still allowed. The Refitted 2024 model's lenders cap buy-to-let LTV at 85% and require ICR 1.25x.
+const lenderLimits = {
+  CENTRAL_BANK_LTV_HARD_MAX_BTL: 0.85,
+  CENTRAL_BANK_AFFORDABILITY_HARD_MAX: 0.4,
+  CENTRAL_BANK_ICR_HARD_MIN: 1.25
+};
+const lenderCapNote = 'Runs as 85%. Lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value';
+const cappedProps = {
+  ...commonProps,
+  lenderLimits,
+  formValues: { ...baselineFormValues, CENTRAL_BANK_LTV_HARD_MAX_BTL: '3' }
+};
+const cappedPolicyMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, { ...cappedProps, initialStep: 2 }))
+);
+assert.ok(cappedPolicyMarkup.includes(lenderCapNote), "Tong's 300% buy-to-let LTV should explain that it runs as 85%");
+assert.ok(cappedPolicyMarkup.includes('1 capped'), 'A collapsed policy group should still show that a setting is capped');
+assert.ok(cappedPolicyMarkup.includes('85% to 300% (runs as 85%)'), 'The live summary should show the value the run will use');
+assert.equal(
+  (cappedPolicyMarkup.match(/class="scenario-policy-cap-warning"/g) ?? []).length,
+  1,
+  'Unchanged reference values past a lender limit, such as the 2024 affordability cap and ICR floor, are not flagged'
+);
+const cappedReviewMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, { ...cappedProps, initialStep: 4 }))
+);
+assert.ok(
+  cappedReviewMarkup.includes('1 setting runs at the lenders’ own limit') &&
+    cappedReviewMarkup.includes('LTV limit — buy-to-let: 300% → runs as 85%') &&
+    cappedReviewMarkup.includes('You can still start the run.'),
+  'The review should list each capped setting'
+);
+assert.ok(cappedReviewMarkup.includes('Start policy scenario'), 'A capped setting must not block the run');
+const icrMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+    ...commonProps,
+    lenderLimits,
+    initialStep: 2,
+    formValues: { ...baselineFormValues, CENTRAL_BANK_ICR_HARD_MIN: '1' }
+  }))
+);
+assert.ok(
+  icrMarkup.includes('Runs as 1.25×, like the 0× reference: lenders in the Refitted 2024 model already require'),
+  'The ICR floor is flagged below the lenders’ floor, which the 2024 reference’s 0 floor also runs at'
+);
+const tighterMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+    ...commonProps,
+    lenderLimits,
+    initialStep: 4,
+    formValues: { ...baselineFormValues, CENTRAL_BANK_LTV_HARD_MAX_BTL: '0.6' }
+  }))
+);
+assert.equal(tighterMarkup.includes('scenario-policy-cap-warning'), false, 'A tighter setting takes effect and is not flagged');
+assert.equal(tighterMarkup.includes('own limit'), false);
+assert.equal(cappedPolicyMarkup.includes('scenario-policy-year-note'), false, 'A 2024 model with the 2024 policy is a matched pair');
+
+// A 2011 model under the 2024 policy keeps its 2011 lender limits, so the 95% home mover reference
+// already runs as 90%. The pairing is noted, and a changed value names the capped reference.
+const refitted2011: ModelRunSnapshotOption = { version: 'v0o7', status: 'stable', evidenceYear: 2011, outputCalibrated: true };
+const mismatchedMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+    ...commonProps,
+    selectedBaseline: refitted2011.version,
+    snapshots: [refitted2011],
+    lenderLimits: { CENTRAL_BANK_LTV_HARD_MAX_HM: 0.9, CENTRAL_BANK_LTV_HARD_MAX_BTL: 0.75 },
+    initialStep: 2,
+    formValues: { ...baselineFormValues, CENTRAL_BANK_LTV_HARD_MAX_HM: '1' }
+  }))
+);
+assert.ok(
+  mismatchedMarkup.includes('You’re using the 2024 policy with a 2011 model. The model’s lenders keep their') &&
+    mismatchedMarkup.includes('own 2011 limits, so some 2024 settings run at those limits instead.'),
+  'A model paired with the other year’s policy should say so'
+);
+assert.ok(
+  mismatchedMarkup.includes('Runs as 90%, like the 95% reference: lenders in the Refitted 2011 model never lend home movers more than 90% of the property value.'),
+  'A changed value should explain that the reference runs at the same limit'
+);
+
 console.log('Policy wizard tests passed.');

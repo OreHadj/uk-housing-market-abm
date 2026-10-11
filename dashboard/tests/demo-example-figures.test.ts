@@ -12,7 +12,7 @@ import { getSensitivityExperiment, getSensitivityExperimentResults, getSensitivi
 import { formatKpiComparisonDelta, formatKpiValue, getManualComparisonFieldDifferences, getPolicySettingDifferences } from '../src/lib/manualResultsView';
 import { POLICY_RESULTS_DEMO } from '../src/lib/guidedDemos/policyResults';
 import { SENSITIVITY_RESULTS_DEMO } from '../src/lib/guidedDemos/sensitivityResults';
-import { REPORT2_INDICATOR_IDS, getReport2Kpi, getReport2Points, getReport2PrivateRentingShare, getReport2Volatility } from '../src/pages/report2/report2Model';
+import { REPORT2_INDICATOR_IDS, getReport2Kpi, getReport2Points, getReport2PrivateRentingShare, getReport2SeedVolatility, getReport2Volatility } from '../src/pages/report2/report2Model';
 import { REPORT2_SUMMARY_KEYS, buildSensitivityReport2, chooseReport2Setting, formatReport2Difference, formatReport2Number, formatReport2Pairing, type Report2Metric } from '../src/pages/sensitivity-report2/sensitivityReport2Model';
 
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
@@ -71,7 +71,13 @@ try {
     policy[key] = metric(getReport2Kpi(compare, selected.runId, indicator)?.mean, getReport2Kpi(compare, baseline.runId, indicator)?.mean);
   }
   policy.privateRenting = metric(getReport2PrivateRentingShare(compare, selected.runId, selected), getReport2PrivateRentingShare(compare, baseline.runId, baseline));
-  policy.priceGrowthVolatility = metric(getReport2Volatility(getReport2Points(compare, selected.runId, 'core_housePriceGrowth')), getReport2Volatility(getReport2Points(compare, baseline.runId, 'core_housePriceGrowth')));
+  const selectedVolatility = getReport2SeedVolatility(compare, selected.runId, 'core_housePriceGrowth');
+  const baselineVolatility = getReport2SeedVolatility(compare, baseline.runId, 'core_housePriceGrowth');
+  assert.equal(selectedVolatility.basis, 'per_seed', 'The bundled policy example measures volatility within each seed');
+  assert.equal(baselineVolatility.basis, 'per_seed', 'The bundled baseline example measures volatility within each seed');
+  policy.priceGrowthVolatility = metric(selectedVolatility.value, baselineVolatility.value);
+  // Averaging seeds first cancels out-of-step cycles, leaving roughly a third of each seed's variation.
+  assert(getReport2Volatility(getReport2Points(compare, selected.runId, 'core_housePriceGrowth'))! < selectedVolatility.value! / 2);
   assertFigures(policy, DEMO_EXAMPLE_FIGURES.policy, 'policy');
   const lesson = (id: string) => {
     const step = POLICY_RESULTS_DEMO.steps.find((entry) => entry.id === id)!;

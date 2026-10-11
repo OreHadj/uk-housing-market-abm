@@ -70,6 +70,7 @@ body:has(.report2) > .report-info-tooltip { font-family: inherit; font-size: 14p
 .report2 .r2-policy-changes dt { color: var(--r2-muted); font-size: calc(10px * var(--r2-scale)); }
 .report2 .r2-policy-changes dd { margin-top: 3px; font-size: calc(12px * var(--r2-scale)); }
 .report2 .r2-policy-changes dd > span { color: #8a94a5; }
+.report2 .r2-policy-changes dd > .policy-ran-as { color: #92400e; }
 .report2 .r2-policy-changes strong { color: var(--r2-blue); font-weight: 650; }
 .report2 .r2-settings, .report2 .r2-coverage-details { font-size: calc(10px * var(--r2-scale)); color: #65738b; margin-top: 14px; overflow-wrap: anywhere; }
 .report2 summary { color: #546faa; cursor: pointer; }

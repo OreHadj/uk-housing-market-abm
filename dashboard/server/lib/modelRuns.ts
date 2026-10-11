@@ -22,12 +22,15 @@ import type {
 } from '../../shared/types';
 import {
   BASE_POLICY_OPTIONS,
+  CENTRAL_BANK_POLICY_KEYS,
   SENSITIVITY_POLICY_PACKAGES,
   assertCompatiblePolicyPackageTypes,
+  findPolicySettingMinimumError,
   getBasePolicyOption,
   getDefaultBasePolicyId,
   isBasePolicyId
 } from '../../shared/policyCatalogue';
+import { readLenderLimits, type LenderLimits } from '../../shared/lenderLimits';
 import { getInProgressVersions, getVersions } from './service';
 import { loadDashboardInputVersionHistory } from './dashboardInputVersionHistory';
 import {
@@ -651,6 +654,14 @@ function getParameterDefinitionsForBaseline(pathsInput: RuntimePathInput, baseli
       ...definition,
       defaultValue: parseTypedConfigValue(rawValue, definition.type, definition.key)
     };
+  });
+}
+
+function getLenderLimitsForBaseline(pathsInput: RuntimePathInput, baseline: string): LenderLimits {
+  const configValues = parseConfigAssignments(getBaselineConfigPath(pathsInput, baseline));
+  return readLenderLimits((key) => {
+    const rawValue = configValues.get(key);
+    return rawValue === undefined ? null : Number.parseFloat(rawValue);
   });
 }
 
@@ -1379,7 +1390,8 @@ export function getModelRunOptions(
     parameters,
     basePolicies: BASE_POLICY_OPTIONS,
     defaultBasePolicy: getDefaultBasePolicyId(baseline),
-    sensitivityPolicyPackages: getSensitivityPolicyPackagesForParameters(parameters)
+    sensitivityPolicyPackages: getSensitivityPolicyPackagesForParameters(parameters),
+    lenderLimits: getLenderLimitsForBaseline(paths, baseline)
   };
 }
 
@@ -1552,6 +1564,14 @@ export function prepareModelRunSubmission(
     normalizedOverrides.set(key, parsedOverride.serialized);
     valuesByKey.set(key, parsedOverride.typed);
     overriddenParameters[key] = parsedOverride.typed;
+  }
+
+  for (const key of CENTRAL_BANK_POLICY_KEYS) {
+    const value = valuesByKey.get(key);
+    const minimumError = typeof value === 'number' ? findPolicySettingMinimumError(key, value) : null;
+    if (minimumError) {
+      throw new Error(minimumError);
+    }
   }
 
   const seedsPerPoint = parseSeedCount(valuesByKey.get('N_SIMS') ?? 1, 'Manual seeds per run');

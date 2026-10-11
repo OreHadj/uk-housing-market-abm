@@ -6,6 +6,7 @@ import { getBasePolicyOption, summariseRunPolicy } from '../../../shared/policyC
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
 import { EChart } from '../../components/EChart';
 import { ReportInfo } from '../../components/ReportInfo';
+import { PolicyRanAs } from '../../components/PolicyRanAs';
 import { fetchLendingDistributionCompare, fetchResultsCompare, fetchResultsRunDetail, fetchResultsRuns } from '../../lib/api';
 import { findMatchedManualBaselineRun, formatKpiComparisonDelta, formatKpiDeltaValue, formatKpiValue, formatManualComparisonCalibrationNotice, formatManualComparisonMismatchWarning, getManualComparisonFieldDifferences, getPolicySettingDifferences } from '../../lib/manualResultsView';
 import { getPolicyReportCoverage } from '../../lib/policyReport';
@@ -16,7 +17,7 @@ import { createScenarioDraftId, setActiveScenarioDraftId, writeScenarioDraft, ty
 import { buildReport2Borrowers, buildReport2Risk, buildReport2Tenure, buildReport2Trend } from './report2Charts';
 import { Report2MarketChart } from './Report2MarketChart';
 import { Report2ComparisonAction } from './Report2ComparisonAction';
-import { getReport2Kpi, getReport2LoanMean, getReport2Points, getReport2PrivateRentingShare, getReport2TailShare, getReport2Volatility, REPORT2_INDICATOR_IDS } from './report2Model';
+import { getReport2Kpi, getReport2LoanMean, getReport2Points, getReport2PrivateRentingShare, getReport2SeedVolatility, getReport2TailShare, REPORT2_INDICATOR_IDS } from './report2Model';
 import './report2.css';
 
 const MARKET = [
@@ -81,12 +82,14 @@ function PolicyContext({ primary, comparison, comparisonSelected }: { primary: R
   const reference = comparison?.policySettings ?? (!comparisonSelected && base ? Object.entries(base.values).map(([key, value]) => ({ key, value })) : []);
   const differences = getPolicySettingDifferences(primary.policySettings, reference);
   const displayed = differences.slice(0, 3);
+  const differenceKeys = new Set(differences.map((item) => item.key));
+  const ranAsByKey = new Map(primary.policySettings.map((item) => [item.key, item.ranAs]));
   const seeds = primary.provenance.seeds;
   const setting = (key: string, value: number | null) => value === null ? 'Not recorded' : CENTRAL_BANK_POLICY_DISPLAY[key] ? formatPolicyValue(value, CENTRAL_BANK_POLICY_DISPLAY[key].unit) : String(value);
   return <aside className="r2-card r2-context" aria-label="Policy and run setup" data-guided-target="policy-context">
     <p className="r2-small-title r2-title-row"><span>{comparisonSelected ? 'Changes from baseline' : 'Changes from base policy'}</span><ReportInfo label="Policy and run settings">Recorded policy differences and run settings. Expand “All policy settings” for the full configuration. Check model, duration and seed coverage when comparing runs.</ReportInfo></p>
-    {reference.length === 0 ? <p className="r2-caption">Reference settings not recorded.</p> : displayed.length === 0 ? <p className="r2-caption">No recorded policy settings differ.</p> : <dl className="r2-policy-changes">{displayed.map((item) => <div key={item.key}><dt>{CENTRAL_BANK_POLICY_DISPLAY[item.key]?.label ?? item.key}</dt><dd><span>{setting(item.key, item.comparisonValue)}</span><span aria-hidden="true"> → </span><strong>{setting(item.key, item.primaryValue)}</strong></dd></div>)}</dl>}
-    <details className="r2-settings"><summary>All policy settings{differences.length > 3 ? ` (${differences.length} changes)` : ''}</summary><dl>{primary.policySettings.map((item) => <div key={item.key}><dt>{CENTRAL_BANK_POLICY_DISPLAY[item.key]?.label ?? item.key}</dt><dd>{setting(item.key, item.value)}</dd></div>)}</dl></details>
+    {reference.length === 0 ? <p className="r2-caption">Reference settings not recorded.</p> : displayed.length === 0 ? <p className="r2-caption">No recorded policy settings differ.</p> : <dl className="r2-policy-changes">{displayed.map((item) => <div key={item.key}><dt>{CENTRAL_BANK_POLICY_DISPLAY[item.key]?.label ?? item.key}</dt><dd><span>{setting(item.key, item.comparisonValue)}</span><span aria-hidden="true"> → </span><strong>{setting(item.key, item.primaryValue)}</strong><PolicyRanAs settingKey={item.key} ranAs={ranAsByKey.get(item.key)} /></dd></div>)}</dl>}
+    <details className="r2-settings"><summary>All policy settings{differences.length > 3 ? ` (${differences.length} changes)` : ''}</summary><dl>{primary.policySettings.map((item) => <div key={item.key}><dt>{CENTRAL_BANK_POLICY_DISPLAY[item.key]?.label ?? item.key}</dt><dd>{setting(item.key, item.value)}{differenceKeys.has(item.key) && <PolicyRanAs settingKey={item.key} ranAs={item.ranAs} />}</dd></div>)}</dl></details>
     <div className="r2-context-rule" />
     <dl className="r2-provenance">
       <div><dt>Model</dt><dd>{primary.configuration.modelVersion ? formatModelOptionLabel(primary.configuration.modelVersion) : 'Not recorded'}</dd></div>
@@ -243,10 +246,16 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
   };
   const thresholdsDiffer = riskThreshold(primaryLending) !== undefined && riskThreshold(comparisonLending) !== undefined
     && riskThreshold(primaryLending) !== riskThreshold(comparisonLending);
-  const priceVolatility = getReport2Volatility(getReport2Points(payload, primaryId, 'core_housePriceGrowth'));
-  const baselinePriceVolatility = getReport2Volatility(getReport2Points(payload, comparisonId, 'core_housePriceGrowth'));
-  const creditVolatility = getReport2Volatility(getReport2Points(payload, primaryId, 'core_creditGrowth'));
-  const baselineCreditVolatility = getReport2Volatility(getReport2Points(payload, comparisonId, 'core_creditGrowth'));
+  const volatility = (runId: string, indicatorId: string) => getReport2SeedVolatility(payload, runId, indicatorId);
+  const volatilityRunIds = hasComparison ? [primaryId, comparisonId] : [primaryId];
+  const priceVolatility = volatility(primaryId, 'core_housePriceGrowth').value;
+  const baselinePriceVolatility = volatility(comparisonId, 'core_housePriceGrowth').value;
+  const creditVolatility = volatility(primaryId, 'core_creditGrowth').value;
+  const baselineCreditVolatility = volatility(comparisonId, 'core_creditGrowth').value;
+  // A multi-seed run without per-seed files falls back to the seed-averaged path, which understates
+  // variation and is not comparable with per-seed values.
+  const volatilityFallback = volatilityRunIds.some((runId) => ['core_housePriceGrowth', 'core_creditGrowth']
+    .some((indicatorId) => { const entry = volatility(runId, indicatorId); return entry.value !== null && entry.basis === 'seed_mean'; }));
   const rentingShare = getReport2PrivateRentingShare(payload, primaryId, primary);
   const baselineRentingShare = getReport2PrivateRentingShare(payload, comparisonId, comparison);
   const trend = useMemo(() => buildReport2Trend(payload?.indicators.find((item) => item.indicator.id === marketId), primaryId, comparisonId), [payload, marketId, primaryId, comparisonId]);
@@ -310,7 +319,7 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
           <div className="r2-headlines">
             <Headline guidedTarget="policy-house-price" label="Average house price" value={mean('output_saleAvSalePrice')} reference={mean('output_saleAvSalePrice', comparisonId)} units="GBP" comparison={hasComparison} note="Completed sales · window mean" accent="blue" help="Mean recorded monthly price of completed sales over the selected window. Change compares this mean with the baseline run." />
             <Headline label="Mortgage debt / income" value={mean('core_debtToIncome')} reference={mean('core_debtToIncome', comparisonId)} units="%" comparison={hasComparison} note="All mortgage debt / household net income" accent="purple" help="Total mortgage debt relative to household net income, averaged over the selected window. This measures household-sector leverage, not an individual borrower’s loan-to-income ratio." />
-            <Headline label="Price-growth volatility" value={priceVolatility} reference={baselinePriceVolatility} units="percentage points" comparison={hasComparison} note="Temporal SD · quarterly growth" accent="teal" help="Monthly variation in quarterly house-price growth over the selected window, after averaging available seeds. Larger values mean a more variable average path." />
+            <Headline label="Price-growth volatility" value={priceVolatility} reference={baselinePriceVolatility} units="percentage points" comparison={hasComparison} note="Temporal SD · quarterly growth" accent="teal" help="How much quarterly house-price growth varies from month to month over the selected window, measured within each simulated seed and then averaged across seeds. Larger values mean a more volatile market." />
             <Headline label="Owner-occupier share" value={ownership} reference={mean('output_ownershipRate', comparisonId)} units="%" comparison={hasComparison} note="Share of all model households" accent="gold" help="Share in the model’s owner-occupier category, averaged over the selected window. Active buy-to-let investors are counted separately. Baseline differences use percentage points, calculated before rounding the displayed shares." />
           </div>
 
@@ -362,15 +371,15 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
           </article>
 
           <article className="r2-card r2-stability">
-            <CardHeading index="05 / Cyclical variation" title="A steadier market?" subtitle="Temporal standard deviation of recorded growth rates." help="Variation across months in quarterly house-price growth and twelve-month credit growth, measured in percentage points. Lower values indicate steadier average paths. These are not uncertainty intervals across simulation seeds." />
+            <CardHeading index="05 / Cyclical variation" title="A steadier market?" subtitle="Temporal standard deviation of recorded growth rates." help="Variation across months in quarterly house-price growth and twelve-month credit growth, in percentage points, measured within each seed and then averaged. Lower values indicate a steadier market. These are not uncertainty intervals across simulation seeds." />
             <div className="r2-stability-values"><div><span>House-price growth</span><strong>{number(priceVolatility, 'percentage points')}</strong><small>{hasComparison ? `Baseline ${number(baselinePriceVolatility, 'percentage points')}` : 'Quarter-on-quarter growth'}</small></div><div><span>Credit growth</span><strong>{number(creditVolatility, 'percentage points')}</strong><small>{hasComparison ? `Baseline ${number(baselineCreditVolatility, 'percentage points')}` : 'Twelve-month growth'}</small></div></div>
-            <p className="r2-footnote">Variation across months after averaging available seeds. This describes the average path, not uncertainty across simulations.</p>
+            <p className="r2-footnote">Variation across months within each seed, averaged across seeds. This describes how variable each simulated market is, not uncertainty across simulations.{volatilityFallback && ' Some runs have no per-seed files, so their values use the seed-averaged path, which understates variation and is not comparable with per-seed values.'}</p>
           </article>
 
         </div>
       </div>
 
-      <footer className="r2-method"><p><strong>Reading this report.</strong> Means cover each run’s available months in the selected window. Counts use UK scale. Monthly series average available seeds before averaging over time. Core indicators retain the model’s recorded rolling averages. These descriptive comparisons do not establish immediate policy impacts or rank welfare.</p><p>{seedsNote && 'Some seed coverage lacks confirmation from a run manifest. '}No uncertainty interval across seeds is shown. {hasComparison && 'Model version, other settings, seeds and recorded windows may also affect comparisons. '}<Link to={detailedUrl}>Explore the detailed results →</Link></p></footer>
+      <footer className="r2-method"><p><strong>Reading this report.</strong> Means cover each run’s available months in the selected window. Counts use UK scale. Monthly series average available seeds before averaging over time, except growth volatility, which is measured within each seed. Core indicators retain the model’s recorded rolling averages. These descriptive comparisons do not establish immediate policy impacts or rank welfare.</p><p>{seedsNote && 'Some seed coverage lacks confirmation from a run manifest. '}No uncertainty interval across seeds is shown. {hasComparison && 'Model version, other settings, seeds and recorded windows may also affect comparisons. '}<Link to={detailedUrl}>Explore the detailed results →</Link></p></footer>
     </>}
   </section>;
 }

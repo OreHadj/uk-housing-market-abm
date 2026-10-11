@@ -8,6 +8,8 @@ import type {
   ModelRunWarning
 } from '../../../shared/types';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
+import { describeLenderCap, findLenderCap, formatLenderLimit, type LenderLimits } from '../../../shared/lenderLimits';
+import { getDefaultBasePolicyId } from '../../../shared/policyCatalogue';
 import {
   POLICY_INSTRUMENTS,
   POLICY_SETTING_GROUPS,
@@ -49,6 +51,8 @@ interface ManualRunSetupCardProps {
   basePolicy: BasePolicyId;
   onBasePolicyChange: (basePolicy: BasePolicyId) => void;
   snapshots: ModelRunSnapshotOption[];
+  /** The selected model's lender limits; a changed setting past one is flagged but still allowed. */
+  lenderLimits?: LenderLimits;
   title: string;
   onTitleChange: (value: string) => void;
   parameters: ModelRunParameterDefinition[];
@@ -116,6 +120,7 @@ export function ManualRunSetupCard({
   basePolicy,
   onBasePolicyChange,
   snapshots,
+  lenderLimits,
   title,
   onTitleChange,
   parameters,
@@ -199,6 +204,25 @@ export function ManualRunSetupCard({
     () => deriveChangedPolicyKeys(formValues, selectedBasePolicy?.values, knownPolicyKeys),
     [formValues, knownPolicyKeys, selectedBasePolicy]
   );
+
+  // Changed settings past the selected model's lender limits, which run at the limit instead. Only
+  // changed ones are flagged: some reference values (the 2024 affordability cap and ICR floor) are
+  // deliberately non-binding "off" settings.
+  const lenderCaps = useMemo(() => new Map(
+    POLICY_SETTING_GROUPS.flatMap((group) => group.keys).flatMap((key) => {
+      if (!changedPolicyKeys.has(key)) return [];
+      const limit = findLenderCap(key, numericValue(formValues[key]), lenderLimits);
+      return limit === null ? [] : [[key, limit] as const];
+    })
+  ), [changedPolicyKeys, formValues, lenderLimits]);
+  const lenderModelName = selectedModelAnchor ? `the ${selectedModelAnchor.name}` : 'this model';
+  // A model keeps its own era's lender limits whichever reference year is chosen, so pairing a 2011
+  // model with the 2024 policy (or the reverse) leaves some reference values running at those limits.
+  const modelPolicyYear = selectedBaseline ? getDefaultBasePolicyId(selectedBaseline) : null;
+  const referenceRunsAtLenderLimits = Boolean(selectedBasePolicy) && POLICY_SETTING_GROUPS
+    .flatMap((group) => group.keys)
+    .some((key) => findLenderCap(key, selectedBasePolicy?.values[key] ?? null, lenderLimits) !== null);
+  const showPolicyYearMismatch = modelPolicyYear !== null && modelPolicyYear !== basePolicy && referenceRunsAtLenderLimits;
 
   const scenarioSentence = describeScenarioPolicy(changedPolicyKeys);
   const policyTypeSummary = changedPolicyKeys.size === 0
@@ -404,6 +428,12 @@ export function ManualRunSetupCard({
                     {basePolicies.map((policy) => <option key={policy.id} value={policy.id}>{policy.id} policy</option>)}
                   </select>
                 </label>
+                {showPolicyYearMismatch && (
+                  <p className="scenario-policy-cap-warning scenario-policy-year-note">
+                    You&rsquo;re using the {basePolicy} policy with a {modelPolicyYear} model. The model&rsquo;s lenders keep their
+                    own {modelPolicyYear} limits, so some {basePolicy} settings run at those limits instead.
+                  </p>
+                )}
 
                 <p
                   className={`scenario-policy-status ${changedPolicyKeys.size > 0 ? 'has-changes' : ''}`}
@@ -419,6 +449,7 @@ export function ManualRunSetupCard({
                 <div className="scenario-policy-accordions">
                   {POLICY_SETTING_GROUPS.map((group) => {
                     const groupChangedCount = group.keys.filter((key) => changedPolicyKeys.has(key)).length;
+                    const groupCappedCount = group.keys.filter((key) => lenderCaps.has(key)).length;
                     return <details
                       key={group.id}
                       open={openPolicyGroups.has(group.id)}
@@ -445,6 +476,7 @@ export function ManualRunSetupCard({
                       >
                         <span>{group.heading}</span>
                         {groupChangedCount > 0 && <span className="scenario-accordion-change-count">{groupChangedCount} changed</span>}
+                        {groupCappedCount > 0 && <span className="scenario-accordion-cap-count">{groupCappedCount} capped</span>}
                       </summary>
                       <div
                         className="scenario-policy-accordion-content"
@@ -467,6 +499,7 @@ export function ManualRunSetupCard({
                         const baseValue = selectedBasePolicy?.values[key];
                         const baseText = formatPolicyFieldValue(key, baseValue === undefined ? undefined : String(baseValue));
                         const isChanged = changedPolicyKeys.has(key);
+                        const lenderCap = lenderCaps.get(key);
                         return (
                           <div key={key} className={`scenario-policy-field ${isChanged ? 'is-overridden' : ''}`}>
                             <CentralBankPolicyInput
@@ -500,6 +533,16 @@ export function ManualRunSetupCard({
                                 `Reference: ${baseText}`
                               )}
                             </p>
+                            {lenderCap !== undefined && (
+                              <p className="scenario-policy-cap-warning">
+                                {describeLenderCap(
+                                  key,
+                                  lenderCap,
+                                  lenderModelName,
+                                  baseValue !== undefined && findLenderCap(key, baseValue, lenderLimits) !== null ? baseValue : undefined
+                                )}
+                              </p>
+                            )}
                           </div>
                         );
                       })}
@@ -562,6 +605,27 @@ export function ManualRunSetupCard({
                   <div><dt>Policy changes</dt><dd>{changedPolicyKeys.size === 0 ? 'No settings changed' : `${changedPolicyKeys.size} ${changedPolicyKeys.size === 1 ? 'setting' : 'settings'} changed`}</dd></div>
                 </dl>
 
+                {lenderCaps.size > 0 && (
+                  <div className="warning-banner scenario-lender-cap-review">
+                    <p>
+                      <strong>
+                        {lenderCaps.size} {lenderCaps.size === 1 ? 'setting runs' : 'settings run'} at the lenders&rsquo; own limit
+                      </strong>
+                    </p>
+                    <ul>
+                      {[...lenderCaps].map(([key, limit]) => (
+                        <li key={key}>
+                          {policyLabel(key)}: {formatPolicyFieldValue(key, formValues[key])} &rarr; runs as {formatLenderLimit(key, limit)}
+                        </li>
+                      ))}
+                    </ul>
+                    <p>
+                      Lenders in {lenderModelName} never go past {lenderCaps.size === 1 ? 'this limit' : 'these limits'}, so
+                      going further has no extra effect. You can still start the run.
+                    </p>
+                  </div>
+                )}
+
                 <div
                   className="scenario-policy-review"
                   tabIndex={isPolicyDemoActive ? -1 : undefined}
@@ -581,6 +645,7 @@ export function ManualRunSetupCard({
                             const baseText = formatPolicyFieldValue(key, baseValue === undefined ? undefined : String(baseValue));
                             const isChanged = changedPolicyKeys.has(key);
                             const currentText = isChanged ? formatPolicyFieldValue(key, formValues[key]) : baseText;
+                            const lenderCap = lenderCaps.get(key);
                             return (
                               <div key={key} className={isChanged ? 'is-changed' : undefined}>
                                 <dt>{policyLabel(key)}</dt>
@@ -590,6 +655,9 @@ export function ManualRunSetupCard({
                                     {isChanged ? 'Changed' : 'Unchanged'}
                                   </span>
                                   {isChanged && <small>Reference: {baseText}</small>}
+                                  {lenderCap !== undefined && (
+                                    <small className="scenario-policy-review-cap">Runs as {formatLenderLimit(key, lenderCap)}</small>
+                                  )}
                                 </dd>
                               </div>
                             );
@@ -717,6 +785,7 @@ export function ManualRunSetupCard({
                         <dd>
                           {formatPolicyFieldValue(key, selectedBasePolicy?.values[key] === undefined ? undefined : String(selectedBasePolicy.values[key]))}
                           {' to '}{formatPolicyFieldValue(key, formValues[key])}
+                          {lenderCaps.has(key) && ` (runs as ${formatLenderLimit(key, lenderCaps.get(key) as number)})`}
                         </dd>
                       </div>
                     ))

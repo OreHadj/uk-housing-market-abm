@@ -37,10 +37,10 @@ export const POLICY_INSTRUMENTS: readonly PolicyInstrumentDefinition[] = [
   {
     id: 'lti',
     label: 'LTI flow limits',
-    description: 'Cap the share of new lending at or above an income multiple.',
+    description: 'Cap the share of new lending above an income multiple.',
     heading: 'Loan-to-income (LTI) flow limits',
     intro:
-      "The income multiple defining a high-LTI loan, the maximum share of a lender's new lending allowed at or above it, and the rolling window the share is enforced over. The 2024 reference policy uses 4.5× income with a 15% flow limit over 12 months.",
+      "The income multiple defining a high-LTI loan, the maximum share of a lender's new lending allowed above it, and the rolling window the share is enforced over. The 2024 reference policy uses 4.5× income with a 15% flow limit over 12 months.",
     keys: [
       'CENTRAL_BANK_LTI_SOFT_MAX_FTB',
       'CENTRAL_BANK_LTI_SOFT_MAX_HM',

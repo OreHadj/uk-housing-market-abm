@@ -1692,7 +1692,7 @@ export function ValidationPage({
             </p>
             <p className="validation-evidence-statement">
               {selectedValidationTargetYear === 2011 ? (
-                <>Showing the <strong>2011 reference evidence overlay</strong>. This is a historical reference view, not a continuation of the 2024 validation evidence.</>
+                <>Showing the <strong>2011 reference evidence overlay</strong>. This is a historical reference view, not a continuation of the 2024 validation evidence. Only models with 2011 evidence are listed below; choose 2024 evidence to see every model.</>
               ) : (
                 <>The selected model is validated against <strong>2024 evidence</strong>.</>
               )}

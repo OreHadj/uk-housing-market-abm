@@ -19,6 +19,7 @@ import type {
   ResultsRunProvenance,
   ResultsRunStatus,
   ResultsRunSummary,
+  ResultsSeedVolatility,
   ResultsSeriesPayload,
   ResultsSeriesPoint,
   ResultsSeriesSource
@@ -32,6 +33,7 @@ import {
 } from './runtimePaths';
 import { isDashboardManagedRun } from './runOwnership';
 import { CENTRAL_BANK_POLICY_KEYS, isBasePolicyId } from '../../shared/policyCatalogue';
+import { findLenderCap, readLenderLimits } from '../../shared/lenderLimits';
 import { RUN_MANIFEST_FILE_NAME } from './runManifest';
 import { assertDemoExampleMutable, assertDemoExampleTitleAvailable, isInstalledDemoExample } from './demoExamples';
 
@@ -316,7 +318,7 @@ const OUTPUT_INDICATORS: IndicatorDefinition[] = [
   },
   {
     id: 'output_ownershipRate',
-    title: 'Ownership rate',
+    title: 'Owner-occupier share (excl. landlords)',
     units: '%',
     description:
       'Share of households living in a home they own, computed month by month against that '
@@ -454,7 +456,8 @@ export const REQUIRED_RESULTS_PARSE_FILE_NAMES = [
   RUN_CONFIG_FILE_NAME,
   ...REQUIRED_CORE_FILES
 ];
-const EXPECTED_FULL_OUTPUT_ROW_COUNT = 2001;
+/** Rows expected from a run whose config.properties does not record N_STEPS (months 0 to 2,000). */
+const LEGACY_FULL_OUTPUT_ROW_COUNT = 2001;
 
 /** The loan-level sale file, parsed for the new-lending distributions (lendingDistribution.ts). */
 export const SALE_TRANSACTIONS_FILE_NAME = 'SaleTransactions-run1.csv';
@@ -1003,6 +1006,15 @@ function clearRunFromParserCaches(runPath: string): void {
   }
 }
 
+/**
+ * A finished run writes one row per month from 0 to its own N_STEPS, so a run is partial only when
+ * it has fewer rows than it was set up to produce, whatever its length.
+ */
+function expectedOutputRowCount(runPath: string): number {
+  const nSteps = getRunConfigNumbers(runPath).get('N_STEPS');
+  return nSteps !== undefined && Number.isInteger(nSteps) && nSteps > 0 ? nSteps + 1 : LEGACY_FULL_OUTPUT_ROW_COUNT;
+}
+
 function computeRunStatusAndCoverage(runPath: string): {
   status: ResultsRunStatus;
   coverage: {
@@ -1035,7 +1047,7 @@ function computeRunStatusAndCoverage(runPath: string): {
     status = 'invalid';
   } else if (
     output.status !== 'supported' ||
-    output.rowCount < EXPECTED_FULL_OUTPUT_ROW_COUNT ||
+    output.rowCount < expectedOutputRowCount(runPath) ||
     coreStatuses.some((coreStatus) => coreStatus.status !== 'supported')
   ) {
     status = 'partial';
@@ -1514,12 +1526,16 @@ function getRunProvenance(runPath: string): ResultsRunProvenance {
 
 function readCentralBankPolicySettings(configPath: string): ResultsPolicySetting[] {
   const values = parseRunConfigNumbers(configPath);
+  // The run's own config records the lender limits it ran with, so a setting past one is flagged
+  // with the value the model actually used.
+  const lenderLimits = readLenderLimits((key) => values.get(key));
 
   // Emit in catalogue order so the block reads the same way for every run, not in file order.
-  return CENTRAL_BANK_POLICY_KEYS.filter((key) => values.has(key)).map((key) => ({
-    key,
-    value: values.get(key) as number
-  }));
+  return CENTRAL_BANK_POLICY_KEYS.filter((key) => values.has(key)).map((key) => {
+    const value = values.get(key) as number;
+    const ranAs = findLenderCap(key, value, lenderLimits);
+    return ranAs === null ? { key, value } : { key, value, ranAs };
+  });
 }
 
 function buildRunDiagnostics(pathsInput: RuntimePathInput, runId: string): RunDiagnostics {
@@ -1748,6 +1764,15 @@ export function getResultsCompare(
       })
     };
   });
+  const volatilityIndicators = selectedIndicators
+    .map((indicatorId) => INDICATOR_BY_ID.get(indicatorId))
+    .filter((indicator): indicator is IndicatorDefinition =>
+      indicator !== undefined && SEED_VOLATILITY_INDICATOR_IDS.has(indicator.id));
+  const seedVolatilityByRun = runIds.map((runId) => ({
+    runId,
+    values: volatilityIndicators.map((indicator) =>
+      computeSeedVolatility(runPaths.get(runId) as string, indicator, window))
+  }));
 
   return {
     runIds,
@@ -1755,6 +1780,84 @@ export function getResultsCompare(
     smoothWindow,
     window,
     indicators: indicatorPayloads,
-    kpiSummaryByRun
+    kpiSummaryByRun,
+    seedVolatilityByRun
+  };
+}
+
+/**
+ * Growth rates whose variation over time the policy Report shows. A multi-seed run's root series
+ * is the seed mean, and averaging seeds whose cycles peak at different times cancels most of each
+ * cycle (roughly to 1/√n of one seed's variation). So the variation is measured within each seed,
+ * from its own copy under seeds/, and then averaged across seeds.
+ */
+const SEED_VOLATILITY_INDICATOR_IDS = new Set(['core_housePriceGrowth', 'core_creditGrowth']);
+
+/** The per-seed files that seed volatility reads, so remote workspaces can download them. */
+export const SEED_VOLATILITY_FILE_NAMES = CORE_INDICATORS
+  .filter((indicator) => SEED_VOLATILITY_INDICATOR_IDS.has(indicator.id))
+  .map((indicator) => indicator.fileName as string);
+
+/** Population SD, matching the Report's other temporal measures; null below two observations. */
+function populationStandardDeviation(values: number[]): number | null {
+  if (values.length < 2) {
+    return null;
+  }
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  return Math.sqrt(Math.max(0, variance));
+}
+
+function windowedStandardDeviation(values: Array<number | null>, window: CompareWindow): number | null {
+  const windowValues = applyCompareWindow(toSeriesPointsFromCore(values), window)
+    .map((point) => point.value)
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  return populationStandardDeviation(windowValues);
+}
+
+function listSeedIndicatorFiles(runPath: string, fileName: string): string[] {
+  const seedsRoot = path.join(runPath, 'seeds');
+  if (!fs.existsSync(seedsRoot) || !fs.statSync(seedsRoot).isDirectory()) {
+    return [];
+  }
+  return fs
+    .readdirSync(seedsRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(seedsRoot, entry.name, fileName))
+    .filter((filePath) => fs.existsSync(filePath))
+    .sort();
+}
+
+function computeSeedVolatility(
+  runPath: string,
+  indicator: IndicatorDefinition,
+  window: CompareWindow
+): ResultsSeedVolatility {
+  const fileName = indicator.fileName as string;
+  const seedFiles = listSeedIndicatorFiles(runPath, fileName);
+  if (seedFiles.length > 0) {
+    const deviations = seedFiles
+      .map((filePath) => {
+        const parsed = getCachedParsedCore(filePath);
+        return parsed.status === 'supported' ? windowedStandardDeviation(parsed.values, window) : null;
+      })
+      .filter((value): value is number => value !== null);
+    return {
+      indicatorId: indicator.id,
+      value: deviations.length > 0 ? deviations.reduce((sum, value) => sum + value, 0) / deviations.length : null,
+      basis: 'per_seed',
+      seedCount: deviations.length
+    };
+  }
+
+  // No per-seed copies. A single-seed run's root series is that seed's own; a multi-seed run's root
+  // series is the seed mean, so its value is flagged as not comparable.
+  const parsed = getCoreParseStatus(runPath, fileName);
+  const seedCount = readRunSeeds(runPath, getRunConfigNumbers(runPath)).seeds?.length ?? 1;
+  return {
+    indicatorId: indicator.id,
+    value: parsed.status === 'supported' ? windowedStandardDeviation(parsed.values, window) : null,
+    basis: seedCount > 1 ? 'seed_mean' : 'per_seed',
+    seedCount
   };
 }

@@ -565,6 +565,11 @@ export interface ResultsCoverageSummary {
 export interface ResultsPolicySetting {
   key: string;
   value: number;
+  /**
+   * The lender limit the run actually used, present only when `value` is past it (see
+   * shared/lenderLimits.ts). Absent for older remote payloads.
+   */
+  ranAs?: number;
 }
 
 /**
@@ -681,6 +686,27 @@ export interface ResultsCompareKpiSummary {
   kpiSummary: KpiMetricSummary[];
 }
 
+/**
+ * Temporal standard deviation of a growth rate over the analysis window, measured within each seed
+ * and then averaged across seeds. Averaging seeds first would cancel cycles that peak at different
+ * times and understate how variable each simulated market is.
+ *
+ * `basis` is 'per_seed' when each seed's own series was available (a single-seed run's series is
+ * its seed's own). It is 'seed_mean' for a multi-seed run with no per-seed files, where the value
+ * falls back to the seed-averaged path and is not comparable with per-seed values.
+ */
+export interface ResultsSeedVolatility {
+  indicatorId: string;
+  value: number | null;
+  basis: 'per_seed' | 'seed_mean';
+  seedCount: number;
+}
+
+export interface ResultsSeedVolatilitySummary {
+  runId: string;
+  values: ResultsSeedVolatility[];
+}
+
 export interface ResultsComparePayload {
   runIds: string[];
   indicatorIds: string[];
@@ -688,6 +714,8 @@ export interface ResultsComparePayload {
   window: ResultsCompareWindow;
   indicators: ResultsCompareIndicator[];
   kpiSummaryByRun: ResultsCompareKpiSummary[];
+  /** Per-seed volatility for the requested growth indicators. Absent from older remote payloads. */
+  seedVolatilityByRun?: ResultsSeedVolatilitySummary[];
 }
 
 /**
@@ -1035,6 +1063,8 @@ export interface ModelRunOptionsPayload {
   basePolicies: BasePolicyOption[];
   defaultBasePolicy: BasePolicyId;
   sensitivityPolicyPackages: SensitivityPolicyPackageDefinition[];
+  /** The requested baseline's own lender limits, keyed by the policy setting each one caps. */
+  lenderLimits?: Partial<Record<string, number>>;
 }
 
 export interface ModelRunSubmitRequest {

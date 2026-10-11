@@ -5,7 +5,7 @@ import type {
   ModelRunParameterType,
   SensitivityPolicyPackageDefinition
 } from './types';
-import { formatExactPercent, formatPercent } from './policyDisplay';
+import { CENTRAL_BANK_POLICY_DISPLAY, formatExactPercent, formatPercent, formatPolicyValue } from './policyDisplay';
 
 export const CENTRAL_BANK_POLICY_KEYS = [
   'CENTRAL_BANK_INITIAL_BASE_RATE',
@@ -27,6 +27,25 @@ export const CENTRAL_BANK_POLICY_KEYS = [
 // cap as "off", so there is a single source of truth for what "off" means.
 export const CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL = 0.9999;
 export const CENTRAL_BANK_ICR_OFF_SENTINEL = 0;
+
+/**
+ * Smallest value the model can run with, for policy settings that have one. Bank.java keeps the
+ * previous (months - 1) months of LTI counts and drops the oldest each month, so an LTI flow
+ * period below 2 months fails at the start of every run.
+ */
+export const CENTRAL_BANK_POLICY_MINIMUMS: Readonly<Partial<Record<string, number>>> = {
+  CENTRAL_BANK_LTI_MONTHS_TO_CHECK: 2
+};
+
+/** The reason a policy value cannot run, or null when it can. */
+export function findPolicySettingMinimumError(key: string, value: number): string | null {
+  const minimum = CENTRAL_BANK_POLICY_MINIMUMS[key];
+  if (minimum === undefined || value >= minimum) {
+    return null;
+  }
+  const display = CENTRAL_BANK_POLICY_DISPLAY[key];
+  return `${display?.label ?? key} must be at least ${display ? formatPolicyValue(minimum, display.unit) : minimum}.`;
+}
 
 function describeAffordabilityCap(values: Record<string, number>): string {
   const value = values.CENTRAL_BANK_AFFORDABILITY_HARD_MAX;

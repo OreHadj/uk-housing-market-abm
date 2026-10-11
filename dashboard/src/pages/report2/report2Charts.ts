@@ -313,7 +313,7 @@ export function buildReport2Tenure(ownership: number | null, privateRenting: num
       itemStyle: { borderColor: '#fff', borderWidth: 3, borderRadius: 3 },
       emphasis: { scale: false },
       data: [
-        { name: 'Ownership', value: ownership, itemStyle: { color: REPORT2_COLORS.policy } },
+        { name: 'Owner-occupiers', value: ownership, itemStyle: { color: REPORT2_COLORS.policy } },
         { name: 'Private renting', value: privateRenting, itemStyle: { color: REPORT2_COLORS.comparison } },
         { name: 'Other households', value: 100 - ownership - privateRenting, itemStyle: { color: '#e6ebf5' } }
       ]

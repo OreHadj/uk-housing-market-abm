@@ -5,6 +5,7 @@ import {
   formatExactScaled,
   scaledInputToStoredFraction
 } from '../../../shared/policyDisplay';
+import { CENTRAL_BANK_POLICY_MINIMUMS } from '../../../shared/policyCatalogue';
 import { InfoLabel } from './InfoLabel';
 import { ParameterInput } from './GeneralModelControl';
 import { getParameterHelp, type ExperimentControlMode } from './settingHelp';
@@ -108,15 +109,18 @@ function PolicyValueField({
     setText(formatExactScaled(effectiveNumber, scale));
   }, [effectiveNumber, scale]);
 
+  // The smallest value the field commits, in its display unit: zero, or the model's own minimum.
+  const minimum = (CENTRAL_BANK_POLICY_MINIMUMS[parameter.key] ?? 0) * scale;
   const help = getParameterHelp(parameter, mode);
   const exactNote = typeof value === 'string' ? ` Exact model value: ${formatExactModelValue(value)}.` : '';
-  const info = `${help} Starts at the baseline policy value; type to override it. Negative and empty values are not accepted.${exactNote}`;
+  const rejected = minimum > 0 ? `Values below ${minimum} ${suffix} and empty values` : 'Negative and empty values';
+  const info = `${help} Starts at the baseline policy value; type to override it. ${rejected} are not accepted.${exactNote}`;
 
   const handleEdit = (raw: string) => {
     setText(raw);
     onDemoEdit?.();
     const parsed = Number.parseFloat(raw);
-    if (!Number.isFinite(parsed) || parsed < 0) {
+    if (!Number.isFinite(parsed) || parsed < minimum) {
       // Keep the last valid stored value; blur restores the text so nothing invalid can be submitted.
       return;
     }
@@ -128,7 +132,7 @@ function PolicyValueField({
 
   const handleBlur = () => {
     const parsed = Number.parseFloat(text);
-    if (Number.isFinite(parsed) && parsed >= 0) {
+    if (Number.isFinite(parsed) && parsed >= minimum) {
       onDemoCommit?.(scaledInputToStoredFraction(text, scale));
       return;
     }
@@ -142,7 +146,7 @@ function PolicyValueField({
         <input
           type="number"
           step="any"
-          min={0}
+          min={minimum}
           value={text}
           disabled={disabled}
           aria-label={`${label} value`}
@@ -151,7 +155,7 @@ function PolicyValueField({
           onKeyDown={(event) => {
             if (event.key !== 'Enter' || event.nativeEvent.isComposing) return;
             const parsed = Number.parseFloat(event.currentTarget.value);
-            if (!Number.isFinite(parsed) || parsed < 0) return;
+            if (!Number.isFinite(parsed) || parsed < minimum) return;
             event.preventDefault();
             onDemoCommit?.(scaledInputToStoredFraction(event.currentTarget.value, scale));
           }}

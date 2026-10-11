@@ -3204,6 +3204,55 @@ section.block:first-of-type { border-top: none; }
   font-weight: 700;
 }
 
+/* A changed setting past the selected model's lender limit runs at that limit. It is flagged in amber
+   beside the change count, on the field and on the review, but never blocks the run. */
+.scenario-policy-accordion > summary > span:first-child {
+  margin-right: auto;
+}
+
+.scenario-accordion-cap-count {
+  color: #92400e;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.scenario-policy-cap-warning {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border-left: 3px solid #b45309;
+  border-radius: 0.4rem;
+  background: #fef6e7;
+  color: var(--text);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.scenario-policy-year-note {
+  max-width: 40rem;
+  font-size: 0.78rem;
+}
+
+.scenario-lender-cap-review p {
+  margin: 0;
+}
+
+.scenario-lender-cap-review ul {
+  margin: 0.35rem 0;
+  padding-left: 1.1rem;
+}
+
+.scenario-policy-review-group small.scenario-policy-review-cap {
+  color: #92400e;
+  font-weight: 700;
+}
+
+/* Results: a recorded setting that ran at its model's lender limit rather than as entered. */
+.policy-ran-as {
+  color: #92400e;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .scenario-policy-accordion-content {
   display: grid;
   gap: 0.75rem;

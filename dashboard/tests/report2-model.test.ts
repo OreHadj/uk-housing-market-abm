@@ -11,6 +11,7 @@ import {
   getReport2LoanMean,
   getReport2Points,
   getReport2PrivateRentingShare,
+  getReport2SeedVolatility,
   getReport2TailShare,
   getReport2Volatility
 } from '../src/pages/report2/report2Model';
@@ -43,6 +44,21 @@ assert.equal(getReport2Volatility([
   ...points, { modelTime: 503, value: Number.NaN }, { modelTime: 504, value: Infinity },
   { modelTime: Number.NaN, value: 200 }
 ]), 10, 'Invalid observations must not become zero-valued observations');
+
+const volatilityPayload: ResultsComparePayload = {
+  ...payload,
+  indicatorIds: ['core_housePriceGrowth'],
+  indicators: [{
+    indicator: { id: 'core_housePriceGrowth', title: 'House price growth', units: '%', description: '', source: 'core_indicator', scaling: 'none' },
+    seriesByRun: [{ runId: 'policy', points }]
+  }],
+  seedVolatilityByRun: [{ runId: 'policy', values: [{ indicatorId: 'core_housePriceGrowth', value: 2.5, basis: 'per_seed', seedCount: 8 }] }]
+};
+assert.deepEqual(getReport2SeedVolatility(volatilityPayload, 'policy', 'core_housePriceGrowth'), { value: 2.5, basis: 'per_seed' },
+  'The server’s per-seed value is used, not the seed-averaged path');
+assert.deepEqual(getReport2SeedVolatility({ ...volatilityPayload, seedVolatilityByRun: undefined }, 'policy', 'core_housePriceGrowth'),
+  { value: 10, basis: 'seed_mean' }, 'Older payloads fall back to the seed-averaged path and say so');
+assert.deepEqual(getReport2SeedVolatility(null, 'policy', 'core_housePriceGrowth'), { value: null, basis: 'seed_mean' });
 
 const summary = (borrowerType: LendingSummaryStats['borrowerType'], count: number, meanLtv: number | null, meanLti: number | null): LendingSummaryStats => ({
   borrowerType, count, meanLtv, meanLti, medianLtv: null, medianLti: null, meanDsti: null, meanPriceToIncome: null, meanIcr: null

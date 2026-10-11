@@ -5,6 +5,7 @@ import type {
 } from '../../../../shared/types';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { getBasePolicyOption, summariseRunPolicy } from '../../../../shared/policyCatalogue';
+import { describeRanAs, formatLenderLimit } from '../../../../shared/lenderLimits';
 import { POLICY_SETTING_GROUPS } from '../../../lib/manualScenarioPolicy';
 import { extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName, getModelAnchor } from '../../../lib/modelAnchors';
@@ -220,6 +221,11 @@ export function FullRunDetailsDialog({ run, onClose }: FullRunDetailsDialogProps
                               </span>
                               {changed && deviation && display && (
                                 <small>Reference: {formatPolicyValue(deviation.baseValue, display.unit)}</small>
+                              )}
+                              {changed && setting.ranAs !== undefined && (
+                                <small className="scenario-policy-review-cap" title={describeRanAs(key, setting.ranAs)}>
+                                  Ran as {formatLenderLimit(key, setting.ranAs)}
+                                </small>
                               )}
                             </dd>
                           </div>

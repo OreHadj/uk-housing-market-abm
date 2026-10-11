@@ -4,6 +4,7 @@ import { getBasePolicyOption, summariseRunPolicy } from '../../../../shared/poli
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { EChart } from '../../../components/EChart';
 import { LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
+import { PolicyRanAs } from '../../../components/PolicyRanAs';
 import { formatKpiComparisonDelta, formatKpiValue, getPolicySettingDifferences } from '../../../lib/manualResultsView';
 import { buildPolicyReportChartOption, getPolicyReportCoverage, POLICY_REPORT_INDICATORS } from '../../../lib/policyReport';
 
@@ -25,6 +26,7 @@ export function PolicyReportContext({ primary, comparison, comparisonRunId }: {
     ? Object.entries(basePolicy.values).map(([key, value]) => ({ key, value })) : []);
   const differences = comparisonRunId && !comparison ? [] : getPolicySettingDifferences(primary.policySettings, reference);
   const referenceLabel = comparison ? runName(comparison) : basePolicy?.title;
+  const ranAsByKey = new Map(primary.policySettings.map((setting) => [setting.key, setting.ranAs]));
 
   return (
     <section className="policy-report-context" aria-label="Policy report context">
@@ -46,7 +48,7 @@ export function PolicyReportContext({ primary, comparison, comparisonRunId }: {
                 return (
                   <div key={difference.key}>
                     <dt>{display?.label ?? difference.key}</dt>
-                    <dd><strong>{format(difference.primaryValue)}</strong><span> compared with {format(difference.comparisonValue)}</span></dd>
+                    <dd><strong>{format(difference.primaryValue)}</strong><PolicyRanAs settingKey={difference.key} ranAs={ranAsByKey.get(difference.key)} /><span> compared with {format(difference.comparisonValue)}</span></dd>
                   </div>
                 );
               })}

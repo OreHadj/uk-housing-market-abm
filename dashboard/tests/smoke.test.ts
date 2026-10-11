@@ -9277,7 +9277,7 @@ assert.ok(
 );
 assert.ok(
   manualResultsViewSource.includes(
-    'No baseline run exists with the same seeds, steps, and calibration model.'
+    'No baseline run exists with the same seeds, steps and housing calibration (UK households and dwellings).'
   ) &&
     manualResultsViewSource.includes('For a better comparison, we suggest using') &&
     manualResultsViewSource.includes('matchingBaselineDraft.calibratedModel') &&

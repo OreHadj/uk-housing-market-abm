@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEMO_EXAMPLE_IDS, DEMO_EXAMPLE_SET_VERSION, DEMO_MODEL_VERSION } from '../shared/demoExamples';
-import { DEMO_EXAMPLE_MARKER, isInstalledDemoExample, seedDemoExamples } from '../server/lib/demoExamples';
+import { DEMO_EXAMPLE_MARKER, DEMO_EXAMPLE_SEED_FILE_NAMES, isInstalledDemoExample, seedDemoExamples } from '../server/lib/demoExamples';
 import { createDevelopmentRuntimePaths, createDesktopRuntimePaths, createRuntimePathsFromEnv } from '../server/lib/runtimePaths';
 import { getModelRunOptions } from '../server/lib/modelRuns';
 import { getResultsRunDetail, getResultsRuns } from '../server/lib/results';
@@ -34,15 +34,24 @@ try {
   assert.equal(index.exampleSetVersion, DEMO_EXAMPLE_SET_VERSION);
   assert.deepEqual(index.examples.map((entry: { id: string }) => entry.id).sort(), Object.values(DEMO_EXAMPLE_IDS).sort());
   let size = 0;
+  let seedFileCount = 0;
   for (const entry of fs.readdirSync(paths.demoExamplesRoot, { recursive: true, withFileTypes: true })) {
     assert(!entry.isSymbolicLink());
-    assert(!['seeds', '.dashboard-managed-run.json'].includes(entry.name));
+    assert.notEqual(entry.name, '.dashboard-managed-run.json');
     if (!entry.isFile()) continue;
     const file = path.join(entry.parentPath, entry.name);
+    const parts = path.relative(paths.demoExamplesRoot, file).split(path.sep);
+    if (parts.includes('seeds')) {
+      // Only each seed's growth series, which the Report's per-seed volatility reads.
+      assert.match(parts[parts.length - 2], /^seed-\d+$/, `Seed file outside a seed folder: ${file}`);
+      assert(DEMO_EXAMPLE_SEED_FILE_NAMES.has(entry.name), `Uncurated seed file: ${file}`);
+      seedFileCount += 1;
+    }
     size += fs.statSync(file).size;
     assert(!/\/(?:Users|home)\/|[A-Za-z]:\\(?:Users|Documents)/.test(fs.readFileSync(file, 'utf8')), `Personal path in ${file}`);
   }
   assert(size > 0 && size < 10_000_000, `Example bundle must remain under 10 MB: ${size}`);
+  assert.equal(seedFileCount, 2 * 8 * DEMO_EXAMPLE_SEED_FILE_NAMES.size, 'Both policy examples carry every seed’s growth series');
   const first = seedDemoExamples(paths);
   assert.equal(first.installed.length, 3);
   assert.equal(seedDemoExamples(paths).installed.length, 0);

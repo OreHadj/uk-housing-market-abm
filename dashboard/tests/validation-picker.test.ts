@@ -86,7 +86,8 @@ assert.ok(singleMarkup.includes('>2011 reference evidence</option>'));
 const referenceMarkup = renderValidation('/validation?version=v0o7&evidenceYear=2011');
 assert.ok(
   referenceMarkup.includes('<strong>2011 reference evidence overlay</strong>') &&
-    referenceMarkup.includes('historical reference view'),
+    referenceMarkup.includes('historical reference view') &&
+    referenceMarkup.includes('Only models with 2011 evidence are listed below'),
   'The 2011 choice should be clearly identified as a reference evidence overlay'
 );
 

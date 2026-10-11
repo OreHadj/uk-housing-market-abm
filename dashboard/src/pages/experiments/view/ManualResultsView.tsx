@@ -17,6 +17,7 @@ import type {
 import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
 import { LoadingSkeleton, LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
+import { PolicyRanAs } from '../../../components/PolicyRanAs';
 import { ManualSelectionStatusPills } from '../../../components/ManualSelectionStatusPills';
 import {
   API_RETRY_DELAY_MS,
@@ -1529,7 +1530,7 @@ export function ManualResultsView({
                     <div className="comparison-create-baseline-message">
                       <p>
                         <strong>
-                          No baseline run exists with the same seeds, steps, and calibration model.
+                          No baseline run exists with the same seeds, steps and housing calibration (UK households and dwellings).
                         </strong>{' '}
                         {matchingBaselineDraft && matchingBaselineSteps !== null && matchingBaselineSeeds !== null
                           ? `For a better comparison, we suggest using “${formatModelOptionLabel(matchingBaselineDraft.calibratedModel)}” with ${formatWholeNumber(matchingBaselineSteps)} steps and ${formatWholeNumber(matchingBaselineSeeds)} ${matchingBaselineSeeds === 1 ? 'seed' : 'seeds'}.`
@@ -1591,9 +1592,10 @@ export function ManualResultsView({
                           const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
                           const format = (value: number) =>
                             display ? formatPolicyValue(value, display.unit) : String(value);
-                          const comparisonValue = comparisonDetail?.policySettings.find(
+                          const comparisonSetting = comparisonDetail?.policySettings.find(
                             (item) => item.key === setting.key
-                          )?.value;
+                          );
+                          const comparisonValue = comparisonSetting?.value;
                           const differs = changedPolicyKeys.has(setting.key);
                           return (
                             <tr key={setting.key} className={differs ? 'policy-settings-row-changed' : undefined}>
@@ -1601,9 +1603,15 @@ export function ManualResultsView({
                                 {display?.label ?? setting.key}
                                 {differs && <span className="policy-settings-changed-chip">changed</span>}
                               </th>
-                              <td>{format(setting.value)}</td>
+                              <td>
+                                {format(setting.value)}
+                                {differs && <PolicyRanAs settingKey={setting.key} ranAs={setting.ranAs} />}
+                              </td>
                               {comparisonDetail && (
-                                <td>{comparisonValue === undefined ? 'Not recorded' : format(comparisonValue)}</td>
+                                <td>
+                                  {comparisonValue === undefined ? 'Not recorded' : format(comparisonValue)}
+                                  {differs && <PolicyRanAs settingKey={setting.key} ranAs={comparisonSetting?.ranAs} />}
+                                </td>
                               )}
                             </tr>
                           );
@@ -2188,6 +2196,7 @@ export function ManualResultsView({
                                     <dt>{display?.label ?? setting.key}</dt>
                                     <dd>
                                       {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
+                                      {isChanged && <PolicyRanAs settingKey={setting.key} ranAs={setting.ranAs} />}
                                     </dd>
                                   </div>
                                 );

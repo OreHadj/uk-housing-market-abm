@@ -19,7 +19,7 @@ export function Report2ComparisonAction({ primary, comparison, runs, canWrite, o
   if (matched) {
     if (!comparison || isMatchedManualBaselineRun(primary, comparison)) return null;
     return <aside className="r2-comparison-action" aria-label="Matching baseline">
-      <div><strong>A matching baseline is available.</strong><p>{matched.title?.trim() || matched.runId}</p></div>
+      <div><strong>A baseline with the same duration, seeds and housing calibration is available.</strong><p>{matched.title?.trim() || matched.runId}</p></div>
       <button type="button" onClick={() => onUse(matched.runId)}>Use matching run</button>
     </aside>;
   }
