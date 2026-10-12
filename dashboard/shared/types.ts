@@ -1065,6 +1065,8 @@ export interface ModelRunOptionsPayload {
   sensitivityPolicyPackages: SensitivityPolicyPackageDefinition[];
   /** The requested baseline's own lender limits, keyed by the policy setting each one caps. */
   lenderLimits?: Partial<Record<string, number>>;
+  /** Every model's lender limits, so a capped setting can name the models where it would apply. */
+  lenderLimitsByVersion?: Record<string, Partial<Record<string, number>>>;
 }
 
 export interface ModelRunSubmitRequest {

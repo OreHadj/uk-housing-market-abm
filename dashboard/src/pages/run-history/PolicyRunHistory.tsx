@@ -15,7 +15,7 @@ import { findMatchedManualBaselineRun } from '../../lib/manualResultsView';
 import { isPracticeRunTitle, runNameMatches } from '../../lib/runSearch';
 import { buildRunReportHref } from '../../lib/workspaceNavigation';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
-import { RunHistoryCheckbox, RunHistorySelectionToolbar } from '../experiments/view/RunHistorySelection';
+import { RunHistoryCheckbox, RunHistoryDeleteButton, RunHistorySelectionToolbar } from '../experiments/view/RunHistorySelection';
 import { useRunHistoryDeletion } from '../experiments/view/useRunHistoryDeletion';
 import { noRunsMatchMessage, RunHistoryGroup, RunHistorySearch } from './RunHistorySearch';
 import { RunRenameForm, useRunRename } from './RunRename';
@@ -28,6 +28,7 @@ import {
   resultsRunStatusClass as statusClass
 } from './runHistoryDisplay';
 import { useRunHistorySearch } from './useRunHistorySearch';
+import { useRunPreview } from './useRunPreview';
 
 function isActiveJob(status: ModelRunJobStatus): boolean {
   return status === 'queued' || status === 'running';
@@ -46,9 +47,6 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
   const [runJobs, setRunJobs] = useState<ModelRunJob[]>([]);
   const [isLoadingRuns, setIsLoadingRuns] = useState(true);
   const [loadError, setLoadError] = useState('');
-  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
-  // keyboard, and cleared when the pointer leaves the list so it falls back to the newest run.
-  const [previewRunId, setPreviewRunId] = useState('');
   const removedRunIds = useRef(new Set<string>());
   // The list is slow to build in production, so a response that arrives after leaving is dropped.
   const mounted = useRef(true);
@@ -146,6 +144,7 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
   const search = useRunHistorySearch(historyRuns);
   const failedMatches = failedHistoryJobs.filter((job) => runNameMatches(job.title || job.runId || job.jobId, search.query));
   const shownRuns = search.shown.map((entry) => entry.run);
+  const preview = useRunPreview(shownRuns.map((run) => run.runId));
   const runById = new Map(historyRuns.map((entry) => [entry.run.runId, entry.run]));
   const rename = useRunRename({ rename: renameResultsRun, onRenamed: loadRuns, onError: setLoadError });
 
@@ -161,7 +160,7 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
       const deletedIds = new Set(deletedRunIds);
       for (const runId of deletedIds) removedRunIds.current.add(runId);
       setRuns((current) => current.filter((run) => !deletedIds.has(run.runId)));
-      setPreviewRunId((current) => deletedIds.has(current) ? '' : current);
+      preview.forget(deletedIds);
       rename.forget(deletedIds);
       await loadRuns();
     }
@@ -177,9 +176,14 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
     return (
       <li
         key={run.runId}
-        className={['run-item', previewRunId === run.runId ? 'is-previewed' : ''].filter(Boolean).join(' ')}
-        onMouseEnter={() => setPreviewRunId(run.runId)}
-        onFocus={() => setPreviewRunId(run.runId)}
+        className={[
+          'run-item',
+          preview.highlightedId === run.runId ? 'is-previewed' : '',
+          preview.selectedId === run.runId ? 'focused' : ''
+        ].filter(Boolean).join(' ')}
+        onMouseEnter={() => preview.hover(run.runId)}
+        onFocus={() => preview.hover(run.runId)}
+        onClick={(event) => preview.clickCard(event, run.runId)}
       >
         <div className="run-item-head">
           {canDeleteResults && (
@@ -216,12 +220,19 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
 
         <div className="run-meta">
           <span className={statusClass(run.status)}>{run.status}</span>
+          {canDeleteResults && !deleteDisabledReason && rename.renamingId !== run.runId && (
+            <RunHistoryDeleteButton
+              label={getRunPrimaryLabel(run)}
+              disabled={historyDeletion.isDeleting}
+              onDelete={() => void historyDeletion.deleteOne(run.runId)}
+            />
+          )}
         </div>
       </li>
     );
   };
 
-  const detailRun = runById.get(previewRunId) ?? shownRuns[0] ?? null;
+  const detailRun = runById.get(preview.detailId) ?? null;
   const detailPolicy = detailRun ? describeRunPolicy(detailRun) : null;
   const showRunsSkeleton = isLoadingRuns && runs.length === 0;
   const showRunsRefreshing = isLoadingRuns && runs.length > 0;
@@ -253,7 +264,7 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
       ) : search.matchCount + failedMatches.length === 0 ? (
         <p className="info-banner">{noRunsMatchMessage(search.query)}</p>
       ) : search.matchCount > 0 && (
-        <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
+        <div className="run-history-split" onMouseLeave={preview.clearHover}>
           <ul className="run-list">
             {search.groups.main.map((entry) => renderRun(entry.run))}
             <RunHistoryGroup
@@ -278,7 +289,9 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
           {detailRun && (
             <div className="run-history-preview" aria-live="polite">
               <p className="run-history-preview-eyebrow">
-                {previewRunId === detailRun.runId ? 'Hovered run' : search.query.trim() ? 'Newest match' : 'Newest run'}
+                {preview.selectedId === detailRun.runId ? 'Selected run'
+                  : preview.highlightedId === detailRun.runId ? 'Hovered run'
+                    : search.query.trim() ? 'Newest match' : 'Newest run'}
               </p>
               <h4>{getRunPrimaryLabel(detailRun)}</h4>
               <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>

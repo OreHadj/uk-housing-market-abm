@@ -1289,10 +1289,13 @@ export function ValidationPage({
       const metric = overview?.selectedSummary?.metrics.find((item) => item.metricId === pendingMetricDiagnosticId);
       if (metric) setActiveValidationDetail({ metric, trigger, showBandNote: !overview?.comparisonSummary });
     } else if (pendingMetricDiagnosticOpenDetails && trigger.getAttribute('aria-expanded') !== 'true') trigger.click();
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      row.scrollIntoView({ behavior: 'instant', block: 'center' });
-    } else {
-      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // The guide scrolls its own highlight into place; centring the row here would undo that.
+    if (!isModelInformationDemo) {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        row.scrollIntoView({ behavior: 'instant', block: 'center' });
+      } else {
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
     trigger.focus({ preventScroll: true });
   }, [isOutcomeComparisonsOpen, openValidationMetricIds, openValidationThemeIds, pendingMetricDiagnosticId, pendingMetricDiagnosticOpenDetails, isModelInformationDemo, modelInformationStep, overview]);

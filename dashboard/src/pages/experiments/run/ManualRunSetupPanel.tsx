@@ -39,6 +39,7 @@ export function ManualRunSetupPanel({
       onBasePolicyChange={controller.setBasePolicy}
       snapshots={controller.options?.snapshots ?? []}
       lenderLimits={controller.options?.lenderLimits}
+      lenderLimitsByVersion={controller.options?.lenderLimitsByVersion}
       title={controller.title}
       onTitleChange={controller.setTitle}
       parameters={controller.options?.parameters ?? []}

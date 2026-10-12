@@ -274,7 +274,7 @@ const lenderLimits = {
   CENTRAL_BANK_AFFORDABILITY_HARD_MAX: 0.4,
   CENTRAL_BANK_ICR_HARD_MIN: 1.25
 };
-const lenderCapNote = 'Runs as 85%. Lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value';
+const lenderCapNote = 'Runs as 85%. Lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value, so only limits below 85% make a difference here.';
 const cappedProps = {
   ...commonProps,
   lenderLimits,
@@ -310,7 +310,7 @@ const icrMarkup = renderToStaticMarkup(
   }))
 );
 assert.ok(
-  icrMarkup.includes('Runs as 1.25×, like the 0× reference: lenders in the Refitted 2024 model already require'),
+  icrMarkup.includes('No effect in this model. Its lenders already require buy-to-let rent to cover at least 1.25× the mortgage interest, so both 1× and the 0× reference run as 1.25×.'),
   'The ICR floor is flagged below the lenders’ floor, which the 2024 reference’s 0 floor also runs at'
 );
 const tighterMarkup = renderToStaticMarkup(
@@ -344,8 +344,24 @@ assert.ok(
   'A model paired with the other year’s policy should say so'
 );
 assert.ok(
-  mismatchedMarkup.includes('Runs as 90%, like the 95% reference: lenders in the Refitted 2011 model never lend home movers more than 90% of the property value.'),
-  'A changed value should explain that the reference runs at the same limit'
+  mismatchedMarkup.includes('No effect in this model. Its lenders never lend home movers more than 90% of the property value, so both 100% and the 95% reference run as 90%.'),
+  'A changed value whose reference runs at the same limit should say the change has no effect'
+);
+// An unchanged reference value past the limit is flagged too, in one sentence.
+const refitted2024: ModelRunSnapshotOption = { version: 'v5o3', status: 'stable', evidenceYear: 2024, outputCalibrated: true };
+const unchangedMarkup = renderToStaticMarkup(
+  createElement(MemoryRouter, null, createElement(ManualRunSetupCard, {
+    ...commonProps,
+    selectedBaseline: refitted2011.version,
+    snapshots: [refitted2011, refitted2024],
+    lenderLimits: { CENTRAL_BANK_LTV_HARD_MAX_BTL: 0.75 },
+    lenderLimitsByVersion: { v0o7: { CENTRAL_BANK_LTV_HARD_MAX_BTL: 0.75 }, v5o3: { CENTRAL_BANK_LTV_HARD_MAX_BTL: 0.85 } },
+    initialStep: 2
+  }))
+);
+assert.ok(
+  unchangedMarkup.includes('Runs as 75%: lenders in the Refitted 2011 model never lend buy-to-let landlords more than 75% of the property value.</p>'),
+  'The 2024 policy’s unchanged 85% buy-to-let limit runs as 75% on a 2011 model, said in one sentence'
 );
 
 console.log('Policy wizard tests passed.');

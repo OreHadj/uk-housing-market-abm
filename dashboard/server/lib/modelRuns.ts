@@ -1391,7 +1391,10 @@ export function getModelRunOptions(
     basePolicies: BASE_POLICY_OPTIONS,
     defaultBasePolicy: getDefaultBasePolicyId(baseline),
     sensitivityPolicyPackages: getSensitivityPolicyPackagesForParameters(parameters),
-    lenderLimits: getLenderLimitsForBaseline(paths, baseline)
+    lenderLimits: getLenderLimitsForBaseline(paths, baseline),
+    lenderLimitsByVersion: Object.fromEntries(snapshots
+      .filter((snapshot) => fs.existsSync(getBaselineConfigPath(paths, snapshot.version)))
+      .map((snapshot) => [snapshot.version, getLenderLimitsForBaseline(paths, snapshot.version)]))
   };
 }
 

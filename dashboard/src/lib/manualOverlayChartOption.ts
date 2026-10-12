@@ -13,8 +13,8 @@ function formatOverlayValue(value: number, units: string): string {
   if (units === 'GBP') {
     return `£${value.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`;
   }
-  if (units === '%' || units === 'rate') {
-    return value.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+  if (units === '%') {
+    return `${value.toLocaleString('en-GB', { maximumFractionDigits: 2 })}%`;
   }
   if (units === 'count' || units === 'count/month') {
     return value.toLocaleString('en-GB', { maximumFractionDigits: 0 });
@@ -60,13 +60,23 @@ export function buildManualOverlayOption(
   comparisonRunId: string,
   selectedSeries?: Record<string, boolean>
 ): EChartsOption {
-  const xValues = indicatorPayload.seriesByRun[0]?.points.map((point) => String(point.modelTime)) ?? [];
-  const yValues = indicatorPayload.seriesByRun.flatMap((runSeries) =>
+  // A 'rate' (the mortgage interest rate) is stored as a fraction. Plot it in percent, as the
+  // results table shows it, so a one-point gap does not round away in the tooltip.
+  const isRate = indicatorPayload.indicator.units === 'rate';
+  const displayUnits = isRate ? '%' : indicatorPayload.indicator.units;
+  const displaySeriesByRun = indicatorPayload.seriesByRun.map((runSeries) => ({
+    ...runSeries,
+    points: isRate
+      ? runSeries.points.map((point) => ({ ...point, value: point.value === null ? null : point.value * 100 }))
+      : runSeries.points
+  }));
+  const xValues = displaySeriesByRun[0]?.points.map((point) => String(point.modelTime)) ?? [];
+  const yValues = displaySeriesByRun.flatMap((runSeries) =>
     runSeries.points.map((point) => point.value)
   );
   const meanBySeriesName = new Map<string, number>();
 
-  const series = indicatorPayload.seriesByRun.map((runSeries) => {
+  const series = displaySeriesByRun.map((runSeries) => {
     const color = getRunColor(runSeries.runId, baselineRunId, comparisonRunId);
     const label = getRunRoleLabel(runSeries.runId, baselineRunId, comparisonRunId);
     const mean = computeVisibleMean(runSeries.points);
@@ -120,7 +130,7 @@ export function buildManualOverlayOption(
           marker: string;
           value: number | null;
         }[];
-        const units = indicatorPayload.indicator.units;
+        const units = displayUnits;
         const header = `<div style="margin-bottom:4px;font-weight:600">Month ${items[0]?.axisValueLabel ?? ''}</div>`;
         const lines: string[] = [];
         for (const item of items) {
@@ -166,7 +176,7 @@ export function buildManualOverlayOption(
     },
     yAxis: {
       type: 'value',
-      name: indicatorPayload.indicator.units,
+      name: displayUnits,
       nameLocation: 'middle',
       nameGap: resultsValueAxisNameGap(yValues),
       nameTextStyle: {

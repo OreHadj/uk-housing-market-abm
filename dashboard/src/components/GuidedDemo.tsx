@@ -105,7 +105,7 @@ export function GuidedDemo() {
   const evidenceAvailability = modelContext.identity === identity ? modelContext.availability : 'loading';
   const currentAvailability = isModelInformation ? evidenceAvailability : needsExamples ? availability : 'ready';
   return <GuidedTourOverlay
-    demoLabel={isModelInformation ? evidenceLabel : state.definition.label} step={step}
+    demoLabel={state.definition.label} step={step}
     stepIndex={Math.min(index, state.definition.steps.length - 1)} stepCount={state.definition.steps.length}
     isComplete={completed && !finishOnPage || (completion?.kind === 'selector' ? domComplete : isGuidedActionComplete(completion, search))}
     availability={currentAvailability}

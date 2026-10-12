@@ -1134,6 +1134,43 @@ section.block:first-of-type { border-top: none; }
   outline-offset: 3px;
 }
 
+/* One run's delete button, bottom right of its card. Quiet until hovered, then in the colours of
+   "Delete selected". The negative margin keeps the status row its usual height. */
+.run-history-delete {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.3rem -0.2rem -0.3rem auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.run-history-delete:hover:not(:disabled) {
+  color: #c92a2a;
+  background: #fff5f5;
+}
+
+.run-history-delete:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.run-history-delete:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.run-history-delete svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 .run-history-selection-count {
   color: var(--muted);
   font-size: 0.82rem;
@@ -1474,10 +1511,15 @@ section.block:first-of-type { border-top: none; }
   gap: 1rem;
 }
 
-/* The row the detail panel is currently describing. */
+/* The row the detail panel is currently describing. A clicked row also carries `.focused`, so its
+   ring shows that the panel stays on it. */
 .run-item.is-previewed {
   border-color: var(--accent);
   background: rgba(11, 114, 133, 0.04);
+}
+
+.run-history-split .run-item {
+  cursor: pointer;
 }
 
 @media (max-width: 900px) {
@@ -3468,11 +3510,13 @@ a.run-select-btn {
   font-weight: 700;
 }
 
-/* Results: a recorded setting that ran at its model's lender limit rather than as entered. */
+/* Results: a recorded setting that ran at its model's lender limit rather than as entered. In a
+   narrow box the note moves to its own line as a whole, and breaks inside only if even that line is
+   too narrow, so it never runs past the box's edge. */
 .policy-ran-as {
+  display: inline-block;
   color: #92400e;
   font-weight: 600;
-  white-space: nowrap;
 }
 
 .scenario-policy-accordion-content {

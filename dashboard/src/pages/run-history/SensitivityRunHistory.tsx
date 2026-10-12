@@ -11,7 +11,7 @@ import {
 import { formatModelOptionLabel } from '../../lib/modelAnchors';
 import { isPracticeRunTitle } from '../../lib/runSearch';
 import { buildRunReportHref } from '../../lib/workspaceNavigation';
-import { RunHistoryCheckbox, RunHistorySelectionToolbar } from '../experiments/view/RunHistorySelection';
+import { RunHistoryCheckbox, RunHistoryDeleteButton, RunHistorySelectionToolbar } from '../experiments/view/RunHistorySelection';
 import { useRunHistoryDeletion } from '../experiments/view/useRunHistoryDeletion';
 import { noRunsMatchMessage, RunHistoryGroup, RunHistorySearch } from './RunHistorySearch';
 import { RunRenameForm, useRunRename } from './RunRename';
@@ -23,6 +23,7 @@ import {
   sensitivityStatusClass as statusClass
 } from './runHistoryDisplay';
 import { useRunHistorySearch } from './useRunHistorySearch';
+import { useRunPreview } from './useRunPreview';
 
 /** Every finished sensitivity analysis, for opening, renaming and deleting. */
 export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyRequired }: {
@@ -33,7 +34,6 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
   const [experiments, setExperiments] = useState<SensitivityExperimentSummary[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [pageError, setPageError] = useState('');
-  const [previewExperimentId, setPreviewExperimentId] = useState('');
   const removedExperimentIds = useRef(new Set<string>());
   const mounted = useRef(true);
   useEffect(() => {
@@ -85,6 +85,7 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
   const search = useRunHistorySearch(historyExperiments);
   const rename = useRunRename({ rename: renameSensitivityExperiment, onRenamed: refreshHistory, onError: setPageError });
   const shown = search.shown.map((entry) => entry.experiment);
+  const preview = useRunPreview(shown.map((experiment) => experiment.experimentId));
   // "Select all shown" and deleting only ever reach analyses that are visible in the list.
   const historyDeletion = useRunHistoryDeletion({
     items: shown.filter((experiment) => !experiment.isExample).map((experiment) => ({
@@ -98,7 +99,7 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
       const deletedIds = new Set(ids);
       for (const id of ids) removedExperimentIds.current.add(id);
       setExperiments((current) => current.filter((experiment) => !deletedIds.has(experiment.experimentId)));
-      setPreviewExperimentId((current) => deletedIds.has(current) ? '' : current);
+      preview.forget(deletedIds);
       rename.forget(deletedIds);
       await refreshHistory();
     }
@@ -109,9 +110,14 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
     return (
       <li
         key={experiment.experimentId}
-        className={['run-item', previewExperimentId === experiment.experimentId ? 'is-previewed' : ''].filter(Boolean).join(' ')}
-        onMouseEnter={() => setPreviewExperimentId(experiment.experimentId)}
-        onFocus={() => setPreviewExperimentId(experiment.experimentId)}
+        className={[
+          'run-item',
+          preview.highlightedId === experiment.experimentId ? 'is-previewed' : '',
+          preview.selectedId === experiment.experimentId ? 'focused' : ''
+        ].filter(Boolean).join(' ')}
+        onMouseEnter={() => preview.hover(experiment.experimentId)}
+        onFocus={() => preview.hover(experiment.experimentId)}
+        onClick={(event) => preview.clickCard(event, experiment.experimentId)}
       >
         <div className="run-item-head">
           {canDeleteResults && (
@@ -144,12 +150,19 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
         <div className="run-meta">
           <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
           {experiment.isExample && <span>Example</span>}
+          {canDeleteResults && !experiment.isExample && rename.renamingId !== experiment.experimentId && (
+            <RunHistoryDeleteButton
+              label={label}
+              disabled={historyDeletion.isDeleting}
+              onDelete={() => void historyDeletion.deleteOne(experiment.experimentId)}
+            />
+          )}
         </div>
       </li>
     );
   };
 
-  const previewExperiment = shown.find((experiment) => experiment.experimentId === previewExperimentId) ?? shown[0] ?? null;
+  const previewExperiment = shown.find((experiment) => experiment.experimentId === preview.detailId) ?? null;
 
   return (
     <article className="results-card run-history-card sensitivity-run-history-card">
@@ -171,7 +184,7 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
       ) : search.matchCount === 0 ? (
         <p className="info-banner">{noRunsMatchMessage(search.query)}</p>
       ) : (
-        <div className="run-history-split" onMouseLeave={() => setPreviewExperimentId('')}>
+        <div className="run-history-split" onMouseLeave={preview.clearHover}>
           <ul className="run-list">
             {search.groups.main.map((entry) => renderExperiment(entry.experiment))}
             <RunHistoryGroup
@@ -196,8 +209,9 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
           {previewExperiment && (
             <div className="run-history-preview" aria-live="polite">
               <p className="run-history-preview-eyebrow">
-                {previewExperimentId === previewExperiment.experimentId ? 'Previewed run'
-                  : search.query.trim() ? 'Newest match' : 'Latest finished run'}
+                {preview.selectedId === previewExperiment.experimentId ? 'Selected run'
+                  : preview.highlightedId === previewExperiment.experimentId ? 'Previewed run'
+                    : search.query.trim() ? 'Newest match' : 'Latest finished run'}
               </p>
               <h4>{previewExperiment.title || previewExperiment.experimentId}</h4>
               <p className="run-item-id"><strong>Run ID:</strong> {previewExperiment.experimentId}</p>

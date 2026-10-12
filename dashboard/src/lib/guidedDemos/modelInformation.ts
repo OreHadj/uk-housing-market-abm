@@ -9,6 +9,14 @@ const stop = (id: string, view: 'calibration' | 'validation', title: string, tar
   ...extra
 });
 
+// Like the other results demos: highlight the whole table box (a row overflows its sideways
+// scroll), and move the one highlight to Details while it is open.
+const details = '[data-guided-target="validation-metric-details"]';
+const outcomeTarget = [
+  `body:has(${details}) ${details}`,
+  `body:not(:has(${details})) .validation-table-scroll:has([data-model-information-target="validation-outcome"])`
+].join(', ');
+
 export const MODEL_INFORMATION_DEMO: GuidedDemoDefinition = {
   id: MODEL_INFORMATION_DEMO_ID,
   label: 'Calibration and validation',
@@ -18,7 +26,7 @@ export const MODEL_INFORMATION_DEMO: GuidedDemoDefinition = {
   requiredRunIds: [],
   requiredExperimentIds: [],
   steps: [
-    stop('model-setup', 'calibration', 'Understand the model setup', '[data-calibration-demo-target="calibration-primary-model"]', [
+    stop('model-setup', 'calibration', 'Understand the model setup', '[data-calibration-demo-target="calibration-primary-model"] .validation-model-options', [
       'Calibration explains how the selected model was configured.',
       'Follow the same model from its inputs to its results.'
     ]),
@@ -38,14 +46,11 @@ export const MODEL_INFORMATION_DEMO: GuidedDemoDefinition = {
       'You’ve seen the model’s inputs. Now compare its outputs with the selected year’s evidence.',
       'Fit statuses reflect target gaps and consistency across repeated simulations.'
     ]),
-    stop('validation-outcome', 'validation', 'Read one outcome', '[data-model-information-target="validation-outcome"]', [
+    stop('validation-outcome', 'validation', 'Read one outcome', outcomeTarget, [
       'Compare the simulated average with the evidence target and target band.',
       'Seeds in band shows consistency across repeated simulations.',
       'Details contains the supporting sources and scoring notes for this outcome.'
-    ], {
-      interactive: true,
-      additionalInteractiveTargets: ['[data-model-information-target="validation-sources"]']
-    })
+    ], { interactive: true, scrollOnEnter: 'start' })
   ],
   completion: { title: 'Ready to explore model information', body: '', bullets: ['Explore the model settings and their fit to evidence.'] }
 };

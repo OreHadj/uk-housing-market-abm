@@ -48,15 +48,15 @@ export function useRunHistoryDeletion(options: RunHistoryDeletionOptions) {
     if (busy.current || !canDelete) return;
     setCheckedIds(checked ? new Set(eligibleIds) : new Set());
   };
-  const deleteSelected = async () => {
-    if (busy.current || !canDelete || !selectedIds.size) return;
+  const deleteIds = async (ids: ReadonlySet<string>) => {
+    if (busy.current || !canDelete || !ids.size) return;
     busy.current = true;
     setIsDeleting(true);
     setError('');
     try {
       const result = await deleteRunHistorySelection({
         ...latest.current,
-        selectedIds,
+        selectedIds: ids,
         confirm: (message) => window.confirm(message),
         promptDeleteKey: () => window.prompt('Enter the private delete key to delete remote experiment results.'),
         canDeleteItem: (id) => latest.current.canDelete && latest.current.items.some((item) => item.id === id)
@@ -82,12 +82,17 @@ export function useRunHistoryDeletion(options: RunHistoryDeletionOptions) {
       if (mounted.current) setIsDeleting(false);
     }
   };
+  const deleteSelected = () => deleteIds(selectedIds);
+  // A card's own delete button: the same confirmation and checks, for that run alone.
+  const deleteOne = async (id: string) => {
+    if (eligibleIds.has(id)) await deleteIds(new Set([id]));
+  };
 
   return {
     selectedIds, selectedCount: selectedIds.size, selectableCount: eligibleIds.size,
     allSelected: eligibleIds.size > 0 && selectedIds.size === eligibleIds.size,
     someSelected: selectedIds.size > 0 && selectedIds.size < eligibleIds.size,
-    isDeleting, error, toggle, selectAll, deleteSelected
+    isDeleting, error, toggle, selectAll, deleteSelected, deleteOne
   };
 }
 

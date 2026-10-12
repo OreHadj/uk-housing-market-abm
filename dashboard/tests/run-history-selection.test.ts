@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { deleteRunHistorySelection, type RunHistoryItem } from '../src/lib/runHistoryDeletion.js';
-import { RunHistoryCheckbox, RunHistorySelectionToolbar } from '../src/pages/experiments/view/RunHistorySelection.js';
+import { RunHistoryCheckbox, RunHistoryDeleteButton, RunHistorySelectionToolbar } from '../src/pages/experiments/view/RunHistorySelection.js';
 
 type DeleteOptions = Parameters<typeof deleteRunHistorySelection>[0];
 const items: RunHistoryItem[] = [
@@ -61,7 +61,8 @@ for (const overrides of [
   assert.deepEqual(result.failures, []);
   assert.equal(result.cancelled, false);
   assert.equal(state.confirmations.length, 1);
-  assert.ok(state.confirmations[0].includes('Second sensitivity run'));
+  assert.ok(state.confirmations[0].startsWith('Delete "Second sensitivity run"?'),
+    'A single run is named directly rather than counted as "1 selected run"');
   for (const excluded of ['First policy run', 'Third run', 'unknown', 'protected-example', 'active-run']) {
     assert.equal(state.confirmations[0].includes(excluded), false, 'Confirmation lists only eligible selections');
   }
@@ -218,7 +219,7 @@ for (const failure of ['Connection unavailable', undefined]) {
     { selection: {
       selectedIds: new Set<string>(), selectedCount: 0, selectableCount: 3,
       allSelected: false, someSelected: false, isDeleting: false, error: '',
-      toggle: () => {}, selectAll: () => {}, deleteSelected: async () => {},
+      toggle: () => {}, selectAll: () => {}, deleteSelected: async () => {}, deleteOne: async () => {},
       ...overrides
     } }
   ));
@@ -244,6 +245,16 @@ for (const failure of ['Connection unavailable', undefined]) {
     'A batch in progress disables both selection changes and repeat deletion');
   assert.match(renderToolbar({ selectableCount: 0 }), /<input[^>]*disabled=""/,
     'Select all is disabled when there are no eligible runs');
+
+  const deleteOne = renderToStaticMarkup(createElement(RunHistoryDeleteButton, {
+    label: 'Bank Rate +1pp', onDelete: () => {}
+  }));
+  assert.match(deleteOne, /<button[^>]*class="run-history-delete"[^>]*aria-label="Delete Bank Rate \+1pp"/,
+    'Each card\'s delete button names its run for assistive technology');
+  assert.equal(deleteOne.includes('disabled'), false);
+  assert.match(renderToStaticMarkup(createElement(RunHistoryDeleteButton, {
+    label: 'Bank Rate +1pp', disabled: true, onDelete: () => {}
+  })), /<button[^>]*disabled=""/, 'A card\'s delete button is disabled while a deletion runs');
 
   const protectedRow = renderToStaticMarkup(createElement(RunHistoryCheckbox, {
     label: 'Saved example', checked: false, disabled: true,

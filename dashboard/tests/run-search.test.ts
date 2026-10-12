@@ -122,7 +122,7 @@ const toolbar = renderToStaticMarkup(createElement(RunHistorySelectionToolbar, {
   selection: {
     selectedIds: new Set<string>(), selectedCount: 0, selectableCount: 2,
     allSelected: false, someSelected: false, isDeleting: false, error: '',
-    toggle: () => {}, selectAll: () => {}, deleteSelected: async () => {}
+    toggle: () => {}, selectAll: () => {}, deleteSelected: async () => {}, deleteOne: async () => {}
   }
 }));
 assert.match(toolbar, /<span>Select all shown<\/span>/);

@@ -28,6 +28,12 @@ export const CENTRAL_BANK_POLICY_KEYS = [
 export const CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL = 0.9999;
 export const CENTRAL_BANK_ICR_OFF_SENTINEL = 0;
 
+/** Whether a value is the "off" sentinel above, for the affordability cap or the ICR floor. */
+export function isCentralBankPolicyOff(key: string, value: number): boolean {
+  if (key === 'CENTRAL_BANK_AFFORDABILITY_HARD_MAX') return value >= CENTRAL_BANK_AFFORDABILITY_OFF_SENTINEL;
+  return key === 'CENTRAL_BANK_ICR_HARD_MIN' && value <= CENTRAL_BANK_ICR_OFF_SENTINEL;
+}
+
 /**
  * Smallest value the model can run with, for policy settings that have one. Bank.java keeps the
  * previous (months - 1) months of LTI counts and drops the oldest each month, so an LTI flow

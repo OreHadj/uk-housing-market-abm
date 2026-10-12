@@ -50,19 +50,58 @@ assert.equal(findLenderCap('CENTRAL_BANK_LTI_MAX_FRAC_OVER_SOFT_MAX_FTB', 2, ref
 assert.equal(findLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 3, undefined), null);
 assert.equal(findLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', null, refitted2024), null);
 
+// An unchanged reference value past the limit gets one sentence.
 assert.equal(
   describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 0.85, 'the Refitted 2024 model'),
-  'Runs as 85%. Lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value, so a higher limit has no extra effect.'
+  'Runs as 85%: lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value.'
 );
 assert.equal(
   describeLenderCap('CENTRAL_BANK_ICR_HARD_MIN', 1.25, 'the Refitted 2024 model'),
-  'Runs as 1.25×. Lenders in the Refitted 2024 model already require buy-to-let rent to cover at least 1.25× the mortgage interest, so a lower floor has no extra effect.'
+  'Runs as 1.25×: lenders in the Refitted 2024 model already require buy-to-let rent to cover at least 1.25× the mortgage interest.'
 );
-// When the reference is past the limit too (a 2011 model under the 2024 policy), the note says why
-// the 95% reference and the new value run the same.
+// A changed value says which values make a difference here.
 assert.equal(
-  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_HM', 0.9, 'the Refitted 2011 model', 0.95),
-  'Runs as 90%, like the 95% reference: lenders in the Refitted 2011 model never lend home movers more than 90% of the property value.'
+  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 0.85, 'the Refitted 2024 model', { changed: true, value: 3 }),
+  'Runs as 85%. Lenders in the Refitted 2024 model never lend buy-to-let landlords more than 85% of the property value, so only limits below 85% make a difference here.'
+);
+// When the reference is past the limit too (a 2011 model under the 2024 policy), the change has no
+// effect, and the note leads with that.
+assert.equal(
+  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_HM', 0.9, 'the Refitted 2011 model', { changed: true, referenceValue: 0.95, value: 0.94 }),
+  'No effect in this model. Its lenders never lend home movers more than 90% of the property value, so both 94% and the 95% reference run as 90%. Use a value below 90%.'
+);
+// The note names the other models whose lenders would let the value apply, and only those, with how
+// far their lenders go; a whole group of models is named by the group.
+const original2011 = readLenderLimits((key) => readModelConfig('v0').get(key));
+const data2024 = readLenderLimits((key) => readModelConfig('v4.26').get(key));
+const otherModels = [
+  { name: 'the Original 2011 model', limits: original2011 },
+  { name: 'the 2024 data model', limits: data2024 },
+  { name: 'the Refitted 2024 model', limits: refitted2024 }
+];
+assert.equal(
+  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 0.75, 'the Refitted 2011 model', { changed: true, value: 0.8, otherModels }),
+  'Runs as 75%. Lenders in the Refitted 2011 model never lend buy-to-let landlords more than 75% of the property value, so only limits below 75% make a difference here. To test 80%, use the 2024 data model or the Refitted 2024 model, whose lenders allow up to 85%.'
+);
+const groupedModels = [
+  { name: 'the Original 2011 model', limits: original2011, group: 'a 2011 model' },
+  { name: 'the 2024 data model', limits: data2024, group: 'a 2024 model' },
+  { name: 'the Refitted 2024 model', limits: refitted2024, group: 'a 2024 model' }
+];
+assert.equal(
+  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_HM', 0.9, 'the Refitted 2011 model', {
+    changed: true, referenceValue: 0.95, value: 0.94, otherModels: groupedModels
+  }),
+  'No effect in this model. Its lenders never lend home movers more than 90% of the property value, so both 94% and the 95% reference run as 90%. Use a value below 90%, or a 2024 model, whose lenders allow up to 95%.'
+);
+assert.ok(
+  !describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 0.75, 'the Refitted 2011 model', { changed: true, value: 0.9, otherModels }).includes('To test'),
+  'No model is suggested when every lender caps the value'
+);
+assert.equal(
+  describeLenderCap('CENTRAL_BANK_LTV_HARD_MAX_BTL', 0.75, 'the Refitted 2011 model', { value: 0.85, otherModels: groupedModels }),
+  'Runs as 75%: lenders in the Refitted 2011 model never lend buy-to-let landlords more than 75% of the property value.',
+  'An unchanged reference value suggests no other model'
 );
 assert.equal(
   describeRanAs('CENTRAL_BANK_LTI_SOFT_MAX_HM', 5.6),
@@ -73,6 +112,8 @@ assert.equal(
 const paths = createDevelopmentRuntimePaths(repoRoot);
 assert.deepEqual(getModelRunOptions(paths, 'v5o3', false).lenderLimits, refitted2024);
 assert.equal(getModelRunOptions(paths, 'v0', false).lenderLimits?.CENTRAL_BANK_LTV_HARD_MAX_FTB, 0.9);
+assert.deepEqual(getModelRunOptions(paths, 'v0o7', false).lenderLimitsByVersion?.v5o3, refitted2024,
+  'Every model’s limits come too, to name where a capped setting would apply');
 
 // A completed run records what it actually ran with, from its own config.
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'lender-limits-'));

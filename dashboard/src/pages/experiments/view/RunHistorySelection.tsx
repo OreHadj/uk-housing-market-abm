@@ -38,6 +38,26 @@ export function RunHistorySelectionToolbar({ selection, selectAllLabel = 'Select
   </div>;
 }
 
+/** Deletes one run from the top right of its card. */
+export function RunHistoryDeleteButton({ label, disabled = false, onDelete }: {
+  label: string;
+  disabled?: boolean;
+  onDelete: () => void;
+}) {
+  return <button
+    type="button"
+    className="run-history-delete"
+    disabled={disabled}
+    onClick={onDelete}
+    aria-label={`Delete ${label}`}
+    title="Delete run"
+  >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d="M3 6h18M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M5 6l1 14a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1l1-14M10 10v7M14 10v7" />
+    </svg>
+  </button>;
+}
+
 export function RunHistoryCheckbox({ label, checked, disabled = false, disabledReason, onChange }: {
   label: string;
   checked: boolean;

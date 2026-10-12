@@ -9,7 +9,7 @@ import type {
 } from '../../../shared/types';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
 import { describeLenderCap, findLenderCap, formatLenderLimit, type LenderLimits } from '../../../shared/lenderLimits';
-import { getDefaultBasePolicyId } from '../../../shared/policyCatalogue';
+import { getDefaultBasePolicyId, isCentralBankPolicyOff } from '../../../shared/policyCatalogue';
 import {
   POLICY_INSTRUMENTS,
   POLICY_SETTING_GROUPS,
@@ -51,8 +51,10 @@ interface ManualRunSetupCardProps {
   basePolicy: BasePolicyId;
   onBasePolicyChange: (basePolicy: BasePolicyId) => void;
   snapshots: ModelRunSnapshotOption[];
-  /** The selected model's lender limits; a changed setting past one is flagged but still allowed. */
+  /** The selected model's lender limits; a setting past one is flagged but still allowed. */
   lenderLimits?: LenderLimits;
+  /** Every model's lender limits, to name the models where a capped setting would apply. */
+  lenderLimitsByVersion?: Record<string, LenderLimits>;
   title: string;
   onTitleChange: (value: string) => void;
   parameters: ModelRunParameterDefinition[];
@@ -121,6 +123,7 @@ export function ManualRunSetupCard({
   onBasePolicyChange,
   snapshots,
   lenderLimits,
+  lenderLimitsByVersion,
   title,
   onTitleChange,
   parameters,
@@ -205,17 +208,28 @@ export function ManualRunSetupCard({
     [formValues, knownPolicyKeys, selectedBasePolicy]
   );
 
-  // Changed settings past the selected model's lender limits, which run at the limit instead. Only
-  // changed ones are flagged: some reference values (the 2024 affordability cap and ICR floor) are
-  // deliberately non-binding "off" settings.
+  // Settings past the selected model's lender limits, which run at the limit instead, including
+  // unchanged reference values. The 2024 affordability cap and ICR floor are deliberately
+  // non-binding "off" settings, so they are flagged only when chosen.
   const lenderCaps = useMemo(() => new Map(
     POLICY_SETTING_GROUPS.flatMap((group) => group.keys).flatMap((key) => {
-      if (!changedPolicyKeys.has(key)) return [];
-      const limit = findLenderCap(key, numericValue(formValues[key]), lenderLimits);
+      const value = numericValue(formValues[key]);
+      if (!changedPolicyKeys.has(key) && value !== null && isCentralBankPolicyOff(key, value)) return [];
+      const limit = findLenderCap(key, value, lenderLimits);
       return limit === null ? [] : [[key, limit] as const];
     })
   ), [changedPolicyKeys, formValues, lenderLimits]);
   const lenderModelName = selectedModelAnchor ? `the ${selectedModelAnchor.name}` : 'this model';
+  const otherModelLenderLimits = orderedSnapshots
+    .filter((snapshot) => snapshot.version !== selectedBaseline)
+    .map((snapshot) => {
+      const anchor = getModelAnchor(snapshot.version);
+      return {
+        name: `the ${anchor?.name ?? snapshot.version}`,
+        limits: lenderLimitsByVersion?.[snapshot.version],
+        group: anchor ? `a ${anchor.dataYear} model` : undefined
+      };
+    });
   // A model keeps its own era's lender limits whichever reference year is chosen, so pairing a 2011
   // model with the 2024 policy (or the reverse) leaves some reference values running at those limits.
   const modelPolicyYear = selectedBaseline ? getDefaultBasePolicyId(selectedBaseline) : null;
@@ -535,12 +549,14 @@ export function ManualRunSetupCard({
                             </p>
                             {lenderCap !== undefined && (
                               <p className="scenario-policy-cap-warning">
-                                {describeLenderCap(
-                                  key,
-                                  lenderCap,
-                                  lenderModelName,
-                                  baseValue !== undefined && findLenderCap(key, baseValue, lenderLimits) !== null ? baseValue : undefined
-                                )}
+                                {describeLenderCap(key, lenderCap, lenderModelName, {
+                                  changed: isChanged,
+                                  referenceValue: isChanged && baseValue !== undefined && findLenderCap(key, baseValue, lenderLimits) !== null
+                                    ? baseValue
+                                    : undefined,
+                                  value: numericValue(formValues[key]) ?? undefined,
+                                  otherModels: otherModelLenderLimits
+                                })}
                               </p>
                             )}
                           </div>

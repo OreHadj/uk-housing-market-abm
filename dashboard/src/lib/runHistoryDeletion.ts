@@ -28,7 +28,11 @@ export async function deleteRunHistorySelection({
   if (!targets.length) return result;
   const names = targets.slice(0, 8).map((item) => item.label === item.id ? item.id : `${item.label} (${item.id})`).join('\n');
   const remaining = targets.length > 8 ? `\n…and ${targets.length - 8} more.` : '';
-  if (!confirm(`Delete ${targets.length} selected ${targets.length === 1 ? 'run' : 'runs'}?\n\n${names}${remaining}\n\nThis permanently removes their results.`)) {
+  // One run, from its own delete button or a single tick, is named directly.
+  const message = targets.length === 1
+    ? `Delete "${targets[0].label}"?\n\nThis permanently removes its results.`
+    : `Delete ${targets.length} selected runs?\n\n${names}${remaining}\n\nThis permanently removes their results.`;
+  if (!confirm(message)) {
     result.cancelled = true;
     return result;
   }
