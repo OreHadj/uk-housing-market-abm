@@ -188,15 +188,6 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
           <ul className="run-list">
             {search.groups.main.map((entry) => renderExperiment(entry.experiment))}
             <RunHistoryGroup
-              id="sensitivity-run-history-practice"
-              label="Practice runs"
-              count={search.groups.practice.length}
-              open={search.practiceOpen}
-              onToggle={search.togglePractice}
-            >
-              {search.groups.practice.map((entry) => renderExperiment(entry.experiment))}
-            </RunHistoryGroup>
-            <RunHistoryGroup
               id="sensitivity-run-history-examples"
               label="Examples"
               count={search.groups.examples.length}
@@ -204,6 +195,15 @@ export function SensitivityRunHistory({ canWrite, canDeleteResults, deleteKeyReq
               onToggle={search.toggleExamples}
             >
               {search.groups.examples.map((entry) => renderExperiment(entry.experiment))}
+            </RunHistoryGroup>
+            <RunHistoryGroup
+              id="sensitivity-run-history-practice"
+              label="Practice runs"
+              count={search.groups.practice.length}
+              open={search.practiceOpen}
+              onToggle={search.togglePractice}
+            >
+              {search.groups.practice.map((entry) => renderExperiment(entry.experiment))}
             </RunHistoryGroup>
           </ul>
           {previewExperiment && (

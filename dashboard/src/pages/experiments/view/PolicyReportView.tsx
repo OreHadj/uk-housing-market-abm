@@ -7,9 +7,10 @@ import { LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
 import { PolicyRanAs } from '../../../components/PolicyRanAs';
 import { formatKpiComparisonDelta, formatKpiValue, getPolicySettingDifferences } from '../../../lib/manualResultsView';
 import { buildPolicyReportChartOption, getPolicyReportCoverage, POLICY_REPORT_INDICATORS } from '../../../lib/policyReport';
+import { getRunPrimaryLabel } from '../../run-history/runHistoryDisplay';
 
 function runName(run: ResultsRunDetail): string {
-  return run.title?.trim() || run.runId;
+  return getRunPrimaryLabel(run);
 }
 
 /** The short policy context belongs above the outcomes; full settings stay in the details dialog. */

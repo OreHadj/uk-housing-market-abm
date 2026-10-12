@@ -15,6 +15,7 @@ import type {
 } from '../../shared/types';
 import type { ScenarioDraftV1 } from './scenarioDraft';
 import { extractVersionFromResultsRunId } from './versionLabels';
+import { getRunPrimaryLabel } from '../pages/run-history/runHistoryDisplay';
 import {
   CENTRAL_BANK_POLICY_KEYS,
   getBasePolicyOption,
@@ -795,7 +796,7 @@ export function buildMatchingBaselineScenarioDraft(primary: ResultsRunSummary): 
     return null;
   }
 
-  const primaryLabel = primary.title?.trim() || primary.runId;
+  const primaryLabel = getRunPrimaryLabel(primary);
   return {
     version: 1,
     title: `Matched baseline for ${primaryLabel}`,

@@ -210,7 +210,8 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
             >
               View results
             </Link>
-            {canWrite && !run.isExample && (
+            {/* The built-in baselines have no dashboard manifest, so the server cannot rename them. */}
+            {canWrite && !run.isExample && !isProtectedResultsRun(run.runId) && (
               <button type="button" className="table-toggle" onClick={() => rename.start(run.runId, run.title)}>
                 Rename
               </button>
@@ -268,15 +269,6 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
           <ul className="run-list">
             {search.groups.main.map((entry) => renderRun(entry.run))}
             <RunHistoryGroup
-              id="policy-run-history-practice"
-              label="Practice runs"
-              count={search.groups.practice.length}
-              open={search.practiceOpen}
-              onToggle={search.togglePractice}
-            >
-              {search.groups.practice.map((entry) => renderRun(entry.run))}
-            </RunHistoryGroup>
-            <RunHistoryGroup
               id="policy-run-history-examples"
               label="Examples"
               count={search.groups.examples.length}
@@ -284,6 +276,15 @@ export function PolicyRunHistory({ canWrite, canDeleteResults, deleteKeyRequired
               onToggle={search.toggleExamples}
             >
               {search.groups.examples.map((entry) => renderRun(entry.run))}
+            </RunHistoryGroup>
+            <RunHistoryGroup
+              id="policy-run-history-practice"
+              label="Practice runs"
+              count={search.groups.practice.length}
+              open={search.practiceOpen}
+              onToggle={search.togglePractice}
+            >
+              {search.groups.practice.map((entry) => renderRun(entry.run))}
             </RunHistoryGroup>
           </ul>
           {detailRun && (

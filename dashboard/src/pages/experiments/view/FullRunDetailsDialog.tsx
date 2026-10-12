@@ -9,6 +9,7 @@ import { describeRanAs, formatLenderLimit } from '../../../../shared/lenderLimit
 import { POLICY_SETTING_GROUPS } from '../../../lib/manualScenarioPolicy';
 import { extractVersionFromResultsRunId } from '../../../lib/versionLabels';
 import { formatModelName, getModelAnchor } from '../../../lib/modelAnchors';
+import { getRunPrimaryLabel } from '../../run-history/runHistoryDisplay';
 
 interface FullRunDetailsDialogProps {
   run: ResultsRunDetail;
@@ -137,7 +138,7 @@ export function FullRunDetailsDialog({ run, onClose }: FullRunDetailsDialogProps
           <div>
             <p className="trend-modal-eyebrow">Saved policy scenario</p>
             <h3 id="full-run-details-title">Full run details</h3>
-            <p>{run.title?.trim() || run.runId}</p>
+            <p>{getRunPrimaryLabel(run)}</p>
           </div>
           <button
             type="button"

@@ -19,7 +19,7 @@ import { createScenarioDraftId, setActiveScenarioDraftId, writeScenarioDraft, ty
 import { buildReport2Borrowers, buildReport2Risk, buildReport2Tenure, buildReport2Trend } from './report2Charts';
 import { Report2MarketChart } from './Report2MarketChart';
 import { Report2ComparisonAction } from './Report2ComparisonAction';
-import { getRunModelVersion } from '../run-history/runHistoryDisplay';
+import { getRunModelVersion, getRunPrimaryLabel } from '../run-history/runHistoryDisplay';
 import { getReport2Kpi, getReport2LoanMean, getReport2Points, getReport2PrivateRentingShare, getReport2SeedVolatility, getReport2TailShare, REPORT2_INDICATOR_IDS } from './report2Model';
 import './report2.css';
 
@@ -35,7 +35,7 @@ const BORROWERS = [
 ];
 
 function name(run: ResultsRunSummary | null | undefined): string {
-  return run?.title?.trim() || run?.runId || 'Not selected';
+  return run ? getRunPrimaryLabel(run) : 'Not selected';
 }
 
 function runOption(run: ResultsRunSummary): RunPickerOption {
