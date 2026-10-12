@@ -12,8 +12,7 @@
   grid-template-columns: minmax(0, 1fr);
 }
 .sensitivity-presented-layout .sensitivity-tested-values-card { min-width: 0; }
-.sensitivity-presented-layout > .results-main,
-.sensitivity-presented-layout > .sensitivity-run-history-card { margin-top: 16px; }
+.sensitivity-presented-layout > .results-main { margin-top: 16px; }
 .sensitivity-presented-layout > .sensitivity-run-queue-card { margin-bottom: 16px; }
 .results-layout.sensitivity-presented-layout > .sensitivity-summary-card {
   display: block;
@@ -102,7 +101,8 @@
   border-radius: 50%;
   background: #4568e8;
 }
-.sensitivity-results-header .sensitivity-results-toolbar .comparison-run-pickers.results-run-pickers select {
+.sensitivity-results-header .sensitivity-results-toolbar .comparison-run-pickers.results-run-pickers select,
+.sensitivity-results-header .sensitivity-results-toolbar .comparison-run-pickers.results-run-pickers .run-picker-trigger {
   color: #22304a;
   min-width: 0;
   width: 100%;

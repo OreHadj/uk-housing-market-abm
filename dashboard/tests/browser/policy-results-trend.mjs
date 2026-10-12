@@ -26,7 +26,7 @@ const results = '.manual-results-aggregate-card';
 const resultsToggle = `${results} > .collapsible-section-toggle`;
 const creditToggle = '#policy-results-credit_access .policy-results-group-toggle';
 const mortgageTrend = '#policy-results-credit_access [data-guided-target="policy-mortgage-approvals-trend"]';
-const history = '.run-history-card > .collapsible-section-toggle';
+const history = '[data-guided-target="sidebar-run-history"]';
 
 async function keyboardActivate(page, control) {
   for (let index = 0; index < 60; index++) {
@@ -104,7 +104,7 @@ try {
     assert.equal(indicator, 'core_mortgageApprovals');
     assert.match(title, /Mortgage approvals/i);
     assert.equal(await next.isEnabled(), true);
-    assert.match(await coach.innerText(), /Next, find Run History below Policy results/);
+    assert.doesNotMatch(await coach.innerText(), /Run History below/);
     await page.reload({ waitUntil: 'networkidle' });
     await inspect(page, width, 'trend-restored', '.trend-modal');
     assert.equal(state().get('policyTrend'), indicator);
@@ -122,15 +122,16 @@ try {
     await inspect(page, width, 'run-history', history, 'run-history');
     assert.equal(state().get('policyTrend'), '');
     assert.equal(await page.locator('.trend-modal').count(), 0, 'The trend closes before Run History is shown');
-    assert.match(await coach.innerText(), /Open it later to revisit results and manage eligible runs/);
-    assert.equal(await page.locator(history).getAttribute('aria-expanded'), 'false', 'The final lesson does not open Run History');
+    assert.match(await coach.innerText(), /Search them by name, rename them, and delete the ones you no longer need/);
+    assert.equal(await page.locator(history).getAttribute('aria-expanded'), 'false', 'The final lesson points at the menu item without opening it');
+    assert.equal(await page.locator('.run-history-card').count(), 0, 'Run History is not part of Results');
     assert.equal(await finish.isEnabled(), true);
     await keyboardActivate(page, finish);
     await coach.waitFor({ state: 'detached' });
     assert.equal(state().has('demo'), false);
     assert.equal(state().has('policyTrend'), false);
     assert.equal(state().get('presentation'), 'detailed');
-    assert.equal(await page.locator(history).count(), 1, 'Run History remains below the results');
+    assert.equal(await page.locator(history).count(), 1, 'The Run History menu item stays available');
     assert.equal(await page.locator(resultsToggle).getAttribute('aria-expanded'), 'true');
 
     // Escape exits the guide once and leaves the restored chart ready to explore.

@@ -100,15 +100,14 @@ export const SENSITIVITY_RESULTS_DEMO: GuidedDemoDefinition = {
       ], actionHint: 'Open the highlighted section.', completionBullets: [
         'The ranking shows size, not reliability. A large bar can still be noise.',
         'Before quoting an outcome, check its seeds in Report.',
-        'Results by tested value lists the exact values.',
-        'Next, find Run History below.'
+        'Results by tested value lists the exact values.'
       ], completion: { kind: 'selector', selector: '#sensitivity-tested-values > button[aria-expanded="true"]' } }),
     stop({ id: 'run-history', title: 'Manage your runs', kind: 'info',
-      target: '.sensitivity-run-history-card > .collapsible-section-toggle',
-      // Run History exists only in Detailed, so this stop keeps Detailed even on a stale link.
+      target: '[data-guided-target="sidebar-run-history"]',
+      // Stays in Detailed with the previous stop; the target is the Run History menu item.
       query: { presentation: 'detailed' }, body: '', bullets: [
-        'Run History below lists saved sensitivity analyses.',
-        'Open it later to revisit results and manage eligible runs.',
+        'Run History, in the menu, lists saved sensitivity analyses.',
+        'Search them by name, rename them, and delete the ones you no longer need.',
         'Each analysis simulates its own baseline, so read changes within one analysis.'
       ] })
   ],

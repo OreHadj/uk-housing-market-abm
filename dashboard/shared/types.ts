@@ -1255,6 +1255,11 @@ export interface SensitivityExperimentDeleteResponse {
   deleted: boolean;
 }
 
+export interface SensitivityExperimentRenameResponse {
+  experimentId: string;
+  title: string | null;
+}
+
 export interface SensitivityExperimentListPayload {
   experiments: SensitivityExperimentSummary[];
 }

@@ -34,6 +34,11 @@ function renderTypeNavigation(area: 'experiments' | 'results', path: string) {
   );
 }
 
+// Each Detailed results view always renders its own section, whatever data has loaded.
+function detailedViewMarker(workspace: ExperimentType): string {
+  return workspace === 'manual' ? 'manual-results-layout' : 'sensitivity-summary-card';
+}
+
 function renderResults(workspace: ExperimentType, query = '') {
   return renderToStaticMarkup(createElement(
     MemoryRouter,
@@ -91,7 +96,7 @@ for (const workspace of ['manual', 'sensitivity'] as const) {
   assert.ok(markup.includes('scenario-builder-surface'), `${workspace}: the existing builder is reused`);
   assert.equal(markup.includes('role="dialog"'), false, `${workspace}: ordinary setup is not a dialog`);
   assert.equal(markup.includes('scenario-create-modal'), false, `${workspace}: no hidden modal builder is mounted`);
-  assert.equal(markup.includes('Run History'), false, `${workspace}: setup does not render the results workspace`);
+  assert.equal(markup.includes(detailedViewMarker(workspace)), false, `${workspace}: setup does not render the results workspace`);
   assert.equal(markup.includes('Live Logs'), false, `${workspace}: setup does not introduce run management`);
   assert.equal(markup.includes('experiment-type-selector'), false, `${workspace}: setup does not repeat the sidebar choices`);
 
@@ -103,7 +108,7 @@ for (const workspace of ['manual', 'sensitivity'] as const) {
   );
 
   const historyMarkup = renderWorkspace(workspace, '', 'workspace');
-  assert.ok(historyMarkup.includes('Run History'), `${workspace}: existing results routes remain available`);
+  assert.ok(historyMarkup.includes(detailedViewMarker(workspace)), `${workspace}: existing results routes remain available`);
   assert.equal(historyMarkup.includes('scenario-builder-surface'), false, `${workspace}: results do not mount a hidden builder`);
 
   const demoMode = workspace === 'manual' ? 'policy' : 'sensitivity';
@@ -133,28 +138,29 @@ for (const workspace of ['manual', 'sensitivity'] as const) {
   const currentResultsLink = resultsNavigation.match(/<a\b[^>]*aria-current="page"[^>]*>/g) ?? [];
   assert.equal(currentResultsLink.length, 1, `${workspace}: exactly one Results type is current in the sidebar`);
   assert.ok(currentResultsLink[0].includes(`type=${workspace}`), `${workspace}: the Results sidebar follows the submitted type`);
-  assert.equal(submittedMarkup.includes('Run History'), false, `${workspace}: submission does not mount Detailed`);
+  assert.equal(submittedMarkup.includes(detailedViewMarker(workspace)), false, `${workspace}: submission does not mount Detailed`);
 }
 
 for (const workspace of ['manual', 'sensitivity'] as const) {
   for (const presentationQuery of ['', '&presentation=report', '&presentation=report2']) {
     const reportMarkup = renderResults(workspace, presentationQuery);
     assertResultsPresentation(reportMarkup, 'Report', `${workspace}: default, Report and legacy Report2 links`);
-    assert.equal(reportMarkup.includes('Run History'), false, `${workspace}: the promoted report does not mount the old results workspace`);
+    assert.equal(reportMarkup.includes(detailedViewMarker(workspace)), false, `${workspace}: the promoted report does not mount the old results workspace`);
   }
 
   const detailedMarkup = renderResults(workspace, '&presentation=detailed');
   assertResultsPresentation(detailedMarkup, 'Detailed', `${workspace}: explicit Detailed link`);
-  assert.ok(detailedMarkup.includes('Run History'), `${workspace}: Detailed retains run management`);
+  assert.ok(detailedMarkup.includes(detailedViewMarker(workspace)), `${workspace}: explicit Detailed link opens Detailed`);
+  assert.equal(detailedMarkup.includes('Run History'), false, `${workspace}: Run History has its own page, not a Detailed section`);
 
   for (const queueQuery of ['&queue=open', `&jobRef=${workspace}:new-job`]) {
     const queueMarkup = renderResults(workspace, queueQuery);
     assertResultsPresentation(queueMarkup, 'Report', `${workspace}: queue or submitted-job links default to Report`);
-    assert.equal(queueMarkup.includes('Run History'), false, `${workspace}: queue state does not force Detailed`);
+    assert.equal(queueMarkup.includes(detailedViewMarker(workspace)), false, `${workspace}: queue state does not force Detailed`);
 
     const explicitDetailed = renderResults(workspace, `${queueQuery}&presentation=detailed`);
     assertResultsPresentation(explicitDetailed, 'Detailed', `${workspace}: Detailed remains an explicit choice for queued work`);
-    assert.ok(explicitDetailed.includes('Run History'), `${workspace}: explicit Detailed retains run management`);
+    assert.ok(explicitDetailed.includes(detailedViewMarker(workspace)), `${workspace}: explicit Detailed opens Detailed for queued work`);
 
     for (const presentation of ['report', 'report2']) {
       const reportMarkup = renderResults(workspace, `${queueQuery}&presentation=${presentation}`);

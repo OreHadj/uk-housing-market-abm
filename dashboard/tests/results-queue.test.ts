@@ -214,7 +214,7 @@ for (const job of [manual, sensitivity]) {
     })));
     assert.ok(shell.includes(`aria-label="${selectorLabel}"`) && shell.includes('role="progressbar"'));
     assert.ok(shell.indexOf('run-queue-card') < shell.indexOf(`aria-label="${selectorLabel}"`));
-    assert.ok(shell.includes(`<option value="${selectionId}" selected="">${job.title}</option>`), 'The selector shows the accepted run name while its report is pending');
+    assert.ok(shell.includes(`<span class="run-picker-value">${job.title}</span>`), 'The selector shows the accepted run name while its report is pending');
     assert.ok(shell.includes('>Cancel<'));
     assert.equal(shell.includes('Loading the policy report'), false);
     assert.equal(shell.includes('Loading saved sensitivity results'), false);

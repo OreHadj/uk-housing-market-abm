@@ -42,6 +42,7 @@ import {
   getSensitivityExperimentResults,
   hasActiveSensitivityExperiment,
   listSensitivityExperiments,
+  renameSensitivityExperiment,
   submitSensitivityExperiment
 } from '../lib/sensitivityRuns';
 import type { RouteContext } from './routeContext';
@@ -678,6 +679,28 @@ export function registerDevRoutes(app: express.Express, context: RouteContext): 
         return;
       }
       res.json(deleteSensitivityExperiment(context.runtimePaths, String(req.params.experimentId ?? '')));
+    } catch (error) {
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  app.post('/api/experiments/sensitivity/:experimentId/title', async (req, res) => {
+    if (!context.requireExperimentsFeature(req, res)) {
+      return;
+    }
+    if (!context.requireWriteAccess(req, res)) {
+      return;
+    }
+
+    try {
+      const title = typeof req.body?.title === 'string' ? req.body.title : '';
+      assertDemoExampleMutable('sensitivity', String(req.params.experimentId ?? ''));
+      assertDemoExampleTitleAvailable(title);
+      if (context.remoteExecution) {
+        res.status(501).json({ error: 'Renaming runs is not supported for remotely executed results.' });
+        return;
+      }
+      res.json(renameSensitivityExperiment(context.runtimePaths, String(req.params.experimentId ?? ''), title));
     } catch (error) {
       res.status(400).json({ error: (error as Error).message });
     }

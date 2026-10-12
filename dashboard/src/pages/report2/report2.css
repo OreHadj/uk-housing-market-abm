@@ -38,7 +38,7 @@
 .report2 .r2-print-window { display: none; }
 .report2 .r2-controls label { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .report2 .r2-controls label > span { display: flex; gap: 7px; align-items: center; color: #67758c; font-size: 12.65px; font-weight: 600; }
-.report2 .r2-controls select { color: var(--r2-ink); min-width: 0; width: 100%; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; padding: 0 30px 0 10px; text-overflow: ellipsis; }
+.report2 .r2-controls select, .report2 .r2-controls .run-picker-trigger { color: var(--r2-ink); min-width: 0; width: 100%; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; padding: 0 30px 0 10px; text-overflow: ellipsis; }
 .report2 .r2-print { display: flex; align-items: center; justify-content: center; gap: 7px; background: white; border: 1px solid #dce3ef; border-radius: 7px; height: 44px; padding: 0 15px; color: #596982; cursor: pointer; }
 .report2 .r2-print svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .report2 .r2-print:disabled { opacity: .45; cursor: default; }

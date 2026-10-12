@@ -6,17 +6,20 @@ import { getBasePolicyOption, summariseRunPolicy } from '../../../shared/policyC
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../shared/policyDisplay';
 import { EChart } from '../../components/EChart';
 import { ReportInfo } from '../../components/ReportInfo';
+import { RunPicker, type RunPickerOption } from '../../components/RunPicker';
 import { PolicyRanAs } from '../../components/PolicyRanAs';
 import { fetchLendingDistributionCompare, fetchResultsCompare, fetchResultsRunDetail, fetchResultsRuns } from '../../lib/api';
 import { findMatchedManualBaselineRun, formatKpiComparisonDelta, formatKpiDeltaValue, formatKpiValue, formatManualComparisonCalibrationNotice, formatManualComparisonMismatchWarning, getManualComparisonFieldDifferences, getPolicySettingDifferences } from '../../lib/manualResultsView';
 import { getPolicyReportCoverage } from '../../lib/policyReport';
 import { formatModelOptionLabel } from '../../lib/modelAnchors';
+import { isPracticeRunTitle } from '../../lib/runSearch';
 import { POLICY_ANALYSIS_WINDOWS as WINDOWS, policyDetailedSelection, readPolicyAnalysisWindow, readReportIndicator, updateReportQuery } from '../../lib/reportUrlState';
 import type { ReportExecutionState } from '../../lib/resultsQueue';
 import { createScenarioDraftId, setActiveScenarioDraftId, writeScenarioDraft, type ScenarioDraftV1 } from '../../lib/scenarioDraft';
 import { buildReport2Borrowers, buildReport2Risk, buildReport2Tenure, buildReport2Trend } from './report2Charts';
 import { Report2MarketChart } from './Report2MarketChart';
 import { Report2ComparisonAction } from './Report2ComparisonAction';
+import { getRunModelVersion } from '../run-history/runHistoryDisplay';
 import { getReport2Kpi, getReport2LoanMean, getReport2Points, getReport2PrivateRentingShare, getReport2SeedVolatility, getReport2TailShare, REPORT2_INDICATOR_IDS } from './report2Model';
 import './report2.css';
 
@@ -33,6 +36,16 @@ const BORROWERS = [
 
 function name(run: ResultsRunSummary | null | undefined): string {
   return run?.title?.trim() || run?.runId || 'Not selected';
+}
+
+function runOption(run: ResultsRunSummary): RunPickerOption {
+  return {
+    value: run.runId,
+    name: name(run),
+    modelVersion: getRunModelVersion(run),
+    isExample: run.isExample === true,
+    isPractice: isPracticeRunTitle(run.title)
+  };
 }
 
 function number(value: number | null | undefined, units: string): string {
@@ -278,18 +291,20 @@ export function Report2Page({ presentationControls, queueControls, execution, ca
   const comparisonRun = comparison ?? runs.find((run) => run.runId === comparisonId);
   const comparisonRunName = comparisonRun ? name(comparisonRun) : comparisonId;
   const reportTitle = hasComparison ? `${selectedRunName} vs ${comparisonRunName}` : selectedRunName;
+  const runOptions = runs.map(runOption);
 
   return <section className="report2" aria-labelledby="r2-title">
     {workspaceTitle && createPortal(<><span aria-hidden="true"> / </span>Policy scenarios<span aria-hidden="true"> / </span>Report</>, workspaceTitle)}
     {queueControls}
     <div className="r2-toolbar">
       <div className="r2-controls r2-run-controls" data-guided-target="policy-run-selectors">
-      <label><span><i className="r2-dot r2-policy" />Selected policy run</span><select aria-label="Selected policy run" value={primaryId} onChange={(event) => { const id = event.target.value; update({ baselineRunId: id, runId: '', jobRef: '', comparisonRunId: findMatchedManualBaselineRun(runs, id)?.runId ?? '', comparisonNoneFor: '' }); }} disabled={runsLoading && runs.length === 0}>
-        {!primaryId && <option value="">{runsLoading ? 'Loading runs…' : 'Select a run'}</option>}{primaryId && !runs.some((run) => run.runId === primaryId) && <option value={primaryId}>{selectedRunName}</option>}{runs.map((run) => <option key={run.runId} value={run.runId}>{name(run)}</option>)}
-      </select></label>
-      <label><span><i className="r2-dot r2-baseline" />Comparison baseline</span><select aria-label="Comparison baseline" value={comparisonId} onChange={(event) => update({ comparisonRunId: event.target.value, comparisonNoneFor: event.target.value ? '' : primaryId })} disabled={runsLoading || !primaryId}>
-        <option value="">No comparison run</option>{comparisonId && !runs.some((run) => run.runId === comparisonId) && <option value={comparisonId}>{comparisonId}</option>}{runs.filter((run) => run.runId !== primaryId).map((run) => <option key={run.runId} value={run.runId}>{name(run)}</option>)}
-      </select></label>
+      <label><span><i className="r2-dot r2-policy" />Selected policy run</span><RunPicker label="Selected policy run" value={primaryId} options={runOptions}
+        onChange={(id) => update({ baselineRunId: id, runId: '', jobRef: '', comparisonRunId: findMatchedManualBaselineRun(runs, id)?.runId ?? '', comparisonNoneFor: '' })}
+        disabled={runsLoading && runs.length === 0} placeholder={runsLoading ? 'Loading runs…' : 'Select a run'} missingLabel={selectedRunName} /></label>
+      <label><span><i className="r2-dot r2-baseline" />Comparison baseline</span><RunPicker label="Comparison baseline" value={comparisonId}
+        options={runOptions.filter((option) => option.value !== primaryId)}
+        onChange={(id) => update({ comparisonRunId: id, comparisonNoneFor: id ? '' : primaryId })}
+        disabled={runsLoading || !primaryId} noneLabel="No comparison run" clearLabel="Clear comparison run" missingLabel={comparisonId} /></label>
       </div>
       {presentationControls}
     </div>

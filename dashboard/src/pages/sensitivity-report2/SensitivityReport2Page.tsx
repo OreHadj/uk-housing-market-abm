@@ -6,8 +6,10 @@ import type { SensitivityExperimentChartsPayload, SensitivityExperimentMetadata,
 import { BASE_POLICY_OPTIONS } from '../../../shared/policyCatalogue';
 import { EChart } from '../../components/EChart';
 import { ReportInfo } from '../../components/ReportInfo';
+import { RunPicker } from '../../components/RunPicker';
 import { fetchSensitivityExperiment, fetchSensitivityExperimentCharts, fetchSensitivityExperimentResults, fetchSensitivityExperiments } from '../../lib/api';
 import { formatModelOptionLabel } from '../../lib/modelAnchors';
+import { isPracticeRunTitle } from '../../lib/runSearch';
 import { readSensitivityReportState, sensitivityDetailedSelection, updateReportQuery } from '../../lib/reportUrlState';
 import type { ReportExecutionState } from '../../lib/resultsQueue';
 import {
@@ -173,13 +175,14 @@ export function SensitivityReport2Page({ presentationControls, queueControls, ex
     {workspaceTitle && createPortal(<><span aria-hidden="true"> / </span>Sensitivity analysis<span aria-hidden="true"> / </span>Report</>, workspaceTitle)}
     {queueControls}
     <div className="sr2-toolbar">
-      <label className="sr2-experiment"><span>Select run to view</span><select aria-label="Sensitivity experiment" value={experimentId} disabled={listLoading && experiments.length === 0} onChange={(event) => {
-        update({ experimentId: event.target.value, jobRef: '', setting: '' });
-      }}>
-        {!experimentId && <option value="">{listLoading ? 'Loading experiments…' : 'Select an experiment'}</option>}
-        {experimentId && !experiments.some((item) => item.experimentId === experimentId) && <option value={experimentId}>{selectedExperimentName}</option>}
-        {experiments.map((item) => <option key={item.experimentId} value={item.experimentId}>{name(item)} — {item.parameter.title}</option>)}
-      </select></label>
+      <label className="sr2-experiment"><span>Select run to view</span><RunPicker label="Sensitivity experiment" value={experimentId}
+        options={experiments.map((item) => ({
+          value: item.experimentId, name: name(item), note: item.parameter?.title, modelVersion: item.baseline,
+          isExample: item.isExample === true, isPractice: isPracticeRunTitle(item.title)
+        }))}
+        onChange={(id) => update({ experimentId: id, jobRef: '', setting: '' })}
+        disabled={listLoading && experiments.length === 0}
+        placeholder={listLoading ? 'Loading experiments…' : 'Select an experiment'} missingLabel={selectedExperimentName} /></label>
       {presentationControls}
     </div>
     <header className="sr2-page-heading"><div><p className="sr2-eyebrow">Results / Sensitivity analysis</p><h1 id="sr2-title">{selectedExperimentName}</h1><p className="sr2-caption">Policy responses, borrowing and growth variability.</p></div>

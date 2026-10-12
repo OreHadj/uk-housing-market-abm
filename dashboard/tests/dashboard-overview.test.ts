@@ -6,6 +6,7 @@ const destinations = [
   ['home', '/', 'Home'],
   ['experiments', '/experiments', 'Experiments'],
   ['results', '/results', 'Results'],
+  ['run-history', '/run-history', 'Run History'],
   ['model-information', '/model-evidence', 'Model information'],
   ['settings', '/settings', 'Settings']
 ];
@@ -19,11 +20,11 @@ assert.equal(overview.id, 'dashboard-overview');
 assert.equal(overview.label, 'Explore the dashboard');
 assert.equal(overview.startHere, true);
 assert.equal(overview.finishOnLastStep, true, 'Finish remains on the highlighted Settings link');
-assert.equal(overview.duration, 'Five short stops');
+assert.equal(overview.duration, 'Six short stops');
 assert.deepEqual(overview.requiredRunIds, [], 'Orientation does not require saved model runs');
 assert.deepEqual(overview.requiredExperimentIds, [], 'Orientation does not require sensitivity examples');
 assert.deepEqual(overview.steps.map((step) => [step.id, step.path, step.title]), destinations);
-assert.equal(new Set(overview.steps.map((step) => step.id)).size, 5);
+assert.equal(new Set(overview.steps.map((step) => step.id)).size, 6);
 assert.ok(overview.completion.title && overview.completion.body, 'A fallback completion card remains available');
 
 for (const step of overview.steps) {
@@ -49,6 +50,9 @@ assert.ok(experiments.includes('range of values for one policy instrument'));
 const results = textById('results');
 assert.ok(results.includes('Compare saved policy runs') && results.includes('sensitivity results'));
 assert.ok(results.includes('Detailed') && results.includes('submitted jobs'));
+const runHistory = textById('run-history');
+assert.ok(runHistory.includes('policy scenarios and sensitivity analyses'));
+assert.ok(runHistory.includes('Search them by name') && runHistory.includes('delete'));
 const model = textById('model-information');
 assert.ok(overview.steps.find((step) => step.id === 'model-information')?.bullets?.[0].startsWith('Understand the model’s assumptions'));
 assert.ok(model.includes('outputs match observed housing market data'));
@@ -58,4 +62,4 @@ const settings = textById('settings');
 assert.ok(settings.includes('application information in browser and desktop versions'));
 assert.ok(settings.includes('Desktop also opens results and logs folders, and exports support bundles'));
 
-console.log('Dashboard overview: five concise sidebar stops, routes, no example dependencies, and accurate page options passed.');
+console.log('Dashboard overview: six concise sidebar stops, routes, no example dependencies, and accurate page options passed.');

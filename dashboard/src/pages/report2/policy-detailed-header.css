@@ -152,6 +152,7 @@
 .policy-detailed-header .policy-detailed-toolbar .comparison-run-pickers.results-run-pickers > label:nth-child(2) > span:first-child::before { background: #20ae9c; }
 
 .policy-detailed-header .policy-detailed-toolbar .comparison-run-pickers.results-run-pickers select,
+.policy-detailed-header .policy-detailed-toolbar .comparison-run-pickers.results-run-pickers .run-picker-trigger,
 .policy-detailed-header .policy-detailed-report-actions select {
   color: #22304a;
   min-width: 0;

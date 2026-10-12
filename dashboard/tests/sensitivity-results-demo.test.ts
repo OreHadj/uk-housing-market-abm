@@ -107,7 +107,7 @@ for (const isComplete of [false, true]) {
   assert.ok(markup.includes('10 of 11'));
   assert.equal(/<button[^>]*disabled=""[^>]*>Next<\/button>/.test(markup), !isComplete, 'Opening the section enables Next');
   assert.equal(markup.includes('The ranking shows size, not reliability. A large bar can still be noise.'), isComplete);
-  assert.equal(markup.includes('Next, find Run History below.'), isComplete, 'The completed lesson points to the final stop');
+  assert.equal(markup.includes('Run History below'), false, 'Run History is not below the results');
   const section = renderToStaticMarkup(createElement(CollapsibleSection, {
     id: 'sensitivity-tested-values', title: 'Outcome responses and results by tested value',
     open: isComplete, onOpenChange: noop, children: createElement('select', { 'aria-label': 'Outcome measure' })
@@ -119,12 +119,12 @@ const history = demo.steps[10];
 assert.equal(history.kind, 'info', 'Run History needs no interaction');
 assert.equal(history.interactive, undefined);
 assert.equal(history.completion, undefined);
-assert.equal(history.target, '.sensitivity-run-history-card > .collapsible-section-toggle');
-assert.match(history.bullets!.join(' '), /Run History below lists saved sensitivity analyses.*manage eligible runs.*its own baseline/);
+assert.equal(history.target, '[data-guided-target="sidebar-run-history"]', 'The stop points at the Run History menu item');
+assert.match(history.bullets!.join(' '), /Run History, in the menu, lists saved sensitivity analyses.*Search them by name.*no longer need.*its own baseline/);
 const historyEntry = entry(10, expanded).searchParams;
-assert.equal(historyEntry.get('presentation'), 'detailed', 'Run History is found in Detailed');
+assert.equal(historyEntry.get('presentation'), 'detailed', 'The final stop stays in Detailed with the previous lesson');
 assert.equal(historyEntry.get('sensitivityResults'), 'open', 'Moving to Run History does not undo the opened section');
-assert.equal(entry(10, new URLSearchParams('presentation=report'), true).searchParams.get('presentation'), 'detailed', 'A stale Report link cannot hide Run History');
+assert.equal(entry(10, new URLSearchParams('presentation=report'), true).searchParams.get('presentation'), 'detailed', 'A stale Report link reopens the final stop in Detailed');
 const finalMarkup = renderToStaticMarkup(createElement(GuidedTourOverlay, {
   demoLabel: demo.label, step: history, stepIndex: 10, stepCount: 11, isComplete: false,
   onBack: noop, onNext: noop, onExit: noop, nextLabel: 'Finish', showExit: false

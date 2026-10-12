@@ -9225,8 +9225,8 @@ const manualResultsStylesSource = fs.readFileSync(
 );
 assert.ok(
   !manualResultsViewSource.includes('`${run.title} — ${run.runId}`') &&
-    manualResultsViewSource.includes('function formatRunOptionLabel') &&
-    manualResultsViewSource.includes('return getRunPrimaryLabel(run);') &&
+    manualResultsViewSource.includes('function runPickerOption') &&
+    manualResultsViewSource.includes('name: getRunPrimaryLabel(run)') &&
     manualResultsViewSource.includes('getRunModelVersion(run)') &&
     manualResultsViewSource.includes('reference policy not recorded') &&
     manualResultsViewSource.includes('className="run-policy-provenance"') &&
@@ -9385,11 +9385,19 @@ assert.ok(
     runHistoryDeletionHookSource.includes('canDeleteItem: (id) => latest.current.canDelete'),
   'Shared run history deletion should provide browser confirmation, a private-key prompt, and a current-access recheck'
 );
+const policyRunHistorySource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/run-history/PolicyRunHistory.tsx'),
+  'utf-8'
+);
+const sensitivityRunHistorySource = fs.readFileSync(
+  path.resolve(repoRoot, 'dashboard/src/pages/run-history/SensitivityRunHistory.tsx'),
+  'utf-8'
+);
 assert.ok(
-  manualResultsViewSource.includes('useRunHistoryDeletion({') &&
-    manualResultsViewSource.includes('canDelete: canDeleteResults') &&
-    manualResultsViewSource.includes('deleteKeyRequired,') &&
-    manualResultsViewSource.includes('deleteItem: deleteResultsRun'),
+  policyRunHistorySource.includes('useRunHistoryDeletion({') &&
+    policyRunHistorySource.includes('canDelete: canDeleteResults') &&
+    policyRunHistorySource.includes('deleteKeyRequired,') &&
+    policyRunHistorySource.includes('deleteItem: deleteResultsRun'),
   'Policy run history should pass deletion access and remote-key requirements through the shared confirmation flow'
 );
 
@@ -9419,10 +9427,10 @@ assert.ok(
   'Results chart containers, selectors, and modal headings should fit narrow viewports without clipping'
 );
 assert.ok(
-  sensitivityResultsViewSource.includes('useRunHistoryDeletion({') &&
-    sensitivityResultsViewSource.includes('canDelete: canDeleteResults') &&
-    sensitivityResultsViewSource.includes('deleteKeyRequired,') &&
-    sensitivityResultsViewSource.includes('deleteItem: deleteSensitivityExperiment'),
+  sensitivityRunHistorySource.includes('useRunHistoryDeletion({') &&
+    sensitivityRunHistorySource.includes('canDelete: canDeleteResults') &&
+    sensitivityRunHistorySource.includes('deleteKeyRequired,') &&
+    sensitivityRunHistorySource.includes('deleteItem: deleteSensitivityExperiment'),
   'Sensitivity run history should pass deletion access and remote-key requirements through the shared confirmation flow'
 );
 assert.ok(
@@ -9675,9 +9683,10 @@ assert.ok(
   'Results should retain its presentation control without a duplicate type switcher or page heading'
 );
 assert.ok(
-  resultsPageSource.includes('sidebarSubtitle="Manage policy scenario runs"') &&
-    experimentsPageSource.includes('sidebarSubtitle="Manage policy scenario runs"'),
-  'Policy Run History should describe its management purpose consistently in Results and Experiments'
+  !resultsPageSource.includes('sidebarSubtitle') && !experimentsPageSource.includes('sidebarSubtitle') &&
+    !manualResultsViewSource.includes('run-history-card') && !sensitivityResultsViewSource.includes('run-history-card') &&
+    !manualResultsViewSource.includes('useRunHistoryDeletion') && !sensitivityResultsViewSource.includes('useRunHistoryDeletion'),
+  'Run History has its own page; Results and Experiments do not embed it'
 );
 assert.ok(
   experimentsPageSource.includes("heading: 'Policy scenarios'") &&

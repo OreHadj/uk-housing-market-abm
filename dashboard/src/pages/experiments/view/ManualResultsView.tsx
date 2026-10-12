@@ -11,7 +11,6 @@ import type {
   ResultsFileManifestEntry,
   ResultsRunDetail,
   ResultsRunProvenance,
-  ResultsRunStatus,
   ResultsRunSummary
 } from '../../../../shared/types';
 import { CollapsibleSection } from '../../../components/CollapsibleSection';
@@ -19,15 +18,14 @@ import { EChart } from '../../../components/EChart';
 import { LoadingSkeleton, LoadingSkeletonGroup } from '../../../components/LoadingSkeleton';
 import { PolicyRanAs } from '../../../components/PolicyRanAs';
 import { ManualSelectionStatusPills } from '../../../components/ManualSelectionStatusPills';
+import { RunPicker, type RunPickerOption } from '../../../components/RunPicker';
 import {
   API_RETRY_DELAY_MS,
-  deleteResultsRun,
   downloadResultsRun,
   fetchLendingDistributionCompare,
   fetchModelRunJobs,
   fetchResultsCompare,
   fetchResultsRunDetail,
-  renameResultsRun,
   fetchResultsRunFiles,
   fetchResultsRuns,
   fetchVersions,
@@ -65,17 +63,16 @@ import {
 import { NewLendingCard, unavailableMessage, type LendingView } from './NewLendingCard';
 import { FullRunDetailsDialog } from './FullRunDetailsDialog';
 import { PolicyReportContext, PolicyReportView } from './PolicyReportView';
+import { getRunModelVersion, getRunPrimaryLabel } from '../../run-history/runHistoryDisplay';
 import { PolicyDetailedHeader } from '../../report2/PolicyDetailedHeader';
 import { POLICY_REPORT_INDICATORS } from '../../../lib/policyReport';
 import { ResultsQueue } from './ResultsQueue';
 import { manualResultsQueueItem } from '../../../lib/resultsQueue';
 import { readPolicyAnalysisWindow, updateReportQuery } from '../../../lib/reportUrlState';
 import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
-import { useResultsTopNavigation } from './useResultsTopNavigation';
-import { useRunHistoryDeletion } from './useRunHistoryDeletion';
-import { RunHistoryCheckbox, RunHistorySelectionToolbar } from './RunHistorySelection';
-import { buildResultsRunVersionLabelState, extractVersionFromResultsRunId } from '../../../lib/versionLabels';
-import { formatModelName, formatModelOptionLabel } from '../../../lib/modelAnchors';
+import { buildResultsRunVersionLabelState } from '../../../lib/versionLabels';
+import { formatModelOptionLabel } from '../../../lib/modelAnchors';
+import { isPracticeRunTitle } from '../../../lib/runSearch';
 import { summariseRunPolicy } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { buildExperimentsPath } from '../routeState';
@@ -86,7 +83,6 @@ import {
   writeScenarioDraft
 } from '../../../lib/scenarioDraft';
 
-const PROTECTED_RESULTS_RUN_IDS = new Set(['v0-output', 'v4.0-output']);
 const SHOW_DWELLINGS_PER_HOUSEHOLD = false;
 const SHOW_NEW_LENDING_SECTION = false;
 const SHOW_LENDING_DERIVED_INDICATORS = false;
@@ -255,21 +251,15 @@ function socialHousingRunNote(dwellingsPerHousehold: number | null): string | nu
 type ManifestTarget = 'baseline' | 'comparison';
 type ManualResultsMode = 'single' | 'compare';
 
-function getRunModelVersion(
-  run: Pick<ResultsRunSummary, 'runId'> & { configuration?: ResultsRunDetail['configuration'] }
-): string | null {
-  return run.configuration?.modelVersion ?? extractVersionFromResultsRunId(run.runId);
-}
-
-function getRunPrimaryLabel(run: Pick<ResultsRunSummary, 'runId' | 'title'>): string {
-  const title = run.title?.trim();
-  if (title) return title;
-  const version = getRunModelVersion(run);
-  return version ? formatModelName(version) : run.runId;
-}
-
-function formatRunOptionLabel(run: ResultsRunSummary): string {
-  return getRunPrimaryLabel(run);
+function runPickerOption(run: ResultsRunSummary, note?: string): RunPickerOption {
+  return {
+    value: run.runId,
+    name: getRunPrimaryLabel(run),
+    note,
+    modelVersion: getRunModelVersion(run),
+    isExample: run.isExample === true,
+    isPractice: isPracticeRunTitle(run.title)
+  };
 }
 
 function formatRunActionLabel(run: ResultsRunSummary): string {
@@ -290,11 +280,6 @@ interface ManualResultsViewProps {
   requestedJobRef?: string;
   queueInitiallyExpanded?: boolean;
   onManualSelectionChange: (selection: { baselineRunId: string; comparisonRunId: string; comparisonNoneFor: string; jobRef?: string }) => void;
-  sidebarSubtitle: string;
-}
-
-function isProtectedResultsRun(runId: string): boolean {
-  return PROTECTED_RESULTS_RUN_IDS.has(runId.trim());
 }
 
 /**
@@ -314,31 +299,6 @@ function deltaDirection(value: number | null): { symbol: string; label: string }
   return value > 0
     ? { symbol: '\u2191', label: 'Primary run is higher than comparison run' }
     : { symbol: '\u2193', label: 'Primary run is lower than comparison run' };
-}
-
-const QUEUE_STATUS_META: Record<ModelRunJobStatus, { label: string; className: string }> = {
-  queued: { label: 'Queued', className: 'status-pill partial' },
-  running: { label: 'In progress', className: 'status-pill partial' },
-  succeeded: { label: 'Completed successfully', className: 'status-pill complete' },
-  failed: { label: 'Failed', className: 'status-pill invalid' },
-  canceled: { label: 'Canceled', className: 'coverage-pill unsupported' }
-};
-
-function formatQueueTimestamp(value: string): string {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleString() : value;
-}
-
-
-function statusClass(status: ResultsRunStatus): string {
-  switch (status) {
-    case 'complete':
-      return 'status-pill complete';
-    case 'partial':
-      return 'status-pill partial';
-    default:
-      return 'status-pill invalid';
-  }
 }
 
 function coverageClass(status: ResultsFileManifestEntry['coverageStatus']): string {
@@ -366,26 +326,17 @@ export function ManualResultsView({
   requestedComparisonRunId,
   requestedJobRef = '',
   queueInitiallyExpanded = false,
-  onManualSelectionChange,
-  sidebarSubtitle
+  onManualSelectionChange
 }: ManualResultsViewProps) {
   const navigate = useNavigate();
   const [pageSearch, setPageSearch] = useSearchParams();
   const isGuidedPolicy = pageSearch.get('demo') === 'policy-results';
   const guidedTrendId = isGuidedPolicy ? pageSearch.get('policyTrend') ?? '' : '';
-  const guidedHistoryOpen = isGuidedPolicy && pageSearch.get('runHistory') === 'open';
   const guidedPolicyResultsOpen = isGuidedPolicy && pageSearch.get('policyResults') === 'open';
   const isAlignedDetailed = presentation === 'detailed' && Boolean(presentationControls);
-  const { selectionRef, requestScrollToTop } = useResultsTopNavigation();
   const [runs, setRuns] = useState<ResultsRunSummary[]>([]);
   const [loadedBaselineDetail, setBaselineDetail] = useState<ResultsRunDetail | null>(null);
   const [loadedComparisonDetail, setComparisonDetail] = useState<ResultsRunDetail | null>(null);
-  // Which run the detail panel describes. Set on hover *and* focus so the panel is reachable by
-  // keyboard, and cleared when the pointer leaves the list so it falls back to the selected run.
-  const [previewRunId, setPreviewRunId] = useState<string>('');
-  const [renamingRunId, setRenamingRunId] = useState<string>('');
-  const [renameDraft, setRenameDraft] = useState<string>('');
-  const [isSavingRename, setIsSavingRename] = useState<boolean>(false);
   const [manifest, setManifest] = useState<ResultsFileManifestEntry[]>([]);
   const [selectedIndicatorIds, setSelectedIndicatorIds] = useState<string[]>([]);
   const [activeIndicatorId, setActiveIndicatorId] = useState<string>(guidedTrendId);
@@ -421,7 +372,6 @@ export function ManualResultsView({
   const [lendingError, setLendingError] = useState<string>('');
   const [lendingView, setLendingView] = useState<LendingView>('distribution');
   const [lendingMetric, setLendingMetric] = useState<LendingMetricId>('ltv');
-  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(guidedHistoryOpen);
   const [isPolicyResultsExpanded, setIsPolicyResultsExpanded] = useState<boolean>(guidedPolicyResultsOpen);
   const [isLendingExpanded, setIsLendingExpanded] = useState<boolean>(false);
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
@@ -454,8 +404,8 @@ export function ManualResultsView({
     || requestedJob?.status === 'queued' || requestedJob?.status === 'running';
 
   // A run's output folder is created when it is queued, so an in-progress run appears in the
-  // results listing with no parsed output (0 MB, "invalid"). Keep those out of Run History — they
-  // belong in the Queue until they finish — so History only shows runs that actually completed.
+  // results listing with no parsed output (0 MB, "invalid"). Keep those out of the run pickers —
+  // they belong in the Queue until they finish — so only runs that actually completed are offered.
   const activeRunIds = useMemo(
     () => {
       const ids = new Set(
@@ -565,38 +515,6 @@ export function ManualResultsView({
       if (isCurrent() && requestId === runsRequestId.current) setIsLoadingRuns(false);
     }
   }, []);
-
-  const deletableHistoryItems = useMemo(
-    () => historyRuns
-      .filter((run) => !run.isExample && !isProtectedResultsRun(run.runId))
-      .map((run) => ({ id: run.runId, label: getRunPrimaryLabel(run) })),
-    [historyRuns]
-  );
-  const historyDeletion = useRunHistoryDeletion({
-    items: deletableHistoryItems,
-    canDelete: canDeleteResults,
-    deleteKeyRequired,
-    deleteItem: deleteResultsRun,
-    onDeleted: async (deletedRunIds) => {
-      const deletedIds = new Set(deletedRunIds);
-      for (const runId of deletedIds) removedRunIds.current.add(runId);
-      setRuns((current) => current.filter((run) => !deletedIds.has(run.runId)));
-      setPreviewRunId((current) => deletedIds.has(current) ? '' : current);
-      setRenamingRunId((current) => deletedIds.has(current) ? '' : current);
-
-      if (deletedIds.has(baselineRunId) || deletedIds.has(comparisonRunId)) {
-        const nextSelection = resolveManualRunSelection(
-          historyRuns.filter((run) => !deletedIds.has(run.runId)),
-          baselineRunId,
-          comparisonRunId,
-          { defaultToMatchedBaseline: false }
-        );
-        // Deleting a selected comparison leaves it cleared, including after the refresh.
-        onManualSelectionChange({ ...nextSelection, comparisonNoneFor: nextSelection.comparisonRunId ? '' : nextSelection.baselineRunId });
-      }
-      await loadRuns();
-    }
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -925,38 +843,6 @@ export function ManualResultsView({
     return run ? getRunPrimaryLabel(run) : runId;
   };
 
-  const submitRename = async (runId: string) => {
-    setIsSavingRename(true);
-    setLoadError('');
-    try {
-      await renameResultsRun(runId, renameDraft);
-      setRenamingRunId('');
-      setRenameDraft('');
-      await loadRuns();
-    } catch (error) {
-      setLoadError((error as Error).message);
-    } finally {
-      setIsSavingRename(false);
-    }
-  };
-
-  /**
-   * A run's full recorded policy, plus which settings deviate from the baseline it matches. Shown in
-   * full on every run so a run stays identifiable when its name is missing or unclear.
-   */
-  const describeRunPolicy = (run: ResultsRunSummary) => {
-    if (run.policySettings.length === 0) {
-      return null;
-    }
-    const summary = summariseRunPolicy(run.policySettings);
-    const changedKeys = new Set(summary.deviations.map((deviation) => deviation.key));
-    const heading = summary.basePolicyTitle
-      ? summary.deviations.length === 0
-        ? `${summary.basePolicyTitle}, unchanged`
-        : `${summary.basePolicyTitle} \u00b7 ${summary.deviations.length} changed`
-      : `${run.policySettings.length} Central Bank settings`;
-    return { heading, changedKeys };
-  };
   const baselineSummary = baselineRunId ? runById.get(baselineRunId) ?? null : null;
   const comparisonSummary = comparisonRunId ? runById.get(comparisonRunId) ?? null : null;
   const selectedRunName = baselineDetail ? getRunPrimaryLabel(baselineDetail) : baselineSummary ? getRunPrimaryLabel(baselineSummary) : requestedJob?.title || baselineRunId || requestedBaselineRunId || (selectedRunPending ? 'Checking submitted run…' : 'Select a policy run');
@@ -1139,8 +1025,6 @@ export function ManualResultsView({
     () => resolveActiveIndicatorPayload(overlayIndicators, selectedIndicatorIds, activeIndicatorId),
     [activeIndicatorId, overlayIndicators, selectedIndicatorIds]
   );
-  const showRunsSkeleton = isLoadingRuns && runs.length === 0;
-  const showRunsRefreshing = isLoadingRuns && runs.length > 0;
   const showKpiSkeleton = (isLoadingDetail || isLoadingCompare) && sortedKpis.length === 0;
   const showKpiRefreshing = (isLoadingDetail || isLoadingCompare) && sortedKpis.length > 0;
   const showOverlaySkeleton = isLoadingCompare && overlayIndicators.length === 0 && selectedIndicatorIds.length > 0;
@@ -1204,9 +1088,8 @@ export function ManualResultsView({
 
   useEffect(() => {
     if (!isGuidedPolicy) return;
-    setIsHistoryExpanded(guidedHistoryOpen);
     setIsPolicyResultsExpanded(guidedPolicyResultsOpen);
-  }, [guidedHistoryOpen, guidedPolicyResultsOpen, isGuidedPolicy]);
+  }, [guidedPolicyResultsOpen, isGuidedPolicy]);
 
   useEffect(() => {
     if (!isGuidedPolicy || presentation !== 'detailed') return;
@@ -1240,15 +1123,7 @@ export function ManualResultsView({
   );
 
   const setBaselineSelection = (runId: string) => {
-    // Deliberately leaves Run History open: selecting a run is often the first of several
-    // comparisons, and collapsing the list would throw away the user's place in it.
     updateSelection(runId, '');
-  };
-
-  const viewRunResults = (runId: string) => {
-    // Returning to the current primary run must preserve an explicitly selected comparison.
-    if (runId !== baselineRunId) setBaselineSelection(runId);
-    requestScrollToTop();
   };
 
   const openMatchingBaselineBuilder = () => {
@@ -1264,14 +1139,6 @@ export function ManualResultsView({
       baseline: matchingBaselineDraft.calibratedModel
     });
     navigate(`/scenarios/new?${params.toString()}`);
-  };
-
-  const toggleComparisonSelection = (runId: string) => {
-    if (!baselineRunId || runId === baselineRunId) {
-      return;
-    }
-
-    setComparisonSelection(comparisonRunId === runId ? '' : runId);
   };
 
   // The KPI table reports a mean; the distribution is where a flow limit actually shows up. These
@@ -1374,34 +1241,22 @@ export function ManualResultsView({
     );
   };
 
-  // Queue = pending work only (queued/running). Run History = every finished run: the completed
-  // runs on disk plus failed/cancelled jobs from this session (which have no saved results).
+  // Queue = pending work only (queued/running). Finished runs are managed on the Run History page.
   const queueItems = runJobs.filter((job) => job.status === 'queued' || job.status === 'running' || stopDeletion.pending?.jobRef === `manual:${job.jobId}`);
-  const failedHistoryJobs = runJobs.filter((job) =>
-    (job.status === 'failed' || job.status === 'canceled') && stopDeletion.pending?.jobRef !== `manual:${job.jobId}`
-  );
   const loadingRequestedJob = Boolean(requestedJobId) && !requestedJob;
-  const historyPreviewRun = baselineSummary ?? historyRuns[0] ?? null;
-  const finishedRunCount = historyRuns.length + failedHistoryJobs.length;
   const runPickers = (
     <div className="comparison-run-pickers results-run-pickers">
       <label>
       <span>{isAlignedDetailed ? 'Selected policy run' : 'Primary run'}</span>
-      <select
-        aria-label={isAlignedDetailed ? "Selected policy run" : undefined}
-        ref={selectionRef}
+      <RunPicker
+        label={isAlignedDetailed ? 'Selected policy run' : 'Primary run'}
         value={baselineRunId}
+        options={historyRuns.map((run) => runPickerOption(run))}
         disabled={historyRuns.length === 0}
-        onChange={(event) => setBaselineSelection(event.target.value)}
-      >
-        {!baselineRunId && <option value="">{selectedRunName}</option>}
-        {baselineRunId && !historyRuns.some((run) => run.runId === baselineRunId) && <option value={baselineRunId}>{selectedRunName}</option>}
-        {historyRuns.map((run) => (
-          <option key={run.runId} value={run.runId}>
-            {formatRunOptionLabel(run)}
-          </option>
-        ))}
-      </select>
+        onChange={setBaselineSelection}
+        placeholder={selectedRunName}
+        missingLabel={selectedRunName}
+      />
       {!isAlignedDetailed && baselineSummary && (
         <>
           <ManualSelectionStatusPills
@@ -1414,29 +1269,20 @@ export function ManualResultsView({
       </label>
       <label>
       <span>{isAlignedDetailed ? 'Comparison baseline' : 'Comparison run'}</span>
-      <select
-        aria-label={isAlignedDetailed ? "Comparison baseline" : undefined}
+      <RunPicker
+        label={isAlignedDetailed ? 'Comparison baseline' : 'Comparison run'}
         value={comparisonRunId}
-        disabled={!baselineRunId || historyRuns.length < 2}
-        onChange={(event) => setComparisonSelection(event.target.value)}
-      >
-        <option value="">No comparison run</option>
-        {historyRuns
+        options={historyRuns
           .filter((run) => run.runId !== baselineRunId)
-          .map((run) => {
-            const annotation = baselineSummary
-              ? formatManualComparisonOptionAnnotation(
-                  getManualComparisonFieldDifferences(baselineSummary, run)
-                )
-              : '';
-            return (
-              <option key={run.runId} value={run.runId}>
-                {formatRunOptionLabel(run)}
-                {annotation ? ` — ${annotation}` : ''}
-              </option>
-            );
-          })}
-      </select>
+          .map((run) => runPickerOption(run, baselineSummary
+            ? formatManualComparisonOptionAnnotation(getManualComparisonFieldDifferences(baselineSummary, run)) || undefined
+            : undefined))}
+        disabled={!baselineRunId || historyRuns.length < 2}
+        onChange={setComparisonSelection}
+        noneLabel="No comparison run"
+        clearLabel="Clear comparison run"
+        missingLabel={comparisonRunName}
+      />
       {!isAlignedDetailed && (comparisonSummary ? (
         <>
           <ManualSelectionStatusPills
@@ -1994,248 +1840,6 @@ export function ManualResultsView({
               onOpenChange={setIsLendingExpanded}
             />
           )}
-
-          <CollapsibleSection
-            className="results-card run-history-card"
-            title="Run History"
-            description={sidebarSubtitle}
-            summary={`${finishedRunCount} finished ${finishedRunCount === 1 ? 'run' : 'runs'}`}
-            open={isHistoryExpanded}
-            onOpenChange={(open) => {
-              setIsHistoryExpanded(open);
-              if (isGuidedPolicy) setPageSearch((current) => {
-                const next = new URLSearchParams(current);
-                if (open) next.set('runHistory', 'open');
-                else next.delete('runHistory');
-                return next;
-              }, { replace: true });
-            }}
-          >
-            {historyPreviewRun ? (
-              <button
-                type="button"
-                className={`run-preview-card ${historyPreviewRun.runId === baselineRunId ? 'is-active' : ''}`}
-                onClick={() => viewRunResults(historyPreviewRun.runId)}
-              >
-                <span className="run-preview-title">{getRunPrimaryLabel(historyPreviewRun)}</span>
-                <span className="run-preview-meta">
-                  <span className={statusClass(historyPreviewRun.status)}>{historyPreviewRun.status}</span>
-                  <span className="run-preview-action">
-                    View results
-                  </span>
-                </span>
-              </button>
-            ) : (
-              <p className="info-banner">No completed runs yet.</p>
-            )}
-
-            <div className="disclosure-expanded-list">
-                {canDeleteResults && <RunHistorySelectionToolbar selection={historyDeletion} />}
-                {historyDeletion.error && <p className="error-banner" role="alert">{historyDeletion.error}</p>}
-                {showRunsRefreshing && (
-                  <LoadingSkeleton
-                    as="span"
-                    className="loading-skeleton-pill section-loading-row"
-                    ariaLabel="Refreshing runs"
-                  />
-                )}
-                {showRunsSkeleton ? (
-                  <LoadingSkeletonGroup
-                    className="run-list-skeleton"
-                    count={4}
-                    itemClassName="loading-skeleton-card run-item-skeleton"
-                    ariaLabel="Loading runs"
-                  />
-                ) : (
-                  <div className="run-history-split" onMouseLeave={() => setPreviewRunId('')}>
-                  <ul className="run-list">
-                    {historyRuns.map((run) => {
-                      const isBaselineSelected = baselineRunId === run.runId;
-                      const isComparisonSelected = comparisonRunId === run.runId;
-                      const deleteDisabledReason = run.isExample
-                        ? 'Example runs cannot be deleted.'
-                        : isProtectedResultsRun(run.runId) ? 'Protected runs cannot be deleted.' : undefined;
-                      return (
-                        <li
-                          key={run.runId}
-                          className={[
-                            'run-item',
-                            isBaselineSelected ? 'selected-baseline' : '',
-                            isComparisonSelected ? 'selected-comparison' : '',
-                            previewRunId === run.runId ? 'is-previewed' : ''
-                          ]
-                            .filter(Boolean)
-                            .join(' ')}
-                          onMouseEnter={() => setPreviewRunId(run.runId)}
-                          onFocus={() => setPreviewRunId(run.runId)}
-                        >
-                          <div className="run-item-head">
-                            {canDeleteResults && (
-                              <RunHistoryCheckbox
-                                label={getRunPrimaryLabel(run)}
-                                checked={historyDeletion.selectedIds.has(run.runId)}
-                                disabled={historyDeletion.isDeleting || Boolean(deleteDisabledReason)}
-                                disabledReason={deleteDisabledReason}
-                                onChange={(checked) => historyDeletion.toggle(run.runId, checked)}
-                              />
-                            )}
-                            <div className="run-item-name">
-                              {renamingRunId === run.runId ? (
-                                <form
-                                  className="run-rename-form"
-                                  onSubmit={(event) => {
-                                    event.preventDefault();
-                                    void submitRename(run.runId);
-                                  }}
-                                >
-                                  <input
-                                    type="text"
-                                    value={renameDraft}
-                                    maxLength={120}
-                                    autoFocus
-                                    aria-label={`Rename ${run.title ?? run.runId}`}
-                                    placeholder="Scenario name"
-                                    disabled={isSavingRename}
-                                    onChange={(event) => setRenameDraft(event.target.value)}
-                                  />
-                                  <button type="submit" className="run-select-btn" disabled={isSavingRename}>
-                                    {isSavingRename ? 'Saving...' : 'Save'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="table-toggle"
-                                    disabled={isSavingRename}
-                                    onClick={() => {
-                                      setRenamingRunId('');
-                                      setRenameDraft('');
-                                    }}
-                                  >
-                                    Cancel
-                                  </button>
-                                </form>
-                              ) : (
-                                <strong>{getRunPrimaryLabel(run)}</strong>
-                              )}
-                            </div>
-                            <div className="run-role-chips">
-                              {isBaselineSelected && <span className="run-role-chip">Primary run</span>}
-                              {isComparisonSelected && <span className="run-role-chip comparison">Comparison run</span>}
-                            </div>
-                          </div>
-
-                          <div className="manual-run-action-row">
-                            <button
-                              type="button"
-                              className={`run-select-btn ${isBaselineSelected ? 'active' : ''}`}
-                              onClick={() => viewRunResults(run.runId)}
-                            >
-                              View results
-                            </button>
-                            <button
-                              type="button"
-                              className={`run-select-btn ${isComparisonSelected ? 'active' : ''}`}
-                              onClick={() => toggleComparisonSelection(run.runId)}
-                              disabled={!baselineRunId || isBaselineSelected}
-                            >
-                              {isComparisonSelected ? 'Clear comparison run' : 'Set as comparison run'}
-                            </button>
-                            {canWrite && !run.isExample && renamingRunId !== run.runId && (
-                              <button
-                                type="button"
-                                className="table-toggle"
-                                onClick={() => {
-                                  setRenamingRunId(run.runId);
-                                  setRenameDraft(run.title ?? '');
-                                }}
-                              >
-                                Rename
-                              </button>
-                            )}
-                          </div>
-
-                          <div className="run-meta">
-                            <span className={statusClass(run.status)}>{run.status}</span>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                  {(() => {
-                    const detailRun = runById.get(previewRunId) ?? runById.get(baselineRunId) ?? historyRuns[0] ?? null;
-                    if (!detailRun) {
-                      return null;
-                    }
-                    const policy = describeRunPolicy(detailRun);
-                    return (
-                      <div className="run-history-preview" aria-live="polite">
-                        <p className="run-history-preview-eyebrow">
-                          {previewRunId === detailRun.runId ? 'Hovered run' : 'Selected run'}
-                        </p>
-                        <h4>{getRunPrimaryLabel(detailRun)}</h4>
-                        <p className="run-item-id"><strong>Run ID:</strong> {detailRun.runId}</p>
-                        <div className="run-meta">
-                          <span className={statusClass(detailRun.status)}>{detailRun.status}</span>
-                          <span>{(detailRun.sizeBytes / 1024 / 1024).toFixed(1)} MB</span>
-                          <span>
-                            Coverage {detailRun.parseCoverage.supportedCount}/{detailRun.parseCoverage.requiredCount}
-                          </span>
-                        </div>
-                        {policy ? (
-                          <div className="run-item-policy">
-                            <p className="run-item-policy-head">{policy.heading}</p>
-                            <dl className="run-item-policy-list">
-                              {detailRun.policySettings.map((setting) => {
-                                const display = CENTRAL_BANK_POLICY_DISPLAY[setting.key];
-                                const isChanged = policy.changedKeys.has(setting.key);
-                                return (
-                                  <div
-                                    key={setting.key}
-                                    className={isChanged ? 'is-changed' : undefined}
-                                    title={setting.key}
-                                  >
-                                    <dt>{display?.label ?? setting.key}</dt>
-                                    <dd>
-                                      {display ? formatPolicyValue(setting.value, display.unit) : String(setting.value)}
-                                      {isChanged && <PolicyRanAs settingKey={setting.key} ranAs={setting.ranAs} />}
-                                    </dd>
-                                  </div>
-                                );
-                              })}
-                            </dl>
-                          </div>
-                        ) : (
-                          <p className="info-banner">No policy settings recorded for this run.</p>
-                        )}
-                      </div>
-                    );
-                  })()}
-                  </div>
-                )}
-                {failedHistoryJobs.length > 0 && (
-                  <ul className="run-list run-history-failed-list">
-                    {failedHistoryJobs.map((job) => (
-                      <li key={job.jobId} className="run-item run-item-failed">
-                        <div className="run-item-head">
-                          <strong>{job.title || job.runId || job.jobId}</strong>
-                          <span className={QUEUE_STATUS_META[job.status].className}>
-                            {QUEUE_STATUS_META[job.status].label}
-                          </span>
-                        </div>
-                        <p className="run-queue-failure">
-                          This run {job.status === 'canceled' ? 'was cancelled' : 'failed'} — no results.
-                          {job.signal
-                            ? ` Stopped by signal ${job.signal}.`
-                            : job.exitCode != null
-                              ? ` Exit code ${job.exitCode}.`
-                              : ''}
-                        </p>
-                        <p>{formatQueueTimestamp(job.createdAt)}</p>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-          </CollapsibleSection>
 
           <article className="results-card manual-results-files-card">
             <CollapsibleSection

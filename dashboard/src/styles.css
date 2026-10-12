@@ -351,8 +351,8 @@ code {
   letter-spacing: -0.025em;
 }
 
-.workspace-page-title .model-information-workspace-title { white-space: normal; }
-.workspace-page-title .model-information-workspace-title > span[aria-hidden='true'] { color: #728098; font-weight: 400; }
+.workspace-page-title :is(.model-information-workspace-title, .run-history-workspace-title) { white-space: normal; }
+.workspace-page-title :is(.model-information-workspace-title, .run-history-workspace-title) > span[aria-hidden='true'] { color: #728098; font-weight: 400; }
 
 .settings-page {
   max-width: 48rem;
@@ -1056,16 +1056,6 @@ section.block:first-of-type { border-top: none; }
   box-shadow: 0 0 0 2px rgba(11, 114, 133, 0.1);
 }
 
-.run-item.selected-baseline {
-  border-color: rgba(11, 114, 133, 0.45);
-  box-shadow: 0 0 0 2px rgba(11, 114, 133, 0.1);
-}
-
-.run-item.selected-comparison {
-  border-color: rgba(24, 149, 139, 0.4);
-  box-shadow: 0 0 0 2px rgba(24, 149, 139, 0.08);
-}
-
 /* A run is named by its scenario title, with the opaque generated id kept underneath so it stays
    identifiable in logs and downloads. */
 .run-item-name {
@@ -1165,7 +1155,251 @@ section.block:first-of-type { border-top: none; }
   cursor: not-allowed;
 }
 
+/* Run History page: the searchable run list beside the details panel. */
+.results-layout.run-history-layout > .run-history-card {
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.run-history-search {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.run-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(100%, 28rem);
+  margin: 0;
+}
+
+.run-search-icon {
+  position: absolute;
+  left: 0.6rem;
+  width: 0.95rem;
+  height: 0.95rem;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.run-search-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--results-control-height);
+  border: 1px solid var(--rule-strong);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.6rem 0.2rem 2rem;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.run-search-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.run-history-card .run-history-search-count {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* `.results-card p` would otherwise turn a failed rename or delete dark red on red. */
+.run-history-card .error-banner {
+  color: #fff;
+}
+
+/* Practice runs and examples sit in collapsed groups at the bottom of the list. */
+.run-history-group {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.policy-results-group-toggle.run-history-group-toggle {
+  padding: 0.55rem 0.5rem;
+  border-radius: 0.6rem;
+}
+
+.policy-results-group-toggle.run-history-group-toggle strong {
+  font-size: 0.85rem;
+}
+
+.run-history-group-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.run-history-group-list[hidden] { display: none; }
+
 .run-history-card .run-item-head > .run-item-name { flex: 1; }
+
+/* Run pickers. Each results header sizes `.run-picker-trigger` with its own select rule. */
+.run-picker {
+  position: relative;
+  min-width: 0;
+}
+
+.run-picker-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.run-picker-trigger:disabled {
+  color: rgba(34, 48, 74, 0.45);
+}
+
+/* The closed field shows the same magnifier as the search boxes. */
+.run-picker-trigger .run-search-icon {
+  left: 10px;
+  width: 1em;
+  height: 1em;
+  color: #67758c;
+}
+
+.run-picker-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: calc(1em + 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.run-picker.has-clear .run-picker-value {
+  padding-right: 1.3rem;
+}
+
+.run-picker-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #67758c;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.run-picker-clear:hover {
+  color: #22304a;
+  background: rgba(34, 48, 74, 0.07);
+}
+
+.run-picker-clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.run-picker-clear svg {
+  width: 10px;
+  height: 10px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+}
+
+/* Same border and shadow as the report's info popovers. */
+.run-picker-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  display: grid;
+  gap: 6px;
+  box-sizing: border-box;
+  width: max(100%, 18rem);
+  max-width: calc(100vw - 2rem);
+  padding: 8px;
+  border: 1px solid #dce3ef;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 5px 22px #22304a24;
+  text-align: left;
+  font-weight: 400;
+}
+
+.run-picker-search.run-search-field {
+  width: 100%;
+}
+
+.run-picker-search.run-search-field input {
+  height: 36px;
+  font-size: inherit;
+}
+
+.run-picker-list {
+  position: relative;
+  max-height: min(22rem, 50vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.run-picker-group {
+  margin-top: 4px;
+}
+
+.run-picker-group-label {
+  padding: 8px 8px 4px;
+  color: #728098;
+  font-size: 0.7em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-picker-option {
+  padding: 7px 8px;
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+  cursor: default;
+}
+
+.run-picker-option.is-active {
+  background: #eef2f8;
+}
+
+.run-picker-option[aria-selected='true'] {
+  font-weight: 600;
+}
+
+.run-picker-option-note {
+  color: #728098;
+  font-weight: 400;
+}
+
+.run-picker-popup .run-picker-empty {
+  margin: 0;
+  padding: 8px;
+  color: #728098;
+  font-size: 0.9em;
+}
+
+/* The compact pickers in the workspace views use a smaller field, so their list matches it. */
+.comparison-control-strip .results-run-pickers .run-picker-popup,
+.sensitivity-summary-card .results-run-pickers .run-picker-popup {
+  font-size: 0.75rem;
+}
 
 /* Every run name gets the same three-line block, so the cards in the list share one height; a longer
    name ends in an ellipsis and is shown in full in the details panel. */
@@ -1333,28 +1567,6 @@ section.block:first-of-type { border-top: none; }
   gap: 0.6rem;
 }
 
-.run-role-chips {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.run-role-chip {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.15rem 0.5rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  background: rgba(11, 114, 133, 0.12);
-  color: #0b7285;
-}
-
-.run-role-chip.comparison {
-  background: rgba(24, 149, 139, 0.12);
-  color: #0f766e;
-}
-
 .run-select {
   display: flex;
   align-items: center;
@@ -1377,6 +1589,14 @@ section.block:first-of-type { border-top: none; }
   font-size: 0.76rem;
   font-weight: 700;
   cursor: pointer;
+}
+
+/* Links drawn as run buttons, such as "View results" on Run History cards. */
+a.run-select-btn {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
 }
 
 .run-select-btn:hover:not(:disabled) {
@@ -1861,7 +2081,8 @@ section.block:first-of-type { border-top: none; }
   font-weight: 500;
 }
 
-.results-layout .comparison-run-pickers.results-run-pickers select {
+.results-layout .comparison-run-pickers.results-run-pickers select,
+.results-layout .comparison-run-pickers.results-run-pickers .run-picker-trigger {
   box-sizing: border-box;
   min-width: 0;
   width: 12rem;
@@ -1880,7 +2101,8 @@ section.block:first-of-type { border-top: none; }
   grid-column: 1 / -1;
 }
 
-.results-layout .results-run-pickers select:focus-visible {
+.results-layout .results-run-pickers select:focus-visible,
+.results-layout .results-run-pickers .run-picker-trigger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -6086,18 +6308,6 @@ section.block:first-of-type { border-top: none; }
   color: var(--muted);
 }
 
-.run-preview-action {
-  margin-left: auto;
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.disclosure-expanded-list {
-  margin-top: 0.7rem;
-  border-top: 1px solid rgba(17, 32, 24, 0.08);
-  padding-top: 0.7rem;
-}
-
 .run-item-failed .run-item-head {
   display: flex;
   align-items: center;
@@ -7115,10 +7325,6 @@ section.block:first-of-type { border-top: none; }
 
 .scenario-create-modal-body .scenario-summary {
   padding: 0.85rem;
-}
-
-.sensitivity-run-history-card {
-  width: 100%;
 }
 
 /* Baseline value of a swept setting, shown under its tested range so the comparison the results

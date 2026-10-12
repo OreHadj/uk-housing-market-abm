@@ -52,7 +52,7 @@ export function SubmittedReport({ type, jobRef, selectionId, queueInitiallyExpan
       <p>{canceling ? 'Canceling your run.' : <>{checking ? 'Checking your run.' : job?.status === 'running' ? 'Your run is running.' : 'Your run is queued.'} This Report will load automatically when it finishes.</>}</p>
       {job?.title && <p>{job.title}</p>}
     </div>}
-    {!pending && failed && <p className="error-banner" role="alert">{job?.status === 'failed' ? 'The run failed.' : 'The run was canceled.'} Use Detailed to inspect its Run History entry.</p>}
+    {!pending && failed && <p className="error-banner" role="alert">{job?.status === 'failed' ? 'The run failed.' : 'The run was canceled.'} Open Run History in the menu to see its entry.</p>}
   </div>;
 
   // Keep the report shell mounted: its selectors must remain usable while work is pending.

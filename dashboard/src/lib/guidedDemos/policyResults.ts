@@ -103,18 +103,17 @@ export const POLICY_RESULTS_DEMO: GuidedDemoDefinition = {
       actionHint: 'Open Policy results, Credit access, then the Mortgage approvals trend.',
       completionBullets: [
         'The horizontal axis shows simulation months.',
-        'Dotted lines show each run’s mean.',
-        'Next, find Run History below Policy results.'
+        'Dotted lines show each run’s mean.'
       ],
       completion: { kind: 'selector', selector: 'body:has(.manual-results-aggregate-card > .collapsible-section-toggle[aria-expanded="true"]) .trend-modal[data-indicator-id="core_mortgageApprovals"]' }
     }),
     stop({ id: 'run-history', title: 'Manage your runs', kind: 'info',
       query: { presentation: 'detailed', policyTrend: '' },
       restoreQueryKeys: ['presentation', 'policyResults'],
-      target: '.run-history-card > .collapsible-section-toggle',
+      target: '[data-guided-target="sidebar-run-history"]',
       body: '', bullets: [
-        'Run History below lists saved runs.',
-        'Open it later to revisit results and manage eligible runs.'
+        'Run History, in the menu, lists saved runs.',
+        'Search them by name, rename them, and delete the ones you no longer need.'
       ] })
   ],
   completion: { title: 'Ready to explore policy results', body: '', bullets: [

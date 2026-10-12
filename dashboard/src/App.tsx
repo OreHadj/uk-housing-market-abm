@@ -15,12 +15,22 @@ import { LoginPage } from './pages/LoginPage';
 import { ModelEvidencePage } from './pages/ModelEvidencePage';
 import { ResultsPage } from './pages/ResultsPage';
 import { ResultsLandingPage } from './pages/ResultsLandingPage';
+import { RunHistoryPage } from './pages/run-history/RunHistoryPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkspaceTypeNavigation } from './components/WorkspaceTypeNavigation';
 import { ModelInformationNavigation } from './components/ModelInformationNavigation';
 import { GuidedDemo } from './components/GuidedDemo';
 import { PrimaryNavigationIcon } from './components/PrimaryNavigationIcon';
-import { getActivePrimaryDestination, getModelInformationView, getResultsNavigationSearch, isResultsLanding, MODEL_INFORMATION_VIEWS, PRIMARY_DESTINATION_LABELS } from './lib/workspaceNavigation';
+import {
+  getActivePrimaryDestination,
+  getModelInformationView,
+  getResultsNavigationSearch,
+  getRunHistoryType,
+  isResultsLanding,
+  MODEL_INFORMATION_VIEWS,
+  PRIMARY_DESTINATION_LABELS,
+  RUN_HISTORY_PATH
+} from './lib/workspaceNavigation';
 
 const AUTH_TOKEN_STORAGE_KEY = 'dashboard.writeAuthToken';
 const VIEW_MODE_STORAGE_KEY = 'dashboard.viewMode';
@@ -145,9 +155,11 @@ export function App() {
   const loginPath = `/login?next=${encodeURIComponent(EXPERIMENTS_VIEW_PATH)}`;
   const activePrimaryDestination = getActivePrimaryDestination(location.pathname);
   const resultsLanding = activePrimaryDestination === 'results' && isResultsLanding(new URLSearchParams(location.search));
+  const runHistoryType = activePrimaryDestination === 'run-history' ? getRunHistoryType(new URLSearchParams(location.search)) : null;
   const [openSidebarSections, setOpenSidebarSections] = useState(() => ({
     experiments: activePrimaryDestination === 'experiments',
     results: activePrimaryDestination === 'results',
+    'run-history': activePrimaryDestination === 'run-history',
     'model-evidence': activePrimaryDestination === 'model-evidence'
   }));
   const [lastResultsSearch, setLastResultsSearch] = useState(() => activePrimaryDestination === 'results' && !resultsLanding
@@ -156,7 +168,10 @@ export function App() {
   const modelInformationView = getModelInformationView(new URLSearchParams(location.search));
 
   useEffect(() => {
-    if (activePrimaryDestination === 'experiments' || activePrimaryDestination === 'results' || activePrimaryDestination === 'model-evidence') {
+    if (
+      activePrimaryDestination === 'experiments' || activePrimaryDestination === 'results' ||
+      activePrimaryDestination === 'run-history' || activePrimaryDestination === 'model-evidence'
+    ) {
       setOpenSidebarSections((current) => current[activePrimaryDestination]
         ? current : { ...current, [activePrimaryDestination]: true });
     }
@@ -332,6 +347,30 @@ export function App() {
               <WorkspaceTypeNavigation area="results" resultsSearch={lastResultsSearch} />
             </div>
           </div>
+          {experimentsVisible && (
+            <div className={`sidebar-destination${activePrimaryDestination === 'run-history' ? ' is-active' : ''}${openSidebarSections['run-history'] ? ' is-expanded' : ''}`}>
+              <Link
+                className={activePrimaryDestination === 'run-history' ? 'active' : undefined}
+                aria-current={activePrimaryDestination === 'run-history' ? runHistoryType ? 'true' : 'page' : undefined}
+                aria-expanded={openSidebarSections['run-history']}
+                aria-controls="sidebar-run-history-types"
+                to={RUN_HISTORY_PATH}
+                data-guided-target="sidebar-run-history"
+                onClick={(event) => {
+                  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  setOpenSidebarSections((current) => ({
+                    ...current,
+                    'run-history': activePrimaryDestination === 'run-history' && !runHistoryType ? !current['run-history'] : true
+                  }));
+                }}
+              >
+                <span className="main-nav-destination-content"><PrimaryNavigationIcon destination="run-history" /><span>{PRIMARY_DESTINATION_LABELS['run-history']}</span></span>
+              </Link>
+              <div id="sidebar-run-history-types" hidden={!openSidebarSections['run-history']}>
+                <WorkspaceTypeNavigation area="run-history" />
+              </div>
+            </div>
+          )}
           {modelEvidenceVisible && (
             <div className={`sidebar-destination${activePrimaryDestination === 'model-evidence' ? ' is-active' : ''}${openSidebarSections['model-evidence'] ? ' is-expanded' : ''}`}>
               <Link
@@ -401,6 +440,9 @@ export function App() {
                 {PRIMARY_DESTINATION_LABELS[activePrimaryDestination]}
                 {activePrimaryDestination === 'model-evidence' && <span className="model-information-workspace-title">
                   <span aria-hidden="true"> / </span>{MODEL_INFORMATION_VIEWS.find((view) => view.id === modelInformationView)?.label}
+                </span>}
+                {runHistoryType && <span className="run-history-workspace-title">
+                  <span aria-hidden="true"> / </span>{runHistoryType === 'manual' ? 'Policy scenarios' : 'Sensitivity analysis'}
                 </span>}
               </h2>
             )}
@@ -506,6 +548,18 @@ export function App() {
                     authEnabled={authStatus.authEnabled}
                   />
                 )}
+              />
+            )}
+            {experimentsVisible && (
+              <Route
+                path={RUN_HISTORY_PATH}
+                element={
+                  <RunHistoryPage
+                    canWrite={authStatus.canWrite}
+                    canDeleteResults={authStatus.canDeleteResults}
+                    deleteKeyRequired={authStatus.deleteKeyRequired}
+                  />
+                }
               />
             )}
             {experimentsVisible && (

@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
 import type { RunHistoryDeletionSelection } from './useRunHistoryDeletion';
 
-export function RunHistorySelectionToolbar({ selection }: { selection: RunHistoryDeletionSelection }) {
+export function RunHistorySelectionToolbar({ selection, selectAllLabel = 'Select all' }: {
+  selection: RunHistoryDeletionSelection;
+  selectAllLabel?: string;
+}) {
   const selectAllRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (selectAllRef.current) selectAllRef.current.indeterminate = selection.someSelected;
@@ -16,7 +19,7 @@ export function RunHistorySelectionToolbar({ selection }: { selection: RunHistor
         disabled={selection.isDeleting || selection.selectableCount === 0}
         onChange={(event) => selection.selectAll(event.target.checked)}
       />
-      <span>Select all</span>
+      <span>{selectAllLabel}</span>
     </label>
     <span className="run-history-selection-count" role="status">{selection.selectedCount} selected</span>
     <button

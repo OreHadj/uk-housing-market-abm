@@ -15,7 +15,7 @@ export const DASHBOARD_OVERVIEW_DEMO: GuidedDemoDefinition = {
   id: 'dashboard-overview',
   label: 'Explore the dashboard',
   description: 'Find each section and see what you can do there.',
-  duration: 'Five short stops',
+  duration: 'Six short stops',
   startHere: true,
   finishOnLastStep: true,
   requiredRunIds: [],
@@ -33,6 +33,10 @@ export const DASHBOARD_OVERVIEW_DEMO: GuidedDemoDefinition = {
       'Compare saved policy runs and explore sensitivity results.',
       'Report summarises outcomes. Detailed adds indicators, charts and files.',
       'Follow submitted jobs here.'
+    ]),
+    stop('run-history', '/run-history', 'Run History', [
+      'Find saved policy scenarios and sensitivity analyses.',
+      'Search them by name, rename them, and delete the ones you no longer need.'
     ]),
     stop('model-information', '/model-evidence', 'Model information', [
       'Understand the model’s assumptions and how closely its outputs match observed housing market data.',

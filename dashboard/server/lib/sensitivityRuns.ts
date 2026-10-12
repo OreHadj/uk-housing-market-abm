@@ -11,6 +11,7 @@ import type {
   SensitivityExperimentChartsPayload,
   SensitivityExperimentCreateRequest,
   SensitivityExperimentDeleteResponse,
+  SensitivityExperimentRenameResponse,
   SensitivityExperimentDetailPayload,
   SensitivityExperimentListPayload,
   SensitivityExperimentLogsPayload,
@@ -71,6 +72,7 @@ import {
 import {
   hashDirectory,
   hashFile,
+  RUN_MANIFEST_FILE_NAME,
   writeSensitivityRunManifest,
   type SensitivityRunManifestPoint
 } from './runManifest';
@@ -2385,6 +2387,55 @@ export function deleteSensitivityExperiment(
     experimentId: normalized,
     deleted: true
   };
+}
+
+/**
+ * Renames an analysis by rewriting the title in its own metadata, and in its manifest when it has
+ * one, so the name travels with the results folder like a policy run's. An empty title clears the
+ * name, and the analysis falls back to being identified by its id.
+ */
+export function renameSensitivityExperiment(
+  pathsInput: RuntimePathInput,
+  experimentId: string,
+  title: string
+): SensitivityExperimentRenameResponse {
+  assertDemoExampleMutable('sensitivity', experimentId);
+  assertDemoExampleTitleAvailable(title);
+  ensureLoaded(pathsInput);
+  const state = getRepoState(pathsInput);
+  const normalized = experimentId.trim();
+  const record = state.experimentsById.get(normalized);
+  if (!record) {
+    throw new Error(`Unknown sensitivity experiment: ${experimentId}`);
+  }
+
+  const trimmed = title.trim();
+  if (trimmed.length > 120) {
+    throw new Error('Run name must be 120 characters or fewer.');
+  }
+  // The same clean-up a new analysis's name gets, so a renamed one reads the same way.
+  const nextTitle = trimmed ? sanitizeFragment(trimmed).slice(0, 120) || undefined : undefined;
+  record.metadata.title = nextTitle;
+  writeMetadata(record.runtimePaths, record.metadata);
+
+  const manifestPath = path.join(getExperimentOutputDir(record.runtimePaths, normalized), RUN_MANIFEST_FILE_NAME);
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as {
+        updatedAt?: string;
+        experiment?: Record<string, unknown>;
+      };
+      if (manifest.experiment && typeof manifest.experiment === 'object') {
+        manifest.experiment.title = nextTitle ?? null;
+        manifest.updatedAt = new Date().toISOString();
+        fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf-8');
+      }
+    } catch {
+      // metadata.json is the record the dashboard reads; an unreadable manifest is left as it was.
+    }
+  }
+
+  return { experimentId: normalized, title: nextTitle ?? null };
 }
 
 export function getSensitivityExperimentResults(

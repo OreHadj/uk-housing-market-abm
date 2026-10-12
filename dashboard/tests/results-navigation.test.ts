@@ -31,6 +31,7 @@ function execute(source: string, context: vm.Context) {
 
 const manual = readView('ManualResultsView');
 const sensitivity = readView('SensitivityResultsView');
+// Picking a run in the selector selects it.
 for (const kind of ['manual', 'sensitivity']) {
   const calls: Array<{ name: string; value?: unknown }> = [];
   const context = vm.createContext({
@@ -38,22 +39,16 @@ for (const kind of ['manual', 'sensitivity']) {
     useCallback: (callback: unknown) => callback,
     setPageError: () => {},
     onManualSelectionChange: (value: unknown) => calls.push({ name: 'select', value: structuredClone(value) }),
-    onSelectedExperimentIdChange: (value: unknown) => calls.push({ name: 'select', value }),
-    requestScrollToTop: () => calls.push({ name: 'scroll' })
+    onSelectedExperimentIdChange: (value: unknown) => calls.push({ name: 'select', value })
   });
   const view = kind === 'manual' ? manual : sensitivity;
-  const handlers = kind === 'manual'
-    ? ['updateSelection', 'setBaselineSelection', 'viewRunResults']
-    : ['selectExperiment', 'viewRunResults'];
+  const handlers = kind === 'manual' ? ['updateSelection', 'setBaselineSelection'] : ['selectExperiment'];
   execute(handlers.map((name) => `const ${name} = ${view.expressions.get(name)};`).join('\n'), context);
-  execute("viewRunResults('other')", context);
+  execute(kind === 'manual' ? "setBaselineSelection('other')" : "selectExperiment('other')", context);
   assert.deepEqual(calls, [
-    { name: 'select', value: kind === 'manual' ? { baselineRunId: 'other', comparisonRunId: '', comparisonNoneFor: '' } : 'other' },
-    { name: 'scroll' }
-  ], `${kind}: select the clicked run before requesting the scroll`);
-  calls.length = 0;
-  execute("viewRunResults('current')", context);
-  assert.deepEqual(calls, [{ name: 'scroll' }], `${kind}: reopening the current results scrolls without resetting selection or comparison`);
+    { name: 'select', value: kind === 'manual' ? { baselineRunId: 'other', comparisonRunId: '', comparisonNoneFor: '' } : 'other' }
+  ], `${kind}: picking a run selects it`);
+  assert.equal(view.expressions.has('viewRunResults'), false, `${kind}: Run History is not part of Results`);
 }
 
 for (const requested of ['run-a', 'run-b', 'run-a', 'just-submitted']) {
@@ -85,47 +80,6 @@ for (const [view, guards, context] of [
     assert.equal(execute(`(${view.expressions.get(guard)})`, vm.createContext(context)), null,
       `${guard}: never paint a previous run's data under the newly selected run`);
   }
-}
-
-// Verify that scrolling happens after the selection render, and is repeatable for the same run.
-const hookSource = fs.readFileSync(new URL('../src/pages/experiments/view/useResultsTopNavigation.ts', import.meta.url), 'utf8');
-const hookFile = ts.createSourceFile('hook.ts', hookSource, ts.ScriptTarget.Latest, true);
-const hook = hookFile.statements.find((node) => ts.isFunctionDeclaration(node))?.getText(hookFile);
-assert.ok(hook);
-let request = 0;
-let previousRequest = -1;
-let layoutEffect: (() => void) | undefined;
-const scrolls: unknown[] = [];
-const focusOptions: unknown[] = [];
-const hookContext = vm.createContext({
-  exports: {},
-  useState: () => [request, (update: (current: number) => number) => { request = update(request); }],
-  useRef: () => ({ current: { focus: (options: unknown) => focusOptions.push(options) } }),
-  useLayoutEffect: (effect: () => void, deps: number[]) => {
-    if (deps[0] !== previousRequest) { layoutEffect = effect; previousRequest = deps[0]; }
-  },
-  window: { scrollTo: (options: unknown) => scrolls.push(options) }
-});
-execute(hook, hookContext);
-const renderNavigation = () => {
-  const value = execute('useResultsTopNavigation()', hookContext) as { requestScrollToTop: () => void };
-  layoutEffect?.();
-  layoutEffect = undefined;
-  return value;
-};
-let navigation = renderNavigation();
-assert.equal(scrolls.length, 0, 'Polling and initial renders must not jump the page');
-for (let click = 1; click <= 2; click += 1) {
-  navigation.requestScrollToTop();
-  assert.equal(scrolls.length, click - 1, 'Wait for the selected run to render before scrolling');
-  navigation = renderNavigation();
-  assert.equal(scrolls.length, click);
-  assert.equal(focusOptions.length, click);
-  assert.equal((scrolls.at(-1) as ScrollToOptions).top, 0);
-  assert.equal((scrolls.at(-1) as ScrollToOptions).behavior, 'instant');
-  assert.equal((focusOptions.at(-1) as FocusOptions).preventScroll, true);
-  renderNavigation();
-  assert.equal(scrolls.length, click, 'Background re-renders do not repeat a user scroll');
 }
 
 console.log('Results navigation tests passed.');

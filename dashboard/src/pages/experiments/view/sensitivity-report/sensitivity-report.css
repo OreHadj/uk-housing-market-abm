@@ -12,11 +12,10 @@
 .results-layout.sensitivity-results-report .comparison-run-pickers { grid-column: 1; grid-row: 1; margin: 0; display: block; min-width: 0; }
 .results-layout.sensitivity-results-report .comparison-run-pickers > label { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 0; border: 0; background: none; }
 .results-layout.sensitivity-results-report .comparison-run-pickers > label > span:first-child { font-size: 16px; white-space: nowrap; }
-.results-layout.sensitivity-results-report .comparison-run-pickers select { padding: 8px 10px; font-size: 16px; border-radius: 4px; min-height: 40px; }
+.results-layout.sensitivity-results-report .comparison-run-pickers select,
+.results-layout.sensitivity-results-report .comparison-run-pickers .run-picker-trigger { padding: 8px 10px; font-size: 16px; border-radius: 4px; min-height: 40px; }
 .results-layout.sensitivity-results-report .comparison-run-pickers .status-pill { font-size: 13px; }
 .results-layout.sensitivity-results-report > .sensitivity-summary-card > p { grid-column: 1 / -1; }
-.results-layout.sensitivity-results-report > .sensitivity-run-history-card { padding-block: 8px; }
-.results-layout.sensitivity-results-report > .sensitivity-run-history-card > .collapsible-section-toggle { padding-block: 4px; }
 
 .sensitivity-report {
   --sr-ink: #22363d;

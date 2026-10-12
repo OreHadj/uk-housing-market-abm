@@ -8,13 +8,18 @@ import {
   MODEL_INFORMATION_VIEWS,
   buildModelInformationViewHref,
   buildResultsTypeHref,
+  buildRunHistoryTypeHref,
+  buildRunReportHref,
   getActivePrimaryDestination,
   getExperimentType,
   getResultsType,
   getResultsNavigationSearch,
   isResultsLanding,
   getModelInformationView,
+  getRunHistoryType,
+  PRIMARY_DESTINATION_LABELS,
   resolveExperimentSetupHref,
+  RUN_HISTORY_PATH,
   type PrimaryDestination
 } from '../src/lib/workspaceNavigation.js';
 import {
@@ -39,6 +44,7 @@ const primaryDestinations: ReadonlyArray<readonly [string, PrimaryDestination | 
   ['/new-scenario', 'experiments'],
   ['/compare', 'experiments'],
   ['/results', 'results'],
+  ['/run-history', 'run-history'],
   ['/model-evidence', 'model-evidence'],
   ['/calibration', 'model-evidence'],
   ['/validation', 'model-evidence'],
@@ -130,7 +136,7 @@ assert.equal(
   'Returning to policy results retains selections and opens Report'
 );
 
-function renderTypes(area: 'experiments' | 'results', path: string, resultsSearch?: string) {
+function renderTypes(area: 'experiments' | 'results' | 'run-history', path: string, resultsSearch?: string) {
   return renderToStaticMarkup(createElement(
     MemoryRouter,
     { initialEntries: [path] },
@@ -163,6 +169,42 @@ for (const path of ['/results', '/results?demo=dashboard-overview&step=results']
   const hrefs = [...landingResults.matchAll(/href="([^"]+)"/g)].map((match) => match[1].replaceAll('&amp;', '&'));
   assert.deepEqual(hrefs, [buildResultsTypeHref(originalSearch, 'manual'), buildResultsTypeHref(originalSearch, 'sensitivity')], 'Landing navigation retains the previous selections');
 }
+
+// Run History is its own page, not the old /runs alias, and each kind starts with an empty search.
+assert.equal(RUN_HISTORY_PATH, '/run-history');
+assert.equal(PRIMARY_DESTINATION_LABELS['run-history'], 'Run History');
+assert.equal(getActivePrimaryDestination('/runs'), 'experiments', 'The older /runs alias keeps redirecting to scenarios');
+assert.equal(getRunHistoryType(new URLSearchParams()), null, 'Bare Run History opens the chooser');
+assert.equal(getRunHistoryType(new URLSearchParams('type=unknown')), null);
+assert.equal(getRunHistoryType(new URLSearchParams('type=manual&q=ltv')), 'manual');
+assert.equal(getRunHistoryType(new URLSearchParams('type=%20sensitivity%20')), 'sensitivity');
+assert.equal(buildRunHistoryTypeHref('manual'), '/run-history?type=manual');
+assert.equal(buildRunHistoryTypeHref('sensitivity'), '/run-history?type=sensitivity');
+// "View results" opens the Report with the run selected, policy runs with their matched baseline.
+const policyReport = new URL(buildRunReportHref('manual', 'Bank Rate +1pp v0o7', 'Baseline v0o7'), 'http://dashboard.test');
+assert.equal(policyReport.pathname, '/results');
+assert.deepEqual([...policyReport.searchParams], [
+  ['type', 'manual'], ['presentation', 'report'], ['baselineRunId', 'Bank Rate +1pp v0o7'], ['comparisonRunId', 'Baseline v0o7']
+]);
+assert.equal(isResultsLanding(policyReport.searchParams), false, 'The link opens a Report, not the Results chooser');
+assert.equal(getResultsType(policyReport.searchParams), 'manual');
+assert.equal(new URL(buildRunReportHref('manual', 'Solo run'), 'http://dashboard.test').searchParams.has('comparisonRunId'), false,
+  'Without a matched baseline the Report opens with no comparison');
+const sensitivityReport = new URL(buildRunReportHref('sensitivity', 'sensitivity-1'), 'http://dashboard.test');
+assert.deepEqual([...sensitivityReport.searchParams], [['type', 'sensitivity'], ['presentation', 'report'], ['experimentId', 'sensitivity-1']]);
+assert.equal(getResultsType(sensitivityReport.searchParams), 'sensitivity');
+
+const runHistoryLanding = renderTypes('run-history', '/run-history');
+assert.equal(runHistoryLanding.includes('aria-current'), false, 'The Run History chooser has no selected kind');
+assert.ok(runHistoryLanding.includes('aria-label="Run History type"'));
+assert.deepEqual([...runHistoryLanding.matchAll(/href="([^"]+)"/g)].map((match) => match[1].replaceAll('&amp;', '&')),
+  ['/run-history?type=manual', '/run-history?type=sensitivity']);
+const currentRunHistory = renderTypes('run-history', '/run-history?type=sensitivity&q=bank+rate');
+const activeRunHistoryLink = currentRunHistory.match(/<a\b[^>]*aria-current="page"[^>]*>/g) ?? [];
+assert.equal(activeRunHistoryLink.length, 1);
+assert.ok(activeRunHistoryLink[0].includes('href="/run-history?type=sensitivity"'), 'Switching kinds starts a fresh search');
+assert.equal(renderTypes('run-history', '/results?type=manual').includes('aria-current'), false,
+  'Run History links are never current on another page');
 
 const offRouteExperiments = renderTypes('experiments', '/model-evidence?view=validation');
 assert.equal(offRouteExperiments.includes('aria-current'), false, 'Expanded experiment links are inactive away from setup');

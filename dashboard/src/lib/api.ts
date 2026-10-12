@@ -30,6 +30,7 @@ import type {
   SensitivityExperimentChartsPayload,
   SensitivityExperimentCreateRequest,
   SensitivityExperimentDeleteResponse,
+  SensitivityExperimentRenameResponse,
   SensitivityExperimentDetailPayload,
   SensitivityExperimentListPayload,
   SensitivityExperimentLogsPayload,
@@ -529,6 +530,18 @@ export async function deleteSensitivityExperiment(
     withDeleteKeyHeader({
       method: 'DELETE'
     }, deleteKey)
+  );
+}
+
+export async function renameSensitivityExperiment(experimentId: string, title: string): Promise<SensitivityExperimentRenameResponse> {
+  return requestJsonWithInit<SensitivityExperimentRenameResponse>(
+    buildApiUrl(`/api/experiments/sensitivity/${encodeURIComponent(experimentId)}/title`),
+    'Failed to rename sensitivity experiment',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    }
   );
 }
 

@@ -39,7 +39,7 @@ const resultsSteps: readonly NavigationDemoStep[] = [
   },
   {
     id: 'detailed', section: 'Results · Detailed', title: 'Find exact values and saved files',
-    body: 'Detailed opens the fuller result tables. Expand Policy results, then use View trend beside an indicator. Below, Run History lists saved runs and File Manifest lists their files. Pending jobs appear in Queue when present. Switch back to Report for the overview.',
+    body: 'Detailed opens the fuller result tables. Expand Policy results, then use View trend beside an indicator. Below, File Manifest lists the selected runs’ files. Pending jobs appear in Queue when present, and Run History, in the menu, lists saved runs. Switch back to Report for the overview.',
     path: '/results', query: { type: 'manual', presentation: 'detailed' }, targetSelector: '.manual-results-aggregate-card'
   },
   {

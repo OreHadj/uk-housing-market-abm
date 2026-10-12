@@ -11,9 +11,9 @@ import type {
 import type { EChartsOption } from 'echarts';
 import { CollapsibleSection } from '../../../components/CollapsibleSection';
 import { EChart } from '../../../components/EChart';
+import { RunPicker } from '../../../components/RunPicker';
 import {
   API_RETRY_DELAY_MS,
-  deleteSensitivityExperiment,
   downloadSensitivityExperiment,
   fetchSensitivityExperiment,
   fetchSensitivityExperimentCharts,
@@ -29,14 +29,16 @@ import {
 import { BASE_POLICY_OPTIONS, CENTRAL_BANK_POLICY_KEYS } from '../../../../shared/policyCatalogue';
 import { CENTRAL_BANK_POLICY_DISPLAY, formatPolicyValue } from '../../../../shared/policyDisplay';
 import { formatModelOptionLabel } from '../../../lib/modelAnchors';
+import { isPracticeRunTitle } from '../../../lib/runSearch';
 import { buildExperimentsPath } from '../routeState';
 import { DEFAULT_EXPERIMENT_ROUTE_STATE } from '../types';
 import { ResultsQueue } from './ResultsQueue';
 import { sensitivityResultsQueueItem } from '../../../lib/resultsQueue';
 import { useStopAndDeleteExperiment } from './useStopAndDeleteExperiment';
-import { useResultsTopNavigation } from './useResultsTopNavigation';
-import { useRunHistoryDeletion } from './useRunHistoryDeletion';
-import { RunHistoryCheckbox, RunHistorySelectionToolbar } from './RunHistorySelection';
+import {
+  formatSensitivityStatus as formatStatus,
+  sensitivityStatusClass as statusClass
+} from '../../run-history/runHistoryDisplay';
 import { SensitivityReportView } from './sensitivity-report/SensitivityReportView';
 import { formatReportSetting, getReportWindowLabel, reportPolicyUnit } from './sensitivity-report/reportModel';
 import { SensitivityResultsHeader } from '../../sensitivity-report2/SensitivityResultsHeader';
@@ -56,34 +58,6 @@ interface SensitivityResultsViewProps {
   preferCompletedRun?: boolean;
   queueInitiallyExpanded?: boolean;
   onSelectedExperimentIdChange: (experimentId: string) => void;
-  sidebarSubtitle: string;
-}
-
-function statusClass(status: SensitivityExperimentSummary['status']): string {
-  switch (status) {
-    case 'succeeded':
-      return 'status-pill complete';
-    case 'running':
-      return 'status-pill partial';
-    case 'queued':
-    case 'canceled':
-      return 'coverage-pill unsupported';
-    default:
-      return 'status-pill invalid';
-  }
-}
-
-function formatStatus(status: SensitivityExperimentSummary['status']): string {
-  return status.replace('_', ' ');
-}
-
-function formatQueueTimestamp(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-}
-
-function isFinishedStatus(status: SensitivityExperimentSummary['status']): boolean {
-  return status === 'succeeded' || status === 'failed' || status === 'canceled';
 }
 
 function formatMetric(value: number | null): string {
@@ -98,10 +72,6 @@ function formatSignedPercent(value: number | null): string {
     return 'n/a';
   }
   return `${value >= 0 ? '+' : ''}${value.toLocaleString('en-GB', { maximumFractionDigits: 6 })}%`;
-}
-
-function formatBasePolicyLabel(basePolicy: SensitivityExperimentSummary['basePolicy']): string {
-  return basePolicy ? `${basePolicy} baseline policy` : 'Not recorded';
 }
 
 /**
@@ -204,12 +174,18 @@ function buildTornadoOption(bars: SensitivityExperimentChartsPayload['tornado'],
 }
 
 /**
- * Option text for the run selector. The instrument is what actually distinguishes two sweeps of the
- * same baseline, so it rides along with the name rather than being left to the summary below.
+ * The run selector's entry. The instrument is what actually distinguishes two sweeps of the same
+ * baseline, so it rides along with the name rather than being left to the summary below.
  */
-function formatExperimentOptionLabel(experiment: SensitivityExperimentSummary): string {
-  const name = experiment.title || experiment.experimentId;
-  return `${name} — ${experiment.parameter.title}`;
+function experimentPickerOption(experiment: SensitivityExperimentSummary) {
+  return {
+    value: experiment.experimentId,
+    name: experiment.title || experiment.experimentId,
+    note: experiment.parameter?.title,
+    modelVersion: experiment.baseline,
+    isExample: experiment.isExample === true,
+    isPractice: isPracticeRunTitle(experiment.title)
+  };
 }
 
 export function SensitivityResultsView({
@@ -223,8 +199,7 @@ export function SensitivityResultsView({
   requestedExperimentId,
   preferCompletedRun = false,
   queueInitiallyExpanded = false,
-  onSelectedExperimentIdChange,
-  sidebarSubtitle
+  onSelectedExperimentIdChange
 }: SensitivityResultsViewProps) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [experiments, setExperiments] = useState<SensitivityExperimentSummary[]>([]);
@@ -232,7 +207,6 @@ export function SensitivityResultsView({
   const selectedExperimentId = requestedExperimentId
     || (preferCompletedRun ? experiments.find((experiment) => experiment.status === 'succeeded')?.experimentId : '')
     || experiments[0]?.experimentId || '';
-  const { selectionRef, requestScrollToTop } = useResultsTopNavigation();
   const [loadedDetail, setDetail] = useState<SensitivityExperimentMetadata | null>(null);
   const [loadedResults, setResults] = useState<SensitivityExperimentResultsPayload | null>(null);
   const [loadedCharts, setCharts] = useState<SensitivityExperimentChartsPayload | null>(null);
@@ -246,7 +220,6 @@ export function SensitivityResultsView({
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(true);
   const [isLoadingDetail, setIsLoadingDetail] = useState<boolean>(false);
   const [isDownloadingExperiment, setIsDownloadingExperiment] = useState<boolean>(false);
-  const [previewExperimentId, setPreviewExperimentId] = useState<string>('');
   const [pageError, setPageError] = useState<string>('');
   const [isQueueExpanded, setIsQueueExpanded] = useState<boolean>(queueInitiallyExpanded);
   const removedExperimentIds = useRef(new Set<string>());
@@ -271,22 +244,6 @@ export function SensitivityResultsView({
     [experiments, stopDeletion.pending?.jobRef]
   );
   const selectedExperimentStatus = experiments.find((experiment) => experiment.experimentId === selectedExperimentId)?.status;
-  const historyExperiments = useMemo(
-    () => experiments.filter((experiment) => isFinishedStatus(experiment.status)
-      && stopDeletion.pending?.jobRef !== `sensitivity:${experiment.experimentId}`),
-    [experiments, stopDeletion.pending?.jobRef]
-  );
-  const historyPreviewExperiment = historyExperiments.find((experiment) => experiment.experimentId === selectedExperimentId)
-    ?? historyExperiments[0] ?? null;
-  const previewExperiment = historyExperiments.find((experiment) => experiment.experimentId === previewExperimentId)
-    ?? historyPreviewExperiment;
-  const historyDeletionItems = useMemo(
-    () => historyExperiments.filter((experiment) => !experiment.isExample).map((experiment) => ({
-      id: experiment.experimentId,
-      label: experiment.title || experiment.experimentId
-    })),
-    [historyExperiments]
-  );
 
   useEffect(() => {
     // Fill an absent selection once; never write an older local selection over an explicit URL.
@@ -440,37 +397,12 @@ export function SensitivityResultsView({
     }
   };
 
-  const historyDeletion = useRunHistoryDeletion({
-    items: historyDeletionItems,
-    canDelete: canDeleteResults,
-    deleteKeyRequired,
-    deleteItem: deleteSensitivityExperiment,
-    onDeleted: async (ids) => {
-      const deletedIds = new Set(ids);
-      for (const id of ids) removedExperimentIds.current.add(id);
-      setExperiments((current) => current.filter((experiment) => !deletedIds.has(experiment.experimentId)));
-      setPreviewExperimentId((current) => deletedIds.has(current) ? '' : current);
-      if (deletedIds.has(selectedExperimentId)) {
-        onSelectedExperimentIdChange('');
-        setDetail(null);
-        setResults(null);
-        setCharts(null);
-      }
-      await refreshHistory();
-    }
-  });
-
   const sweptPolicy = useMemo(() => describeSweptPolicy(detail), [detail]);
   const sweepSummary = useMemo(() => describeSweepSummary(detail), [detail]);
 
   const selectExperiment = (experimentId: string) => {
     setPageError('');
     onSelectedExperimentIdChange(experimentId);
-  };
-
-  const viewRunResults = (experimentId: string) => {
-    if (experimentId !== selectedExperimentId) selectExperiment(experimentId);
-    requestScrollToTop();
   };
 
   const loginPath = `/login?next=${encodeURIComponent(
@@ -486,22 +418,15 @@ export function SensitivityResultsView({
     <div className="comparison-run-pickers results-run-pickers">
       <label>
         <span>Select run to view</span>
-        <select
-          ref={selectionRef}
+        <RunPicker
+          label="Select run to view"
           value={selectedExperimentId}
+          options={experiments.map(experimentPickerOption)}
           disabled={isLoadingHistory || experiments.length === 0}
-          onChange={(event) => selectExperiment(event.target.value)}
-        >
-          {experiments.length === 0 && <option value="">No sensitivity analyses yet</option>}
-          {selectedExperimentId && !experiments.some((experiment) => experiment.experimentId === selectedExperimentId) && (
-            <option value={selectedExperimentId}>{detail?.title || selectedExperimentId}</option>
-          )}
-          {experiments.map((experiment) => (
-            <option key={experiment.experimentId} value={experiment.experimentId}>
-              {formatExperimentOptionLabel(experiment)}
-            </option>
-          ))}
-        </select>
+          onChange={selectExperiment}
+          placeholder={experiments.length === 0 ? 'No sensitivity analyses yet' : ''}
+          missingLabel={detail?.title || selectedExperimentId}
+        />
         {!presentationControls && selectedExperiment && (
           <span className="run-preview-meta">
             <span className={statusClass(selectedExperiment.status)}>{formatStatus(selectedExperiment.status)}</span>
@@ -856,115 +781,6 @@ export function SensitivityResultsView({
           </CollapsibleSection>
         )}
       </div>
-
-      <CollapsibleSection
-        className="results-card run-history-card sensitivity-run-history-card"
-        title="Run History"
-        description={sidebarSubtitle}
-        summary={`${historyExperiments.length} finished ${historyExperiments.length === 1 ? 'run' : 'runs'}`}
-        defaultOpen={false}
-      >
-        {isLoadingHistory ? (
-          <p className="loading-banner">Loading experiments...</p>
-        ) : historyPreviewExperiment ? (
-          <button
-            type="button"
-            className={`run-preview-card ${historyPreviewExperiment.experimentId === selectedExperimentId ? 'is-active' : ''}`}
-            onClick={() => viewRunResults(historyPreviewExperiment.experimentId)}
-          >
-            <span className="run-preview-title">{historyPreviewExperiment.title || historyPreviewExperiment.experimentId}</span>
-            <span className="run-preview-meta">
-              <span className={statusClass(historyPreviewExperiment.status)}>{formatStatus(historyPreviewExperiment.status)}</span>
-              <span className="run-preview-action">View results</span>
-            </span>
-          </button>
-        ) : (
-          <p className="info-banner">No finished sensitivity runs yet. Active runs appear in the queue.</p>
-        )}
-        <div className="disclosure-expanded-list">
-          {canDeleteResults && historyExperiments.length > 0 && <RunHistorySelectionToolbar selection={historyDeletion} />}
-          {historyDeletion.error && <p className="error-banner" role="alert">{historyDeletion.error}</p>}
-          {historyExperiments.length > 0 && (
-            <div className="run-history-split" onMouseLeave={() => setPreviewExperimentId('')}>
-              <ul className="run-list">
-                {historyExperiments.map((experiment) => {
-                  const isSelected = selectedExperimentId === experiment.experimentId;
-                  const label = experiment.title || experiment.experimentId;
-                  return (
-                    <li
-                      key={experiment.experimentId}
-                      className={[
-                        'run-item',
-                        isSelected ? 'selected-baseline' : '',
-                        previewExperimentId === experiment.experimentId ? 'is-previewed' : ''
-                      ].filter(Boolean).join(' ')}
-                      onMouseEnter={() => setPreviewExperimentId(experiment.experimentId)}
-                      onFocus={() => setPreviewExperimentId(experiment.experimentId)}
-                    >
-                      <div className="run-item-head">
-                        {canDeleteResults && (
-                          <RunHistoryCheckbox
-                            label={label}
-                            checked={historyDeletion.selectedIds.has(experiment.experimentId)}
-                            disabled={historyDeletion.isDeleting || Boolean(experiment.isExample)}
-                            disabledReason={experiment.isExample ? 'Bundled example runs cannot be deleted.' : undefined}
-                            onChange={(checked) => historyDeletion.toggle(experiment.experimentId, checked)}
-                          />
-                        )}
-                        <div className="run-item-name"><strong>{label}</strong></div>
-                        {isSelected && <div className="run-role-chips"><span className="run-role-chip">Viewing</span></div>}
-                      </div>
-                      <div className="manual-run-action-row">
-                        <button
-                          type="button"
-                          className={`run-select-btn ${isSelected ? 'active' : ''}`}
-                          onClick={() => viewRunResults(experiment.experimentId)}
-                        >
-                          View results
-                        </button>
-                      </div>
-                      <div className="run-meta">
-                        <span className={statusClass(experiment.status)}>{formatStatus(experiment.status)}</span>
-                        {experiment.isExample && <span>Example</span>}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-              {previewExperiment && (
-                <div className="run-history-preview" aria-live="polite">
-                  <p className="run-history-preview-eyebrow">
-                    {previewExperimentId === previewExperiment.experimentId ? 'Previewed run'
-                      : previewExperiment.experimentId === selectedExperimentId ? 'Selected run' : 'Latest finished run'}
-                  </p>
-                  <h4>{previewExperiment.title || previewExperiment.experimentId}</h4>
-                  <p className="run-item-id"><strong>Run ID:</strong> {previewExperiment.experimentId}</p>
-                  <div className="run-meta">
-                    <span className={statusClass(previewExperiment.status)}>{formatStatus(previewExperiment.status)}</span>
-                    {previewExperiment.isExample && <span>Example</span>}
-                  </div>
-                  <div className="run-item-policy">
-                    <p className="run-item-policy-head">Sensitivity setup</p>
-                    <dl className="run-item-policy-list">
-                      <div><dt>Instrument</dt><dd>{previewExperiment.parameter.title}</dd></div>
-                      <div><dt>Baseline policy</dt><dd>{formatBasePolicyLabel(previewExperiment.basePolicy)}</dd></div>
-                      <div><dt>Model</dt><dd>{formatModelOptionLabel(previewExperiment.baseline)}</dd></div>
-                      <div><dt>Created</dt><dd>{formatQueueTimestamp(previewExperiment.createdAt)}</dd></div>
-                      {previewExperiment.endedAt && (
-                        <div><dt>Finished</dt><dd>{formatQueueTimestamp(previewExperiment.endedAt)}</dd></div>
-                      )}
-                      <div><dt>Requested sample points</dt><dd>{previewExperiment.parameter.sampleCount}</dd></div>
-                      {(previewExperiment.seedsPerPoint ?? previewExperiment.seeds?.length) !== undefined && (
-                        <div><dt>Seeds per point</dt><dd>{previewExperiment.seedsPerPoint ?? previewExperiment.seeds?.length}</dd></div>
-                      )}
-                    </dl>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </CollapsibleSection>
     </section>
   );
 }

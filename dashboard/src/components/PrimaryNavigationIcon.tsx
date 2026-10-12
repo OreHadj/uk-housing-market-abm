@@ -20,6 +20,10 @@ export function PrimaryNavigationIcon({ destination }: { destination: PrimaryDes
         <path d="M10 17h.01M14 18h.01" />
       </>}
       {destination === 'results' && <path d="M4 3v17h17M8 16v-5m5 5V7m5 9V4" />}
+      {destination === 'run-history' && <>
+        <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6M3 4v4h4" />
+        <path d="M12 7.5V12l3 2" />
+      </>}
       {destination === 'model-evidence' && <>
         <circle cx="12" cy="12" r="9" />
         <path d="M12 11v6M12 7h.01" />

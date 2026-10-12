@@ -144,7 +144,6 @@ export function ResultsPage({
           requestedJobRef={submittedJobRef}
           queueInitiallyExpanded={queueInitiallyExpanded}
           onManualSelectionChange={(selection) => updateSearch({ ...selection, runId: '', jobRef: selection.jobRef ?? '' })}
-          sidebarSubtitle="Manage policy scenario runs"
         />
       ) : (
         <SensitivityResultsView
@@ -159,7 +158,6 @@ export function ResultsPage({
           preferCompletedRun={searchParams.get('demo') === NAVIGATION_DEMO_QUERY_VALUE}
           queueInitiallyExpanded={queueInitiallyExpanded}
           onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value, jobRef: '' })}
-          sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />
       )}
     </section>

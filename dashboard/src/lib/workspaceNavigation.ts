@@ -2,9 +2,12 @@ import type { ExperimentType } from '../pages/experiments/types';
 import { createScenarioDraftId, resumableScenarioDraftId } from './scenarioDraft';
 import { createSensitivityDraftId, resumableSensitivityDraftId } from './sensitivityDraft';
 
-export type PrimaryDestination = 'home' | 'experiments' | 'results' | 'model-evidence' | 'settings';
+export type PrimaryDestination = 'home' | 'experiments' | 'results' | 'run-history' | 'model-evidence' | 'settings';
 
 export type ModelInformationView = 'calibration' | 'validation';
+
+/** `/runs` is an older redirect to `/scenarios`, so Run History has its own path. */
+export const RUN_HISTORY_PATH = '/run-history';
 
 export const MODEL_INFORMATION_VIEWS = [
   {
@@ -35,6 +38,7 @@ export const PRIMARY_DESTINATION_LABELS: Record<PrimaryDestination, string> = {
   home: 'Home',
   experiments: 'Experiments',
   results: 'Results',
+  'run-history': 'Run History',
   'model-evidence': 'Model information',
   settings: 'Settings'
 };
@@ -43,6 +47,7 @@ export function getActivePrimaryDestination(pathname: string): PrimaryDestinatio
   if (pathname === '/') return 'home';
   if (pathname === '/experiments') return 'experiments';
   if (pathname === '/results') return 'results';
+  if (pathname === RUN_HISTORY_PATH) return 'run-history';
   if (pathname === '/settings') return 'settings';
   if (pathname === '/model-evidence' || pathname === '/calibration' || pathname === '/validation') {
     return 'model-evidence';
@@ -107,4 +112,27 @@ export function buildResultsTypeHref(search: URLSearchParams, type: ExperimentTy
   next.set('type', type);
   next.set('presentation', 'report');
   return `/results?${next.toString()}`;
+}
+
+/** Bare Run History opens the chooser; `type` opens one kind's saved runs. */
+export function getRunHistoryType(search: URLSearchParams): ExperimentType | null {
+  const requested = search.get('type')?.trim();
+  return requested === 'manual' || requested === 'sensitivity' ? requested : null;
+}
+
+/** Each kind starts with an empty search, which lives in the URL (`q`) from then on. */
+export function buildRunHistoryTypeHref(type: ExperimentType): string {
+  return `${RUN_HISTORY_PATH}?${new URLSearchParams({ type })}`;
+}
+
+/** Run History's "View results": the Report with that run selected, as choosing it in the picker would. */
+export function buildRunReportHref(type: ExperimentType, runId: string, comparisonRunId = ''): string {
+  const search = new URLSearchParams({ type, presentation: 'report' });
+  if (type === 'manual') {
+    search.set('baselineRunId', runId);
+    if (comparisonRunId) search.set('comparisonRunId', comparisonRunId);
+  } else {
+    search.set('experimentId', runId);
+  }
+  return `/results?${search}`;
 }

@@ -569,7 +569,6 @@ export function ExperimentsPage({
           requestedComparisonRunId={comparisonRunId}
           queueInitiallyExpanded={queueInitiallyExpanded}
           onManualSelectionChange={(selection) => updateSearch(selection)}
-          sidebarSubtitle="Manage policy scenario runs"
         />
       ) : (
         <SensitivityResultsView
@@ -581,7 +580,6 @@ export function ExperimentsPage({
           requestedExperimentId={experimentId}
           queueInitiallyExpanded={queueInitiallyExpanded}
           onSelectedExperimentIdChange={(value) => updateSearch({ experimentId: value })}
-          sidebarSubtitle="Completed and in-progress sensitivity analyses"
         />
       ))}
     </section>

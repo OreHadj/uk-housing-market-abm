@@ -22,7 +22,7 @@
 .sensitivity-report2 label > span { color: #67758c; font-size: 12.65px; font-weight: 600; }
 .sensitivity-report2 .sr2-experiment > span { display: flex; align-items: center; gap: 7px; }
 .sensitivity-report2 .sr2-experiment > span::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--sr2-blue); }
-.sensitivity-report2 select { width: 100%; min-width: 0; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; color: var(--sr2-ink); padding: 0 30px 0 10px; text-overflow: ellipsis; }
+.sensitivity-report2 select, .sensitivity-report2 .run-picker-trigger { width: 100%; min-width: 0; height: 44px; border: 1px solid #dce3ef; border-radius: 7px; background: #fff; color: var(--sr2-ink); padding: 0 30px 0 10px; text-overflow: ellipsis; }
 .sensitivity-report2 .sr2-toolbar .results-presentation-bar { margin: 0; height: 44px; font-size: 14.95px; gap: 10px; }
 .sensitivity-report2 .sr2-toolbar .results-presentation-toggle { height: 44px; padding: 3px; gap: 3px; }
 .sensitivity-report2 .sr2-toolbar .results-presentation-toggle button { padding: 7px 12px; }
