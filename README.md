@@ -49,8 +49,8 @@ in File Explorer does not update its shortcuts or uninstall registration.
 The app includes the dashboard, a bundled Java 25 runtime, the model, and supported
 offline input-data snapshots. Open **Experiments** to run either:
 
-- a **manual run**, using a selected baseline and model settings; or
-- a **sensitivity run**, which varies one parameter across a defined range.
+- a **policy scenario**, which changes Central Bank policy settings for a chosen model version; or
+- a **sensitivity analysis**, which varies one parameter across a defined range.
 
 Results, logs, and generated configurations are retained locally under
 `%APPDATA%\UK Housing Model\`. Choosing the application installation folder does
@@ -60,7 +60,7 @@ not change this data location. Normal uninstall preserves these files.
 ### Local dashboard
 
 Use the dashboard when working from a local clone and you want a graphical way to
-choose an input-data version, configure an experiment, monitor its progress, and
+choose a model version, configure an experiment, monitor its progress, and
 inspect results.
 
 This route requires Node.js 22 and a Java 25 JDK. From the repository root, run:

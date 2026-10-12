@@ -1,7 +1,7 @@
 # UK Housing Model Dashboard
 Author: Max Stoddard
 
-Local React dashboard for visualizing `input-data-versions/` model parameters, with optional version comparison and provenance tracking.
+React dashboard and Express API for the UK housing model. It sets up and runs policy scenarios and sensitivity analyses, presents their results, and shows each model version's calibration and validation evidence. It runs locally for development, as a website (see [Linux Web Deployment](#linux-web-deployment)) and inside the Windows desktop app.
 
 ## Toolchain
 
@@ -61,7 +61,7 @@ have not been measured.
 
 ## Settings
 
-The fifth sidebar item, **Settings** (`/settings`), groups desktop file access,
+The sixth sidebar item, **Settings** (`/settings`), groups desktop file access,
 support actions and application information. Desktop users can open the results
 or logs folder and export a support bundle here. These actions appear only in
 Settings, keeping the shared header and Results workflow clear.
@@ -104,13 +104,13 @@ Runtime target compatibility:
 
 | Target | Runtime shape | Model execution | Writable/auth boundary |
 | --- | --- | --- | --- |
-| Dev mode | Repo-shaped local workflow using the developer machine's Node, Java, and repo-local Maven wrapper. | Enabled by default in non-production when Java and the Maven wrapper are available. | Dev bypass is active only when `NODE_ENV != production` and the selected view is `Dev mode`; no cloud or desktop runtime should depend on it. |
+| Dev mode | Repo-shaped local workflow using the developer machine's Node, Java, and repo-local Maven wrapper. | Enabled by default in non-production when Java and the Maven wrapper are available. | Dev bypass is active only when `NODE_ENV != production` and the request selects `Dev mode` or names no view (for example a plain `curl` request); no cloud or desktop runtime should depend on it. |
 | Cloud mode | Lightweight public API/container path from `dashboard/Dockerfile.api`; no Electron requirement. | Local Java/Maven execution stays out of ECS. Optional `DASHBOARD_EXECUTION_BACKEND=aws_ssm` dispatches manual and sensitivity experiments to the configured EC2 runner only when it is already running and SSM-ready. | Public API image must not include Java, Maven, git, `private-datasets/`, or baseline `Results/`; write actions require configured credentials. |
 | Desktop mode | Electron-owned local server on `127.0.0.1` with random port, packaged Java 25 runtime/fat jar, and Electron `userData` writable roots. | Packaged launcher for dashboard-managed manual and sensitivity runs; release resources are assembled from allowlisted input data and the runnable model jar. | Per-session bearer token and no packaged dev bypass; release data stays allowlisted and separate from cloud credentials/resources. |
 
 Experiments availability:
 
-- The `Experiments` navigation item, `/experiments`, and `/login` are available in dev, production, and preview views.
+- The Experiments and Results pages and `/login` are available in dev, production, and preview views.
 - Experiment, model-run, results-management, and auth-for-experiments API routes are registered in every runtime.
 - Actual model execution remains controlled separately by `DASHBOARD_ENABLE_MODEL_RUNS`, Java/Maven-wrapper runtime availability, and write credentials.
 - Local dev view and local `Preview desktop` allow result downloads without dashboard credentials; `Preview cloud` and production cloud require configured credentials/login for downloads.
@@ -135,7 +135,7 @@ Write actions requiring login in auth-enabled mode:
 - queue model runs
 - cancel model runs
 - clear finished jobs from queue history
-- delete manual result runs from Experiments (`type=manual`, `mode=view`)
+- rename or delete policy scenarios and sensitivity analyses from the **Run History** page
 - start sensitivity experiments
 - cancel sensitivity experiments
 - cancel unified experiment jobs (`POST /api/experiments/jobs/:jobRef/cancel`)
@@ -155,6 +155,7 @@ Sensitivity API endpoints:
 - `GET /api/experiments/sensitivity/:experimentId/charts`
 - `GET /api/experiments/sensitivity/:experimentId/logs`
 - `POST /api/experiments/sensitivity/:experimentId/cancel`
+- `POST /api/experiments/sensitivity/:experimentId/title` (rename; not available for remotely executed results)
 
 Unified experiment monitoring endpoints:
 
@@ -162,12 +163,14 @@ Unified experiment monitoring endpoints:
 - `GET /api/experiments/jobs/:jobRef/logs`
 - `POST /api/experiments/jobs/:jobRef/cancel`
 
-Experiments route:
+Routes:
 
-- Available in local dev view, production, and preview views.
-- Unified page at `/experiments` with query-based selectors.
-- `type=manual|sensitivity` and `mode=run|view` drive setup/results combinations.
-- optional focus params: `jobRef` (run mode queue/log), `runId` (manual view), `experimentId` (sensitivity view).
+- `/experiments`: choose between a policy scenario and a sensitivity analysis.
+- `/scenarios/new` and `/sensitivity/new`: the setup builders.
+- `/results`: results for both kinds (`type=manual` or `type=sensitivity`). Optional parameters: `baselineRunId` (or `runId`) and `comparisonRunId` for policy scenarios, `experimentId` for sensitivity analyses, `jobRef` for a queued job, `presentation` for the results view, and `queue=open` to expand the queue.
+- `/run-history`: saved runs to search, rename and delete. Without `type` it opens a chooser; `type=manual` or `type=sensitivity` lists that kind, and `q` holds the search text.
+- `/model-evidence`: calibration and validation evidence. `/calibration` and `/validation` redirect there.
+- `/login` and `/settings`.
 
 KPI definitions (manual results use the selected Window setting; sensitivity results use the configured experiment window):
 
@@ -179,13 +182,13 @@ KPI definitions (manual results use the selected Window setting; sensitivity res
 Sensitivity behavior:
 
 - one-at-a-time numeric USER SET parameter sweeps (manual min/max, baseline-in-range required)
-- 5-point sampling (`min`, `mid-lower`, `baseline`, `mid-upper`, `max`) with integer rounding and duplicate collapse
+- evenly spaced sample points from min to max (5 by default, configurable, at least 2) plus the base-policy point, with integer rounding for integer parameters and duplicate points collapsed
 - summary-only retention: per-point outputs are deleted after summary extraction (`retainFullOutput` is no longer accepted)
 - persisted experiment metadata + chart-ready summaries under `Results/experiments/sensitivity/<experimentId>`
 - summarized sensitivity live logs with worker lifecycle markers and structured progress payloads under sensitivity and unified logs endpoints; raw JVM stdout/stderr is retained in persistent model logs for debugging
 - tornado charts support KPI-basis selection (`Mean`, `CV`, `Range`); backend summaries retain `annualisedTrend` for compatibility
 - submission warnings flag Central Bank policy sweeps that are likely non-binding one-at-a-time for the selected baseline/range
-- manual run submissions are blocked while a sensitivity experiment is active, and sensitivity submissions are blocked while manual jobs are active
+- policy scenarios and sensitivity analyses can be submitted while another experiment is active; locally they wait in one shared queue that runs one experiment at a time
 
 ### Local Auth Setup
 
@@ -221,13 +224,6 @@ Health endpoint:
 - `GET /api/runtime-deps` (runtime diagnostics):
   - returns `java`, `maven`, `mavenBin`, `versionInfo`, and remote execution status when the AWS SSM backend is configured.
 
-Homepage preview endpoint:
-
-- `GET /api/home-preview?version=<version>`
-- returns only the lightweight chart payload needed for the homepage hero preview
-- avoids dashboard input version history, dataset attribution, and other compare-page metadata
-- keeps the homepage live without forcing the full compare path on first public load
-
 ## Linux Web Deployment
 
 Runs the dashboard as a website on a Linux machine, with model runs executed on the same machine. These steps were tested on Ubuntu 24.04 LTS. Do every step as the normal (non-root) account that will own the repository and run the service; that account needs sudo rights.
@@ -253,7 +249,7 @@ npm run test:smoke
 npm run test:experiment-smoke
 ```
 
-Each command should finish without an error. `npm ci` reports npm audit vulnerabilities, `npm run build` warns about large chunks, and `npm run test:smoke` prints React `useLayoutEffect` warnings before `Smoke tests passed.`; these are expected. `npm run test:experiment-smoke` prints nothing when it passes.
+Each command should finish without an error. `npm ci` reports npm audit vulnerabilities, `npm run build` warns about large chunks, and `npm run test:smoke` prints React `useLayoutEffect` warnings before `Smoke tests passed.` All of these are expected. `npm run test:experiment-smoke` prints nothing when it passes.
 
 For a foreground check, start the API server from `dashboard/`, replacing `<username>` and `<password>` with your credentials and keeping the values quoted:
 
@@ -373,7 +369,7 @@ Runtime notes:
 
 ## AWS Deployment
 
-The dashboard is deployed from GitHub Actions (`.github/workflows/dashboard-ci.yml`) to the AWS v1 architecture:
+The cloud version is currently offline (see the root README). It was deployed from GitHub Actions (`.github/workflows/dashboard-ci.yml`) to the AWS v1 architecture:
 
 - private S3 frontend bucket behind CloudFront
 - ECR image for the dashboard API
