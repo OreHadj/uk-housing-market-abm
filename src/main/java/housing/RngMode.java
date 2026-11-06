@@ -52,8 +52,8 @@ enum RngMode {
             case PHILOX_HOUSEHOLD:
                 return;
             case PHILOX:
-                throw new IllegalStateException("RNG mode 'philox' is not active until all event "
-                        + "origins are migrated in Step 12");
+                throw new IllegalStateException("RNG mode 'philox' is not available yet: only "
+                        + "household-loop draws use Philox so far (use 'philox-household')");
             default:
                 throw new AssertionError("Unhandled RNG mode: " + this);
         }

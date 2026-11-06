@@ -187,8 +187,8 @@ class RngFactoryTest {
 
         IllegalStateException philox = assertThrows(IllegalStateException.class,
                 () -> RngFactory.create(1, RngMode.PHILOX).requireModelSupport());
-        assertEquals("RNG mode 'philox' is not active until all event origins are migrated in Step 12",
-                philox.getMessage());
+        assertEquals("RNG mode 'philox' is not available yet: only household-loop draws use "
+                + "Philox so far (use 'philox-household')", philox.getMessage());
     }
 
     @Test

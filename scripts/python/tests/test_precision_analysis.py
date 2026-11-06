@@ -933,6 +933,17 @@ class FreezeAndOutputSafetyTest(unittest.TestCase):
             self.assertFalse(output.exists())
 
 
+def _campaign_has_only_the_control_block() -> bool:
+    blocks = analysis.REPOSITORY_CAMPAIGN_ROOT / "blocks"
+    return blocks.is_dir() and sorted(path.name for path in blocks.iterdir()) == [
+        "HQ52-seeds-000001-000008.json"
+    ]
+
+
+@unittest.skipUnless(
+    _campaign_has_only_the_control_block(),
+    "needs the local campaign results (not stored in git) before any candidate blocks were run",
+)
 class RealHQ52ControlIntegrationTest(unittest.TestCase):
     def test_real_existing_hq52_b01_control_only(self) -> None:
         root = analysis.REPOSITORY_CAMPAIGN_ROOT
