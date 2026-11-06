@@ -4,6 +4,18 @@
 The module deliberately keeps the no-op preflight separate from candidate analysis.  Candidate
 score files are not opened until the campaign, scope, and analysis freezes have all verified
 against the live program, tests, dependencies, and Python package versions.
+
+Note on reanalysing the reported campaign (report Section 5): the original analysis is frozen to
+preserve the experimental method and its inputs. Its verifier checks the source files, the saved
+results, the recorded absolute path of the results directory, and the Python package versions.
+The matching source is commit 75a2cab, with Python 3.10.13, NumPy 1.26.4 and SciPy 1.15.3.
+
+The original campaign outputs are retained separately and are not stored in git. Cloning this
+branch therefore provides the implementation and scripts for new runs, but exact reanalysis of
+the reported experiment also requires those saved outputs and the matching setup. The workflow is
+configured for the original directory layout, and running it elsewhere would require additional
+setup that has not been tested. The outputs and environment details are available from the
+author on request.
 """
 
 from __future__ import annotations
